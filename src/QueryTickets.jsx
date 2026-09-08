@@ -254,11 +254,15 @@ export default function QueryTickets({ session, agents = [] }) {
         if (updatedAttachments.length > 0) {
           newPayload += `\n\n[ATTACHMENTS]:${JSON.stringify(updatedAttachments)}`;
         }
-        await supabase.from('tickets').update({ query: newPayload }).eq('id', recordId);
-        fetchTickets();
-        if (selectedTicket?.id === recordId) {
-           const { data } = await supabase.from('tickets').select('*').eq('id', recordId).single();
-           if (data) setSelectedTicket(data);
+        
+        const { data, error } = await supabase.from('tickets').update({ query: newPayload }).eq('id', recordId).select();
+        
+        if (!error && data && data.length > 0) {
+          const updatedTicket = data[0];
+          setTickets(prev => prev.map(t => t.id === recordId ? { ...t, query: updatedTicket.query } : t));
+          if (selectedTicket?.id === recordId) {
+            setSelectedTicket(prev => ({ ...prev, query: updatedTicket.query }));
+          }
         }
       } else if (table === 'messages') {
         let body = recordData.content;
@@ -334,9 +338,9 @@ export default function QueryTickets({ session, agents = [] }) {
       setQueryText('');
       setUrgency('Medium');
       setImages([]);
-      fetchTickets();
-      
       const ticketData = data[0];
+      setTickets(prev => [ticketData, ...prev]);
+      
       const filesToUpload = processedImages.filter(a => a.uploading);
       if (filesToUpload.length > 0) {
         uploadAttachmentsAndUpdateTicket(ticketData.id, processedImages, ticketData, 'tickets');
@@ -345,18 +349,26 @@ export default function QueryTickets({ session, agents = [] }) {
   };
 
   const updateTicketStatus = async (ticketId, newStatus) => {
-    const { error } = await supabase
+    // Optimistic UI update
+    const previousTickets = [...tickets];
+    const previousSelected = selectedTicket ? { ...selectedTicket } : null;
+
+    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: newStatus } : t));
+    if (selectedTicket && selectedTicket.id === ticketId) {
+      setSelectedTicket(prev => ({ ...prev, status: newStatus }));
+    }
+
+    const { data, error } = await supabase
       .from('tickets')
       .update({ status: newStatus })
-      .eq('id', ticketId);
+      .eq('id', ticketId)
+      .select();
 
-    if (error) {
-      console.error('Error updating status:', error);
-    } else {
-      setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: newStatus } : t));
-      if (selectedTicket && selectedTicket.id === ticketId) {
-        setSelectedTicket(prev => ({ ...prev, status: newStatus }));
-      }
+    if (error || !data || data.length === 0) {
+      console.error('Error updating status:', error || 'No data returned (possibly due to RLS).');
+      // Rollback
+      setTickets(previousTickets);
+      setSelectedTicket(previousSelected);
     }
   };
 
@@ -587,23 +599,31 @@ export default function QueryTickets({ session, agents = [] }) {
     if (!ticketToDelete) return;
     setIsDeleting(true);
 
+    const ticketId = ticketToDelete.id;
+    const previousTickets = [...tickets];
+    const previousSelected = selectedTicket ? { ...selectedTicket } : null;
+
+    // Optimistic update
+    setTickets(prev => prev.filter(t => t.id !== ticketId));
+    if (selectedTicket?.id === ticketId) {
+      setSelectedTicket(null);
+    }
+    setTicketToDelete(null);
+
     // Delete associated messages first
-    await supabase.from('messages').delete().eq('ticket_id', ticketToDelete.id);
+    await supabase.from('messages').delete().eq('ticket_id', ticketId);
 
     // Delete ticket
-    const { error } = await supabase.from('tickets').delete().eq('id', ticketToDelete.id);
+    const { data, error } = await supabase.from('tickets').delete().eq('id', ticketId).select();
 
     setIsDeleting(false);
 
-    if (error) {
-      console.error('Error deleting ticket:', error);
-      alert('Error deleting ticket: ' + error.message);
-    } else {
-      setTickets(prev => prev.filter(t => t.id !== ticketToDelete.id));
-      if (selectedTicket?.id === ticketToDelete.id) {
-        setSelectedTicket(null);
-      }
-      setTicketToDelete(null);
+    if (error || !data || data.length === 0) {
+      console.error('Error deleting ticket:', error || 'Delete failed silently (possibly due to RLS).');
+      alert('Could not delete ticket. You may not have permission.');
+      // Rollback
+      setTickets(previousTickets);
+      setSelectedTicket(previousSelected);
     }
   };
 
