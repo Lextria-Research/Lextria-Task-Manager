@@ -8,9 +8,13 @@ export const config = {
   },
 };
 
-// Global cache for the Zoho Access Token to prevent Rate Limits
 let cachedToken = null;
 let tokenExpiry = 0;
+
+export function _resetTokenCache() {
+  cachedToken = null;
+  tokenExpiry = 0;
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -24,11 +28,17 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: 'File parse error', details: err.message });
       }
 
-      const fileArray = files.file || files.files;
-      if (!fileArray || fileArray.length === 0) {
+      const fileList = files.file || files.files;
+      const file = Array.isArray(fileList) ? fileList[0] : fileList;
+      if (!file) {
         return res.status(400).json({ error: 'No file uploaded' });
       }
-      const file = fileArray[0];
+      const filePath = file.filepath || file.path;
+      if (!filePath) {
+        return res.status(400).json({ error: 'Uploaded file has no temporary path' });
+      }
+      const originalFilename = file.originalFilename || file.name || 'upload.ext';
+      const fileMimeType = file.mimetype || file.type || 'application/octet-stream';
 
       // 1. Check Env Vars
       if (!process.env.ZOHO_DC || !process.env.ZOHO_CLIENT_ID) {
@@ -60,11 +70,11 @@ export default async function handler(req, res) {
       // 3. Upload Fetch
       let uploadText = '';
       try {
-        const fileData = fs.readFileSync(file.filepath);
+        const fileData = fs.readFileSync(filePath);
         const form = new FormDataNode();
         form.append('content', fileData, {
-          filename: file.originalFilename || 'upload.ext',
-          contentType: file.mimetype || 'application/octet-stream'
+          filename: originalFilename,
+          contentType: fileMimeType
         });
         form.append('parent_id', process.env.ZOHO_FOLDER_ID);
         form.append('override-name-exist', 'true');
@@ -83,6 +93,10 @@ export default async function handler(req, res) {
         uploadText = await uploadRes.text();
         
         if (!uploadRes.ok) {
+           if (uploadRes.status === 401) {
+             cachedToken = null;
+             tokenExpiry = 0;
+           }
            return res.status(uploadRes.status).json({ 
              error: 'Zoho HTTP Error', 
              status: uploadRes.status, 
@@ -101,7 +115,11 @@ export default async function handler(req, res) {
         }
         
         if (uploadData.data && uploadData.data.length > 0) {
-          return res.status(200).json({ url: uploadData.data[0].attributes.Permalink, name: file.originalFilename });
+          const item = uploadData.data[0];
+          const attrs = item.attributes || {};
+          const dc = process.env.ZOHO_DC || 'com';
+          const permalink = attrs.Permalink || attrs.permalink || attrs.permalink_url || attrs.download_url || attrs.web_url || attrs.url || (attrs.resource_id ? `https://workdrive.zoho.${dc}/file/${attrs.resource_id}` : null);
+          return res.status(200).json({ url: permalink || '', name: originalFilename });
         } else {
           return res.status(500).json({ error: 'Zoho upload failed to return data', details: uploadData });
         }

@@ -18,49 +18,8 @@ const BOARDS = [
 
 const URGENCIES = ['High', 'Medium', 'Low'];
 
-export function parseTicketData(ticket, agentList = []) {
-  if (!ticket) return { text: '', attachments: [], authorName: 'Member', authorRole: 'member' };
-  const rawQuery = ticket.query || '';
-  let authorName = 'Member';
-  let authorRole = 'member';
-  let cleanText = rawQuery;
-  let attachments = [];
-
-  // 1. Extract [AUTHOR]:{"name":"...","role":"..."}
-  const authorMarker = '[AUTHOR]:';
-  if (cleanText.includes(authorMarker)) {
-    const startIdx = cleanText.indexOf(authorMarker) + authorMarker.length;
-    const endIdx = cleanText.indexOf('\n', startIdx);
-    const jsonStr = endIdx === -1 ? cleanText.substring(startIdx).trim() : cleanText.substring(startIdx, endIdx).trim();
-    try {
-      const parsed = JSON.parse(jsonStr);
-      if (parsed.name) authorName = parsed.name;
-      if (parsed.role) authorRole = parsed.role;
-    } catch {}
-    cleanText = endIdx === -1 ? '' : cleanText.substring(endIdx).trim();
-  } else if (ticket.created_by && agentList && agentList.length > 0) {
-    const found = agentList.find(a => a.id === ticket.created_by);
-    if (found) authorName = found.name;
-  }
-
-  if (cleanText.startsWith('[QUERY]:')) {
-    cleanText = cleanText.replace('[QUERY]:', '').trim();
-  }
-
-  // 2. Extract [ATTACHMENTS]:[...]
-  const attMarker = '[ATTACHMENTS]:';
-  if (cleanText.includes(attMarker)) {
-    const idx = cleanText.indexOf(attMarker);
-    const jsonStr = cleanText.substring(idx + attMarker.length).trim();
-    cleanText = cleanText.substring(0, idx).trim();
-    try {
-      const parsed = JSON.parse(jsonStr);
-      if (Array.isArray(parsed)) attachments = parsed;
-    } catch {}
-  }
-
-  return { text: cleanText, attachments, authorName, authorRole };
-}
+export { parseTicketData, isImageAttachment, getImageSrc } from './attachmentUtils';
+import { parseTicketData, isImageAttachment, getImageSrc } from './attachmentUtils';
 
 export const generateThumbnail = (dataUrl) => {
   return new Promise((resolve) => {
@@ -98,7 +57,6 @@ export const generateThumbnail = (dataUrl) => {
   });
 };
 
-
 export default function QueryTickets({ session, agents = [] }) {
   const [selectedBoardKey, setSelectedBoardKey] = useState('litigation');
   const [activeView, setActiveView] = useState('board'); // 'board' | 'history'
@@ -111,10 +69,17 @@ export default function QueryTickets({ session, agents = [] }) {
   const [showNewModal, setShowNewModal] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [previewImage, setPreviewImage] = useState(null);
+  const [lightboxError, setLightboxError] = useState(false);
+  const handleOpenPreview = (img) => {
+    setLightboxError(false);
+    setPreviewImage(img);
+  };
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [messageAttachments, setMessageAttachments] = useState([]);
   const messageFileInputRef = useRef(null);
+  const messageImageInputRef = useRef(null);
+  const messageDocInputRef = useRef(null);
 
   // Mention state
   const [mentionState, setMentionState] = useState({
@@ -129,6 +94,7 @@ export default function QueryTickets({ session, agents = [] }) {
   const [images, setImages] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef(null);
+  const docFileInputRef = useRef(null);
 
   // Edit ticket state
   const [editingTicket, setEditingTicket] = useState(null);
@@ -137,6 +103,7 @@ export default function QueryTickets({ session, agents = [] }) {
   const [editImages, setEditImages] = useState([]);
   const [editSubmitting, setEditSubmitting] = useState(false);
   const editFileInputRef = useRef(null);
+  const editDocFileInputRef = useRef(null);
 
   // Delete ticket state
   const [ticketToDelete, setTicketToDelete] = useState(null);
@@ -235,7 +202,7 @@ export default function QueryTickets({ session, agents = [] }) {
                 return {
                   name: att.name,
                   type: att.type,
-                  preview: att.preview,
+                  ...(isImageAttachment(att) ? { preview: att.preview } : {}),
                   url: data.url
                 };
               }
@@ -260,15 +227,13 @@ export default function QueryTickets({ session, agents = [] }) {
         if (!error && data && data.length > 0) {
           const updatedTicket = data[0];
           setTickets(prev => prev.map(t => t.id === recordId ? { ...t, query: updatedTicket.query } : t));
-          if (selectedTicket?.id === recordId) {
-            setSelectedTicket(prev => ({ ...prev, query: updatedTicket.query }));
-          }
+          setSelectedTicket(prev => (prev && prev.id === recordId ? { ...prev, query: updatedTicket.query } : prev));
         }
       } else if (table === 'messages') {
         let body = recordData.content;
-        const attMarker = '\n[ATTACHMENTS]:';
+        const attMarker = '[ATTACHMENTS]:';
         if (body && body.includes(attMarker)) {
-          body = body.substring(0, body.indexOf(attMarker));
+          body = body.substring(0, body.indexOf(attMarker)).trim();
         }
         if (updatedAttachments.length > 0) {
           body += `\n[ATTACHMENTS]: ${JSON.stringify(updatedAttachments)}`;
@@ -295,14 +260,24 @@ export default function QueryTickets({ session, agents = [] }) {
     let processedImages = [];
     for (const img of images) {
       if (img.file) {
-        const thumb = await generateThumbnail(img.preview);
-        processedImages.push({
-          name: img.name,
-          type: img.file.type,
-          preview: thumb,
-          file: img.file,
-          uploading: true
-        });
+        if (isImageAttachment(img)) {
+          const thumb = await generateThumbnail(img.preview);
+          processedImages.push({
+            name: img.name,
+            type: img.file.type || img.type || 'image/png',
+            preview: thumb,
+            file: img.file,
+            uploading: true
+          });
+        } else {
+          processedImages.push({
+            name: img.name,
+            type: img.file.type || img.type || 'application/octet-stream',
+            preview: '',
+            file: img.file,
+            uploading: true
+          });
+        }
       } else {
         processedImages.push(img);
       }
@@ -401,15 +376,49 @@ export default function QueryTickets({ session, agents = [] }) {
   };
 
 
-  const handleMessageAttachmentUpload = (e) => {
+  const handleMessageImageUpload = (e) => {
     const files = Array.from(e.target.files);
     files.forEach(file => {
       const reader = new FileReader();
       reader.onload = (ev) => {
-        setMessageAttachments(prev => [...prev, { name: file.name, file: file, type: file.type, preview: ev.target.result }]);
+        setMessageAttachments(prev => [...prev, { name: file.name, file: file, type: file.type || 'image/png', preview: ev.target.result }]);
       };
       reader.readAsDataURL(file);
     });
+    e.target.value = '';
+  };
+
+  const handleMessageDocUpload = (e) => {
+    const files = Array.from(e.target.files);
+    files.forEach(file => {
+      const isImg = file.type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name);
+      if (isImg) {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          setMessageAttachments(prev => [...prev, { name: file.name, file: file, type: file.type || 'image/png', preview: ev.target.result }]);
+        };
+        reader.readAsDataURL(file);
+      } else {
+        setMessageAttachments(prev => [...prev, { name: file.name, file: file, type: file.type || 'application/octet-stream', preview: '' }]);
+      }
+    });
+    e.target.value = '';
+  };
+
+  const handleMessageAttachmentUpload = (e) => {
+    const files = Array.from(e.target.files);
+    files.forEach(file => {
+      if (file.type && file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          setMessageAttachments(prev => [...prev, { name: file.name, file: file, type: file.type, preview: ev.target.result }]);
+        };
+        reader.readAsDataURL(file);
+      } else {
+        setMessageAttachments(prev => [...prev, { name: file.name, file: file, type: file.type || 'application/octet-stream', preview: '' }]);
+      }
+    });
+    e.target.value = '';
   };
 
   const removeMessageAttachment = (index) => {
@@ -434,14 +443,24 @@ export default function QueryTickets({ session, agents = [] }) {
     let processedAttachments = [];
     for (const att of messageAttachments) {
       if (att.file) {
-        const thumb = await generateThumbnail(att.preview);
-        processedAttachments.push({
-          name: att.name,
-          type: att.file.type,
-          preview: thumb,
-          file: att.file,
-          uploading: true
-        });
+        if (isImageAttachment(att)) {
+          const thumb = await generateThumbnail(att.preview);
+          processedAttachments.push({
+            name: att.name,
+            type: att.file.type || att.type || 'image/png',
+            preview: thumb,
+            file: att.file,
+            uploading: true
+          });
+        } else {
+          processedAttachments.push({
+            name: att.name,
+            type: att.file.type || att.type || 'application/octet-stream',
+            preview: '',
+            file: att.file,
+            uploading: true
+          });
+        }
       } else {
         processedAttachments.push(att);
       }
@@ -492,10 +511,28 @@ export default function QueryTickets({ session, agents = [] }) {
     files.forEach(file => {
       const reader = new FileReader();
       reader.onload = (ev) => {
-        setImages(prev => [...prev, { name: file.name, file: file, preview: ev.target.result }]);
+        setImages(prev => [...prev, { name: file.name, file: file, type: file.type || 'image/png', preview: ev.target.result }]);
       };
       reader.readAsDataURL(file);
     });
+    e.target.value = '';
+  };
+
+  const handleDocUpload = (e) => {
+    const files = Array.from(e.target.files);
+    files.forEach(file => {
+      const isImg = file.type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name);
+      if (isImg) {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          setImages(prev => [...prev, { name: file.name, file: file, type: file.type || 'image/png', preview: ev.target.result }]);
+        };
+        reader.readAsDataURL(file);
+      } else {
+        setImages(prev => [...prev, { name: file.name, file: file, type: file.type || 'application/octet-stream', preview: '' }]);
+      }
+    });
+    e.target.value = '';
   };
 
   const removeImage = (index) => {
@@ -523,14 +560,24 @@ export default function QueryTickets({ session, agents = [] }) {
     let processedImages = [];
     for (const img of editImages) {
       if (img.file) {
-        const thumb = await generateThumbnail(img.preview);
-        processedImages.push({
-          name: img.name,
-          type: img.file.type,
-          preview: thumb,
-          file: img.file,
-          uploading: true
-        });
+        if (isImageAttachment(img)) {
+          const thumb = await generateThumbnail(img.preview);
+          processedImages.push({
+            name: img.name,
+            type: img.file.type || img.type || 'image/png',
+            preview: thumb,
+            file: img.file,
+            uploading: true
+          });
+        } else {
+          processedImages.push({
+            name: img.name,
+            type: img.file.type || img.type || 'application/octet-stream',
+            preview: '',
+            file: img.file,
+            uploading: true
+          });
+        }
       } else {
         processedImages.push(img);
       }
@@ -579,10 +626,28 @@ export default function QueryTickets({ session, agents = [] }) {
     files.forEach(file => {
       const reader = new FileReader();
       reader.onload = (ev) => {
-        setEditImages(prev => [...prev, { name: file.name, file: file, preview: ev.target.result }]);
+        setEditImages(prev => [...prev, { name: file.name, file: file, type: file.type || 'image/png', preview: ev.target.result }]);
       };
       reader.readAsDataURL(file);
     });
+    e.target.value = '';
+  };
+
+  const handleEditDocUpload = (e) => {
+    const files = Array.from(e.target.files);
+    files.forEach(file => {
+      const isImg = file.type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name);
+      if (isImg) {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          setEditImages(prev => [...prev, { name: file.name, file: file, type: file.type || 'image/png', preview: ev.target.result }]);
+        };
+        reader.readAsDataURL(file);
+      } else {
+        setEditImages(prev => [...prev, { name: file.name, file: file, type: file.type || 'application/octet-stream', preview: '' }]);
+      }
+    });
+    e.target.value = '';
   };
 
   const removeEditImage = (index) => {
@@ -781,7 +846,7 @@ export default function QueryTickets({ session, agents = [] }) {
                       onClick={() => openTicket(ticket)} 
                       urgencyBadge={urgencyBadge} 
                       agentsList={agentsList} 
-                      onOpenImage={(img) => setPreviewImage(img)}
+                      onOpenImage={handleOpenPreview}
                       onEdit={(t) => startEditTicket(t)}
                       onDelete={(t) => promptDeleteTicket(t)}
                     />
@@ -807,7 +872,7 @@ export default function QueryTickets({ session, agents = [] }) {
                       onClick={() => openTicket(ticket)} 
                       urgencyBadge={urgencyBadge} 
                       agentsList={agentsList} 
-                      onOpenImage={(img) => setPreviewImage(img)} 
+                      onOpenImage={handleOpenPreview} 
                       onEdit={(t) => startEditTicket(t)}
                       onDelete={(t) => promptDeleteTicket(t)}
                     />
@@ -835,7 +900,7 @@ export default function QueryTickets({ session, agents = [] }) {
                       onClick={() => openTicket(ticket)} 
                       urgencyBadge={urgencyBadge} 
                       agentsList={agentsList} 
-                      onOpenImage={(img) => setPreviewImage(img)} 
+                      onOpenImage={handleOpenPreview} 
                       onEdit={(t) => startEditTicket(t)}
                       onDelete={(t) => promptDeleteTicket(t)}
                     />
@@ -894,26 +959,44 @@ export default function QueryTickets({ session, agents = [] }) {
               </div>
 
               <div className="mb-6">
-                <label className="mb-1.5 block text-sm font-semibold text-slate-700">Attach images (optional)</label>
+                <label className="mb-1.5 block text-sm font-semibold text-slate-700">Attachments (optional)</label>
                 <div className="flex items-center gap-2 flex-wrap">
                   {images.map((img, i) => (
-                    <div key={i} className="relative w-16 h-16 rounded-lg border border-slate-200 overflow-hidden group">
-                      <img src={img.preview} alt={img.name} className="w-full h-full object-cover" />
-                      <button
-                        type="button"
-                        onClick={() => removeImage(i)}
-                        className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <X size={12} />
-                      </button>
-                    </div>
+                    isImageAttachment(img) ? (
+                      <div key={i} className="relative w-16 h-16 rounded-lg border border-slate-200 overflow-hidden group">
+                        <img src={img.preview} alt={img.name} className="w-full h-full object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => removeImage(i)}
+                          className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div key={i} className="relative w-28 h-16 rounded-lg border border-slate-200 bg-slate-50 p-2 flex flex-col justify-between group overflow-hidden">
+                        <div className="flex items-center gap-1.5 text-slate-700">
+                          <FileText size={16} className="text-blue-600 shrink-0" />
+                          <span className="text-[11px] font-medium truncate" title={img.name}>{img.name}</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 uppercase font-semibold">{img.name ? (img.name.split('.').pop() || 'DOC') : 'DOC'}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeImage(i)}
+                          className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    )
                   ))}
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="w-16 h-16 rounded-lg border-2 border-dashed border-slate-300 hover:border-[#16234f] flex flex-col items-center justify-center gap-0.5 text-slate-400 hover:text-[#16234f] transition-colors"
+                    className="w-16 h-16 rounded-lg border-2 border-dashed border-slate-300 hover:border-[#16234f] flex flex-col items-center justify-center gap-0.5 text-slate-400 hover:text-[#16234f] transition-colors cursor-pointer"
+                    title="Attach image"
                   >
-                    <Plus size={16} />
+                    <ImageIcon size={16} />
                     <span className="text-[10px] font-medium">Image</span>
                   </button>
                   <input
@@ -923,6 +1006,23 @@ export default function QueryTickets({ session, agents = [] }) {
                     multiple
                     className="hidden"
                     onChange={handleImageUpload}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => docFileInputRef.current?.click()}
+                    className="w-16 h-16 rounded-lg border-2 border-dashed border-slate-300 hover:border-[#16234f] flex flex-col items-center justify-center gap-0.5 text-slate-400 hover:text-[#16234f] transition-colors cursor-pointer"
+                    title="Attach document (PDF, PPT, Word, Excel, etc.)"
+                  >
+                    <FileText size={16} />
+                    <span className="text-[10px] font-medium">Document</span>
+                  </button>
+                  <input
+                    ref={docFileInputRef}
+                    type="file"
+                    accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,application/*"
+                    multiple
+                    className="hidden"
+                    onChange={handleDocUpload}
                   />
                 </div>
               </div>
@@ -998,53 +1098,89 @@ export default function QueryTickets({ session, agents = [] }) {
                       </div>
                     </div>
 
-                    {/* Attached Images preview right below author name */}
+                    {/* Attached Files preview right below author name */}
                     {attachments.length > 0 && (
                       <div className="mb-4 space-y-2">
                         {attachments.map((att, idx) => {
-                          const hasUrl = !!att.url;
-                          const isLegacyExternal = att.preview && att.preview.startsWith('http');
-                          
-                          if (hasUrl || isLegacyExternal) {
-                            const linkHref = att.url || att.preview;
-                            const hasThumbnail = att.preview && !att.preview.startsWith('http');
-                            return (
-                              <a 
-                                key={idx}
-                                href={linkHref} 
-                                target="_blank" 
-                                rel="noreferrer"
-                                className="block rounded-xl border border-slate-200 bg-slate-50 overflow-hidden hover:border-slate-300 transition-colors"
-                              >
-                                {hasThumbnail ? (
-                                  <img 
-                                    src={att.preview} 
-                                    alt={att.name || 'Attachment'} 
-                                    className="w-full max-h-64 object-cover object-top hover:scale-[1.01] transition-transform duration-150" 
-                                  />
-                                ) : (
-                                  <div className="flex items-center gap-2 p-3 text-blue-600 font-medium hover:bg-slate-100 transition-colors">
-                                    <FileText size={20} />
-                                    View {att.name || 'Attachment'}
-                                  </div>
-                                )}
-                              </a>
-                            );
-                          } else {
+                          const isImage = isImageAttachment(att);
+                          const linkHref = att.url || (att.preview && att.preview.startsWith('http') ? att.preview : null);
+                          const imgSrc = getImageSrc(att);
+
+                          if (isImage) {
                             return (
                               <div 
                                 key={idx}
-                                onClick={() => setPreviewImage(att)}
+                                onClick={() => handleOpenPreview({ name: att.name, preview: imgSrc, url: att.url })}
                                 className="rounded-xl overflow-hidden border border-slate-200 bg-slate-100 relative group cursor-pointer shadow-xs"
                               >
-                                <img 
-                                  src={att.preview} 
-                                  alt={att.name || 'Attachment'} 
-                                  className="w-full max-h-64 object-cover object-top group-hover:scale-[1.01] transition-transform duration-150" 
-                                />
+                                {imgSrc ? (
+                                  <img 
+                                    src={imgSrc} 
+                                    alt={att.name || 'Attachment'} 
+                                    className="w-full max-h-64 object-cover object-top group-hover:scale-[1.01] transition-transform duration-150" 
+                                    onError={(e) => {
+                                      e.target.style.display = 'none';
+                                      if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                                    }}
+                                  />
+                                ) : null}
+                                <div 
+                                  style={{ display: imgSrc ? 'none' : 'flex' }}
+                                  className="w-full h-32 items-center justify-center gap-2 bg-slate-100 text-slate-500 font-medium"
+                                >
+                                  <ImageIcon size={24} />
+                                  <span>{att.name || 'Image'}</span>
+                                </div>
                                 <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-semibold backdrop-blur-2xs">
                                   <Eye size={16} /> Click to expand
                                 </div>
+                              </div>
+                            );
+                          } else {
+                            const docUrl = linkHref || (att.preview && (att.preview.startsWith('http') || att.preview.startsWith('data:') || att.preview.startsWith('blob:')) ? att.preview : null);
+                            const isReady = !!docUrl;
+
+                            return isReady ? (
+                              <a 
+                                key={idx}
+                                href={docUrl} 
+                                target="_blank" 
+                                rel="noreferrer"
+                                download={docUrl.startsWith('data:') ? (att.name || 'document') : undefined}
+                                className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors shadow-2xs group cursor-pointer"
+                                title={`Open ${att.name || 'Document'}`}
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                                  <div className="p-2 rounded-lg bg-blue-50 text-blue-600 shrink-0">
+                                    <FileText size={20} />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-semibold text-slate-800 truncate">{att.name || 'Document'}</p>
+                                    <p className="text-[11px] text-slate-400 uppercase font-medium">{att.name ? (att.name.split('.').pop() + ' File') : 'Document'}</p>
+                                  </div>
+                                </div>
+                                <span className="shrink-0 text-xs text-blue-600 font-semibold group-hover:underline flex items-center gap-1">
+                                  <Download size={14} /> Open
+                                </span>
+                              </a>
+                            ) : (
+                              <div 
+                                key={idx}
+                                className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50 shadow-2xs text-slate-500"
+                                title="Uploading document to Zoho WorkDrive..."
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                                  <div className="p-2 rounded-lg bg-slate-200 text-slate-600 shrink-0">
+                                    <FileText size={20} />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-semibold text-slate-700 truncate">{att.name || 'Document'}</p>
+                                    <p className="text-[11px] text-slate-400 uppercase font-medium">{att.name ? (att.name.split('.').pop() + ' File') : 'Document'}</p>
+                                  </div>
+                                </div>
+                                <span className="shrink-0 text-xs text-amber-600 font-medium flex items-center gap-1">
+                                  Uploading...
+                                </span>
                               </div>
                             );
                           }
@@ -1131,11 +1267,11 @@ export default function QueryTickets({ session, agents = [] }) {
                     }
 
                     let attachments = [];
-                    const attMarker = '\n[ATTACHMENTS]:';
+                    const attMarker = '[ATTACHMENTS]:';
                     if (body && body.includes(attMarker)) {
                       const idx = body.indexOf(attMarker);
                       const jsonStr = body.substring(idx + attMarker.length).trim();
-                      body = body.substring(0, idx);
+                      body = body.substring(0, idx).trim();
                       try {
                         const parsed = JSON.parse(jsonStr);
                         if (Array.isArray(parsed)) attachments = parsed;
@@ -1159,59 +1295,85 @@ export default function QueryTickets({ session, agents = [] }) {
                           {attachments.length > 0 && (
                             <div className={`flex flex-wrap gap-2 ${body ? 'mt-2 pt-2 border-t border-white/20' : ''}`}>
                               {attachments.map((att, idx) => {
-                                const hasUrl = !!att.url;
-                                const isLegacyExternal = att.preview && att.preview.startsWith('http');
-                                const isImage = att.type && att.type.startsWith('image/');
-                                
-                                return (
-                                <div key={idx} className="relative group">
-                                  {(hasUrl || isLegacyExternal) ? (
-                                    <a 
-                                      href={att.url || att.preview} 
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="block"
-                                      title={`View ${att.name}`}
-                                    >
-                                      {att.preview && !att.preview.startsWith('http') ? (
-                                        <img 
-                                          src={att.preview} 
-                                          alt={att.name} 
-                                          className="h-16 w-16 object-cover rounded hover:opacity-90 border border-white/20"
-                                        />
-                                      ) : (
-                                        <div className={`flex items-center gap-1.5 p-1.5 rounded border transition-colors ${
-                                          isOwn ? 'bg-white/10 hover:bg-white/20 border-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-blue-600'
-                                        }`}>
-                                          <FileText size={16} />
-                                          <span className="text-xs truncate max-w-[100px] font-medium">{att.name}</span>
+                                const isImage = isImageAttachment(att);
+                                const linkHref = att.url || (att.preview && att.preview.startsWith('http') ? att.preview : null);
+                                const imgSrc = getImageSrc(att);
+
+                                if (isImage) {
+                                  return (
+                                    <div key={idx} className="relative group">
+                                      {imgSrc ? (
+                                        <div className="relative">
+                                          <img 
+                                            src={imgSrc} 
+                                            alt={att.name || 'Image'} 
+                                            className="h-16 w-16 object-cover rounded cursor-pointer hover:opacity-90 border border-white/20 shadow-xs"
+                                            onClick={() => handleOpenPreview({ name: att.name, preview: imgSrc, url: att.url })}
+                                            onError={(e) => {
+                                              e.target.style.display = 'none';
+                                              if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                                            }}
+                                          />
+                                          <div 
+                                            style={{ display: 'none' }}
+                                            onClick={() => handleOpenPreview({ name: att.name, preview: imgSrc, url: att.url })}
+                                            className="h-16 w-16 items-center justify-center bg-slate-200 text-slate-500 rounded text-[10px] cursor-pointer"
+                                          >
+                                            <ImageIcon size={20} />
+                                          </div>
                                         </div>
+                                      ) : (
+                                        <a 
+                                          href={linkHref} 
+                                          target="_blank" 
+                                          rel="noreferrer" 
+                                          className={`flex items-center gap-1.5 p-1.5 rounded border transition-colors ${
+                                            isOwn ? 'bg-white/10 hover:bg-white/20 border-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-blue-600'
+                                          }`}
+                                        >
+                                          <ImageIcon size={16} />
+                                          <span className="text-xs truncate max-w-[100px] font-medium">{att.name}</span>
+                                        </a>
                                       )}
-                                    </a>
-                                  ) : isImage ? (
-                                    <img 
-                                      src={att.preview} 
-                                      alt={att.name} 
-                                      className="h-16 w-16 object-cover rounded cursor-pointer hover:opacity-90"
-                                      onClick={() => setPreviewImage(att.preview)}
-                                    />
+                                    </div>
+                                  );
+                                } else {
+                                  const docUrl = linkHref || (att.preview && (att.preview.startsWith('http') || att.preview.startsWith('data:') || att.preview.startsWith('blob:')) ? att.preview : null);
+                                  const isReady = !!docUrl;
+
+                                  return isReady ? (
+                                    <div key={idx} className="relative group">
+                                      <a 
+                                        href={docUrl} 
+                                        target="_blank" 
+                                        rel="noreferrer" 
+                                        download={docUrl.startsWith('data:') ? (att.name || 'document') : undefined}
+                                        className={`flex items-center gap-1.5 p-1.5 rounded-lg border transition-colors ${
+                                          isOwn ? 'bg-white/10 hover:bg-white/20 border-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-800'
+                                        }`}
+                                        title={`Open ${att.name || 'Document'}`}
+                                      >
+                                        <FileText size={16} className={isOwn ? 'text-white' : 'text-blue-600'} />
+                                        <span className="text-xs truncate max-w-[120px] font-medium">{att.name || 'Document'}</span>
+                                        <Download size={12} className="opacity-60 ml-0.5" />
+                                      </a>
+                                    </div>
                                   ) : (
-                                    <a 
-                                      href={att.preview} 
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      download={att.name}
-                                      className={`flex items-center gap-1.5 p-1.5 rounded border transition-colors ${
-                                        isOwn ? 'bg-white/10 hover:bg-white/20 border-white/20' : 'bg-slate-100 hover:bg-slate-200 border-slate-200'
-                                      }`}
-                                      title={`View ${att.name}`}
-                                    >
-                                      <FileText size={16} />
-                                      <span className="text-xs truncate max-w-[100px] font-medium">{att.name}</span>
-                                    </a>
-                                  )}
-                                </div>
-                              )})}
+                                    <div key={idx} className="relative group">
+                                      <div 
+                                        className={`flex items-center gap-1.5 p-1.5 rounded-lg border opacity-80 ${
+                                          isOwn ? 'bg-white/10 border-white/20 text-white' : 'bg-slate-100 border-slate-200 text-slate-700'
+                                        }`}
+                                        title="Uploading to Zoho WorkDrive..."
+                                      >
+                                        <FileText size={16} className={isOwn ? 'text-white' : 'text-blue-600'} />
+                                        <span className="text-xs truncate max-w-[120px] font-medium">{att.name || 'Document'}</span>
+                                        <span className="text-[10px] text-amber-500 font-medium ml-0.5">Uploading...</span>
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                              })}
                             </div>
                           )}
                         </div>
@@ -1251,10 +1413,10 @@ export default function QueryTickets({ session, agents = [] }) {
                     <div className="flex flex-wrap gap-2 mb-1">
                       {messageAttachments.map((att, idx) => (
                         <div key={idx} className="relative group flex items-center gap-2 bg-slate-100 p-2 rounded border border-slate-200">
-                          {att.type && att.type.startsWith('image/') ? (
+                          {isImageAttachment(att) && att.preview ? (
                             <img src={att.preview} alt={att.name} className="h-10 w-10 object-cover rounded" />
                           ) : (
-                            <FileText size={24} className="text-slate-500" />
+                            <FileText size={22} className="text-blue-600 shrink-0" />
                           )}
                           <span className="text-xs text-slate-700 max-w-[150px] truncate" title={att.name}>{att.name}</span>
                           <button
@@ -1269,21 +1431,39 @@ export default function QueryTickets({ session, agents = [] }) {
                     </div>
                   )}
 
-                  <div className="flex items-end gap-2 w-full">
+                  <div className="flex items-end gap-1.5 w-full">
                     <button
                       type="button"
-                      onClick={() => messageFileInputRef.current?.click()}
-                      className="p-2 text-slate-400 hover:text-slate-600 transition-colors flex-shrink-0 mb-1 cursor-pointer"
-                      title="Attach file"
+                      onClick={() => messageImageInputRef.current?.click()}
+                      className="p-2 text-slate-400 hover:text-[#16234f] transition-colors flex-shrink-0 mb-1 cursor-pointer"
+                      title="Attach image"
                     >
-                      <Paperclip size={20} />
+                      <ImageIcon size={20} />
                     </button>
                     <input 
                       type="file" 
+                      accept="image/*"
                       multiple 
                       className="hidden" 
-                      ref={messageFileInputRef} 
-                      onChange={handleMessageAttachmentUpload} 
+                      ref={messageImageInputRef} 
+                      onChange={handleMessageImageUpload} 
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => messageDocInputRef.current?.click()}
+                      className="p-2 text-slate-400 hover:text-[#16234f] transition-colors flex-shrink-0 mb-1 cursor-pointer"
+                      title="Attach document (PDF, PPT, Word, Excel, etc.)"
+                    >
+                      <FileText size={20} />
+                    </button>
+                    <input 
+                      type="file" 
+                      accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,application/*"
+                      multiple 
+                      className="hidden" 
+                      ref={messageDocInputRef} 
+                      onChange={handleMessageDocUpload} 
                     />
                     
                     <textarea 
@@ -1317,50 +1497,84 @@ export default function QueryTickets({ session, agents = [] }) {
       )}
 
       {/* Fullscreen Image Lightbox Modal */}
-      {previewImage && (
-        <div 
-          className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-xs flex flex-col items-center justify-center p-4 animate-in fade-in duration-150"
-          onClick={() => setPreviewImage(null)}
-        >
+      {previewImage && (() => {
+        const previewSrc = typeof previewImage === 'string' 
+          ? previewImage 
+          : (previewImage?.preview || previewImage?.url || '');
+        const previewName = (typeof previewImage === 'object' && previewImage?.name) 
+          ? previewImage.name 
+          : 'Image Attachment';
+        const downloadHref = (typeof previewImage === 'object' && (previewImage?.url || previewImage?.preview)) 
+          ? (previewImage.url || previewImage.preview) 
+          : (typeof previewImage === 'string' ? previewImage : '');
+
+        return (
           <div 
-            className="relative max-w-4xl w-full max-h-[92vh] flex flex-col items-center"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-xs flex flex-col items-center justify-center p-4 animate-in fade-in duration-150"
+            onClick={() => { setPreviewImage(null); setLightboxError(false); }}
           >
-            {/* Top Toolbar */}
-            <div className="w-full flex items-center justify-between py-2.5 px-4 bg-slate-900/90 rounded-t-xl text-white">
-              <span className="text-xs sm:text-sm font-medium truncate max-w-md">
-                📷 {previewImage.name || 'Image Attachment'}
-              </span>
-              <div className="flex items-center gap-2">
-                <a
-                  href={previewImage.preview}
-                  download={previewImage.name || 'attachment.png'}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-white text-xs font-medium transition cursor-pointer"
-                >
-                  <Download size={14} /> Download
-                </a>
-                <button
-                  type="button"
-                  onClick={() => setPreviewImage(null)}
-                  className="p-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-white transition cursor-pointer"
-                  title="Close (Esc)"
-                >
-                  <X size={18} />
-                </button>
+            <div 
+              className="relative max-w-4xl w-full max-h-[92vh] flex flex-col items-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Top Toolbar */}
+              <div className="w-full flex items-center justify-between py-2.5 px-4 bg-slate-900/90 rounded-t-xl text-white">
+                <span className="text-xs sm:text-sm font-medium truncate max-w-md">
+                  📷 {previewName}
+                </span>
+                <div className="flex items-center gap-2">
+                  {downloadHref && (
+                    <a
+                      href={downloadHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      download={previewName}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-white text-xs font-medium transition cursor-pointer"
+                    >
+                      <Download size={14} /> Download / Open
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => { setPreviewImage(null); setLightboxError(false); }}
+                    className="p-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-white transition cursor-pointer"
+                    title="Close (Esc)"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Image display */}
+              <div className="bg-black/60 w-full flex items-center justify-center p-3 rounded-b-xl overflow-auto max-h-[82vh]">
+                {previewSrc && !lightboxError ? (
+                  <img
+                    src={previewSrc}
+                    alt={previewName}
+                    className="max-h-[78vh] max-w-full object-contain rounded shadow-2xl"
+                    onError={() => setLightboxError(true)}
+                  />
+                ) : (
+                  <div className="text-slate-300 py-12 flex flex-col items-center gap-3 text-center">
+                    <ImageIcon size={48} className="opacity-50" />
+                    <p className="text-sm font-medium">Image preview unavailable</p>
+                    {downloadHref && (
+                      <a
+                        href={downloadHref}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition"
+                      >
+                        <Download size={14} /> Open in Zoho WorkDrive
+                      </a>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
-
-            {/* Image display */}
-            <div className="bg-black/60 w-full flex items-center justify-center p-3 rounded-b-xl overflow-auto max-h-[82vh]">
-              <img
-                src={previewImage.preview}
-                alt={previewImage.name || 'Screenshot'}
-                className="max-h-[78vh] max-w-full object-contain rounded shadow-2xl"
-              />
-            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
       {/* Edit Ticket Modal */}
       {editingTicket && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs z-[110] flex items-center justify-center p-4">
@@ -1409,19 +1623,30 @@ export default function QueryTickets({ session, agents = [] }) {
                 />
               </div>
 
-              {/* Attached images management */}
+              {/* Attached files management */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
-                    Attached Screenshots
+                    Attached Files
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => editFileInputRef.current?.click()}
-                    className="inline-flex items-center gap-1 text-xs text-blue-700 hover:text-blue-800 font-semibold cursor-pointer"
-                  >
-                    <Plus size={13} /> Add Screenshot
-                  </button>
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => editFileInputRef.current?.click()}
+                      className="inline-flex items-center gap-1 text-xs text-blue-700 hover:text-blue-800 font-semibold cursor-pointer"
+                      title="Add screenshot image"
+                    >
+                      <ImageIcon size={13} /> Add Screenshot
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => editDocFileInputRef.current?.click()}
+                      className="inline-flex items-center gap-1 text-xs text-emerald-700 hover:text-emerald-800 font-semibold cursor-pointer"
+                      title="Add document file (PDF, PPT, etc.)"
+                    >
+                      <FileText size={13} /> Add Document
+                    </button>
+                  </div>
                   <input
                     ref={editFileInputRef}
                     type="file"
@@ -1430,26 +1655,45 @@ export default function QueryTickets({ session, agents = [] }) {
                     className="hidden"
                     onChange={handleEditImageUpload}
                   />
+                  <input
+                    ref={editDocFileInputRef}
+                    type="file"
+                    accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,application/*"
+                    multiple
+                    className="hidden"
+                    onChange={handleEditDocUpload}
+                  />
                 </div>
 
                 {editImages.length > 0 ? (
                   <div className="grid grid-cols-3 gap-2.5 mt-2">
-                    {editImages.map((img, idx) => (
-                      <div key={idx} className="relative group rounded-lg overflow-hidden border border-slate-200 bg-slate-50 h-20">
-                        <img src={img.preview} alt={img.name || 'Attachment'} className="w-full h-full object-cover" />
-                        <button
-                          type="button"
-                          onClick={() => removeEditImage(idx)}
-                          className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1 opacity-90 hover:opacity-100 transition cursor-pointer"
-                          title="Remove image"
-                        >
-                          <X size={12} />
-                        </button>
-                      </div>
-                    ))}
+                    {editImages.map((img, idx) => {
+                      const isImage = isImageAttachment(img);
+                      const imgSrc = getImageSrc(img);
+                      return (
+                        <div key={idx} className="relative group rounded-lg overflow-hidden border border-slate-200 bg-slate-50 h-20">
+                          {isImage && imgSrc ? (
+                            <img src={imgSrc} alt={img.name || 'Attachment'} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex flex-col items-center justify-center p-2 text-slate-600 bg-slate-100">
+                              <FileText size={20} className="text-blue-600 mb-1" />
+                              <span className="text-[10px] font-medium truncate w-full text-center" title={img.name}>{img.name || 'Document'}</span>
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => removeEditImage(idx)}
+                            className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1 opacity-90 hover:opacity-100 transition cursor-pointer"
+                            title="Remove attachment"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
-                  <p className="text-xs text-slate-400 italic">No images attached.</p>
+                  <p className="text-xs text-slate-400 italic">No files attached.</p>
                 )}
               </div>
 
@@ -1580,48 +1824,78 @@ function TicketCardItem({ ticket, onClick, urgencyBadge, agentsList = [], onOpen
           </div>
         </div>
 
-        {/* Attached Screenshot preview if available - prominent right below name */}
-        {attachments.length > 0 && (
-          <div className="mb-3 rounded-lg overflow-hidden border border-slate-200 bg-slate-50 relative">
-            {attachments[0].url || (attachments[0].preview && attachments[0].preview.startsWith('http')) ? (
-              <a 
-                href={attachments[0].url || attachments[0].preview} 
-                target="_blank" 
-                rel="noreferrer" 
-                className="block w-full"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {attachments[0].preview && !attachments[0].preview.startsWith('http') ? (
-                  <img 
-                    src={attachments[0].preview} 
-                    alt={attachments[0].name || 'Attached Screenshot'} 
-                    className="w-full max-h-56 object-cover object-top hover:scale-[1.01] transition-transform duration-150"
-                  />
-                ) : (
-                  <div className="flex items-center justify-center gap-2 w-full py-4 text-blue-600 hover:bg-blue-50 font-medium transition-colors">
-                    <FileText size={20} />
-                    View {attachments[0].name || 'Attachment'}
+        {/* Attached Screenshot / Document preview if available - prominent right below name */}
+        {attachments.length > 0 && (() => {
+          const firstImage = attachments.find(isImageAttachment);
+          const nonImages = attachments.filter(a => !isImageAttachment(a));
+          const firstDoc = nonImages[0];
+
+          return (
+            <div className="mb-3 space-y-1.5">
+              {firstImage ? (
+                <div className="rounded-lg overflow-hidden border border-slate-200 bg-slate-50 relative group">
+                  {getImageSrc(firstImage) ? (
+                    <img 
+                      src={getImageSrc(firstImage)} 
+                      alt={firstImage.name || 'Attached Screenshot'} 
+                      className="w-full max-h-56 object-cover object-top hover:scale-[1.01] transition-transform duration-150"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onOpenImage) onOpenImage({ name: firstImage.name, preview: getImageSrc(firstImage), url: firstImage.url });
+                      }}
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                        if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                      }}
+                    />
+                  ) : null}
+                  <div 
+                    style={{ display: getImageSrc(firstImage) ? 'none' : 'flex' }}
+                    className="flex items-center justify-center gap-2 w-full py-4 text-blue-600 hover:bg-blue-50 font-medium transition-colors cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (firstImage.url) window.open(firstImage.url, '_blank');
+                      else if (onOpenImage) onOpenImage(firstImage);
+                    }}
+                  >
+                    <ImageIcon size={20} />
+                    <span>View {firstImage.name || 'Image'}</span>
                   </div>
-                )}
-              </a>
-            ) : (
-              <img 
-                src={attachments[0].preview} 
-                alt={attachments[0].name || 'Attached Screenshot'} 
-                className="w-full max-h-56 object-cover object-top hover:scale-[1.01] transition-transform duration-150"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (onOpenImage) onOpenImage(attachments[0]);
-                }}
-              />
-            )}
-            {attachments.length > 1 && (
-              <span className="absolute bottom-2 right-2 bg-black/70 text-white text-[10px] font-bold px-2 py-0.5 rounded-md backdrop-blur-xs">
-                +{attachments.length - 1} more
-              </span>
-            )}
-          </div>
-        )}
+                  {attachments.length > 1 && (
+                    <span className="absolute bottom-2 right-2 bg-black/70 text-white text-[10px] font-bold px-2 py-0.5 rounded-md backdrop-blur-xs pointer-events-none">
+                      +{attachments.length - 1} more
+                    </span>
+                  )}
+                </div>
+              ) : firstDoc ? (
+                <div 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const href = firstDoc.url || (firstDoc.preview && firstDoc.preview.startsWith('http') ? firstDoc.preview : null);
+                    if (href) window.open(href, '_blank');
+                  }}
+                  className={`flex items-center justify-between p-2.5 rounded-lg border border-slate-200 bg-slate-50 transition-colors ${
+                    (firstDoc.url || (firstDoc.preview && firstDoc.preview.startsWith('http'))) ? 'hover:bg-blue-50/50 hover:border-blue-200 cursor-pointer' : 'cursor-default'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileText size={18} className="text-blue-600 shrink-0" />
+                    <span className="text-xs font-semibold text-slate-700 truncate max-w-[200px]">{firstDoc.name || 'Document'}</span>
+                  </div>
+                  {attachments.length > 1 ? (
+                    <span className="text-[10px] font-bold text-slate-400 bg-slate-200 px-1.5 py-0.5 rounded">
+                      +{attachments.length - 1}
+                    </span>
+                  ) : (firstDoc.url || (firstDoc.preview && firstDoc.preview.startsWith('http'))) ? (
+                    <Download size={14} className="text-slate-400" />
+                  ) : (
+                    <span className="text-[10px] text-amber-600 font-medium">Uploading...</span>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          );
+        })()}
 
         {/* Ticket Code (e.g. Q.85) */}
         <div className="font-bold text-slate-900 text-lg mb-1.5 tracking-tight">
