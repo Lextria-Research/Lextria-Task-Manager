@@ -13,7 +13,7 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'No token', data: tokenData });
     }
 
-    const workspaceId = process.env.ZOHO_FOLDER_ID;
+    const workspaceId = req.query?.id || process.env.ZOHO_FOLDER_ID;
 
     // 2. List folders inside the workspace
     const listUrl = `https://www.zohoapis.${process.env.ZOHO_DC}/workdrive/api/v1/files/${workspaceId}/files?page%5Blimit%5D=50`;
