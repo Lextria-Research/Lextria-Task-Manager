@@ -51,14 +51,15 @@ export default async function handler(req, res) {
         const blob = new Blob([fileData], { type: file.mimetype || 'application/octet-stream' });
         const formData = new FormData();
         formData.append('content', blob, file.originalFilename || 'upload.ext');
+        formData.append('parent_id', process.env.ZOHO_FOLDER_ID);
+        formData.append('override-name-exist', 'true');
 
-        // Zoho expects parent_id in the URL query string, NOT in the form body
-        const uploadUrl = `https://upload.zoho.${process.env.ZOHO_DC}/workdrive/api/v1/upload?parent_id=${process.env.ZOHO_FOLDER_ID}&override-name-exist=true`;
+        const uploadUrl = `https://www.zohoapis.${process.env.ZOHO_DC}/workdrive/api/v1/upload`;
         
         const uploadRes = await fetch(uploadUrl, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${accessToken}`
+            'Authorization': `Zoho-oauthtoken ${accessToken}`
           },
           body: formData
         });
