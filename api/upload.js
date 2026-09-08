@@ -8,6 +8,10 @@ export const config = {
   },
 };
 
+// Global cache for the Zoho Access Token to prevent Rate Limits
+let cachedToken = null;
+let tokenExpiry = 0;
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method Not Allowed' });
@@ -31,18 +35,26 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: 'Missing Environment Variables. Please make sure they are saved for the "Preview" environment in Vercel as well as Production.' });
       }
 
-      // 2. Token Fetch
+      // 2. Token Fetch with Caching
       let tokenText = '';
-      let accessToken = '';
-      try {
-        const tokenUrl = `https://accounts.zoho.${process.env.ZOHO_DC}/oauth/v2/token?grant_type=refresh_token&client_id=${process.env.ZOHO_CLIENT_ID}&client_secret=${process.env.ZOHO_CLIENT_SECRET}&refresh_token=${process.env.ZOHO_REFRESH_TOKEN}`;
-        const tokenRes = await fetch(tokenUrl, { method: 'POST' });
-        tokenText = await tokenRes.text();
-        const tokenData = JSON.parse(tokenText);
-        accessToken = tokenData.access_token;
-        if (!accessToken) throw new Error('No access token in response');
-      } catch (e) {
-        return res.status(500).json({ error: 'Failed at Token Fetch', message: e.message, response: tokenText });
+      let accessToken = cachedToken;
+      const now = Date.now();
+      
+      if (!accessToken || now > tokenExpiry) {
+        try {
+          const tokenUrl = `https://accounts.zoho.${process.env.ZOHO_DC}/oauth/v2/token?grant_type=refresh_token&client_id=${process.env.ZOHO_CLIENT_ID}&client_secret=${process.env.ZOHO_CLIENT_SECRET}&refresh_token=${process.env.ZOHO_REFRESH_TOKEN}`;
+          const tokenRes = await fetch(tokenUrl, { method: 'POST' });
+          tokenText = await tokenRes.text();
+          const tokenData = JSON.parse(tokenText);
+          accessToken = tokenData.access_token;
+          if (!accessToken) throw new Error('No access token in response: ' + tokenText);
+          
+          // Cache the token for 55 minutes (it lasts 60 mins)
+          cachedToken = accessToken;
+          tokenExpiry = now + (55 * 60 * 1000);
+        } catch (e) {
+          return res.status(500).json({ error: 'Failed at Token Fetch', message: e.message, response: tokenText });
+        }
       }
 
       // 3. Upload Fetch
