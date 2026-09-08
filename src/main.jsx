@@ -33,9 +33,40 @@ class ErrorBoundary extends React.Component {
 
 import { Analytics } from "@vercel/analytics/react";
 
+function VersionChecker() {
+  React.useEffect(() => {
+    // Only poll in production/when running built app
+    if (import.meta.env.DEV) return;
+    
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch('/version.txt?t=' + Date.now(), { cache: 'no-store' });
+        if (!res.ok) return;
+        const version = await res.text();
+        const cleanVersion = version.trim();
+        
+        const localVersion = localStorage.getItem('appVersion');
+        if (localVersion && localVersion !== cleanVersion) {
+          localStorage.setItem('appVersion', cleanVersion);
+          window.location.reload(true);
+        } else if (!localVersion) {
+          localStorage.setItem('appVersion', cleanVersion);
+        }
+      } catch (e) {
+        // Ignore fetch errors
+      }
+    }, 60000); // Check every 60 seconds
+    
+    return () => clearInterval(interval);
+  }, []);
+  
+  return null;
+}
+
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <ErrorBoundary>
+      <VersionChecker />
       <App />
       <Analytics />
     </ErrorBoundary>
