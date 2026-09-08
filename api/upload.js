@@ -51,10 +51,10 @@ export default async function handler(req, res) {
         const blob = new Blob([fileData], { type: file.mimetype || 'application/octet-stream' });
         const formData = new FormData();
         formData.append('content', blob, file.originalFilename || 'upload.ext');
-        formData.append('parent_id', process.env.ZOHO_FOLDER_ID);
-        formData.append('override-name-exist', 'true');
 
-        const uploadUrl = `https://upload.zoho.${process.env.ZOHO_DC}/workdrive/api/v1/upload`;
+        // Zoho expects parent_id in the URL query string, NOT in the form body
+        const uploadUrl = `https://upload.zoho.${process.env.ZOHO_DC}/workdrive/api/v1/upload?parent_id=${process.env.ZOHO_FOLDER_ID}&override-name-exist=true`;
+        
         const uploadRes = await fetch(uploadUrl, {
           method: 'POST',
           headers: {
@@ -64,12 +64,22 @@ export default async function handler(req, res) {
         });
         
         uploadText = await uploadRes.text();
-        const uploadData = JSON.parse(uploadText);
+        
+        if (!uploadRes.ok) {
+           return res.status(uploadRes.status).json({ error: 'Zoho HTTP Error', status: uploadRes.status, response: uploadText });
+        }
+
+        let uploadData;
+        try {
+          uploadData = JSON.parse(uploadText);
+        } catch (e) {
+          return res.status(500).json({ error: 'Zoho returned invalid JSON', response: uploadText });
+        }
         
         if (uploadData.data && uploadData.data.length > 0) {
           return res.status(200).json({ url: uploadData.data[0].attributes.Permalink, name: file.originalFilename });
         } else {
-          return res.status(500).json({ error: 'Zoho upload failed', details: uploadData });
+          return res.status(500).json({ error: 'Zoho upload failed to return data', details: uploadData });
         }
       } catch (e) {
         return res.status(500).json({ error: 'Failed at Upload Fetch', message: e.message, response: uploadText });
