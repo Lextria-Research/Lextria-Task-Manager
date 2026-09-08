@@ -47,27 +47,38 @@ export default async function handler(req, res) {
       // 3. Upload Fetch
       let uploadText = '';
       try {
+        const FormDataNode = require('form-data');
         const fileData = fs.readFileSync(file.filepath);
-        const blob = new Blob([fileData], { type: file.mimetype || 'application/octet-stream' });
-        const formData = new FormData();
-        formData.append('content', blob, file.originalFilename || 'upload.ext');
-        formData.append('parent_id', process.env.ZOHO_FOLDER_ID);
-        formData.append('override-name-exist', 'true');
+        const form = new FormDataNode();
+        form.append('content', fileData, {
+          filename: file.originalFilename || 'upload.ext',
+          contentType: file.mimetype || 'application/octet-stream'
+        });
+        form.append('parent_id', process.env.ZOHO_FOLDER_ID);
+        form.append('override-name-exist', 'true');
 
         const uploadUrl = `https://www.zohoapis.${process.env.ZOHO_DC}/workdrive/api/v1/upload`;
         
         const uploadRes = await fetch(uploadUrl, {
           method: 'POST',
           headers: {
-            'Authorization': `Zoho-oauthtoken ${accessToken}`
+            'Authorization': `Zoho-oauthtoken ${accessToken}`,
+            ...form.getHeaders()
           },
-          body: formData
+          body: form.getBuffer()
         });
         
         uploadText = await uploadRes.text();
         
         if (!uploadRes.ok) {
-           return res.status(uploadRes.status).json({ error: 'Zoho HTTP Error', status: uploadRes.status, response: uploadText });
+           return res.status(uploadRes.status).json({ 
+             error: 'Zoho HTTP Error', 
+             status: uploadRes.status, 
+             response: uploadText,
+             debugUrl: uploadUrl,
+             debugDC: process.env.ZOHO_DC,
+             debugFolder: process.env.ZOHO_FOLDER_ID
+           });
         }
 
         let uploadData;
