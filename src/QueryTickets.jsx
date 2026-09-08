@@ -204,12 +204,27 @@ export default function QueryTickets({ session, agents = [] }) {
         
         try {
           const res = await fetch('/api/upload', { method: 'POST', body: formData });
+          
+          if (!res.ok) {
+            const errText = await res.text();
+            alert(`Backend Error (${res.status}): ` + errText);
+            setSubmitting(false);
+            return;
+          }
+
           const data = await res.json();
           if (data.url) {
             uploadedAttachments.push({ name: data.name || fileObj.name, type: fileObj.file.type, preview: data.url });
+          } else {
+            alert('Upload failed: ' + JSON.stringify(data));
+            setSubmitting(false);
+            return;
           }
         } catch (err) {
           console.error("Failed to upload file:", err);
+          alert('Network or Server Error uploading file: ' + err.message + '\n\nAre you testing on localhost? The /api folder only works on Vercel or via "vercel dev".');
+          setSubmitting(false);
+          return;
         }
       } else {
         uploadedAttachments.push(fileObj); // fallback if already uploaded
@@ -329,12 +344,24 @@ export default function QueryTickets({ session, agents = [] }) {
         
         try {
           const res = await fetch('/api/upload', { method: 'POST', body: formData });
+          
+          if (!res.ok) {
+            const errText = await res.text();
+            alert(`Backend Error (${res.status}): ` + errText);
+            return;
+          }
+
           const data = await res.json();
           if (data.url) {
             uploadedAttachments.push({ name: data.name || fileObj.name, type: fileObj.file.type, preview: data.url });
+          } else {
+            alert('Upload failed: ' + JSON.stringify(data));
+            return;
           }
         } catch (err) {
           console.error("Failed to upload file:", err);
+          alert('Network or Server Error uploading file: ' + err.message + '\n\nAre you testing on localhost? The /api folder only works on Vercel or via "vercel dev".');
+          return;
         }
       } else {
         uploadedAttachments.push(fileObj);
@@ -411,12 +438,27 @@ export default function QueryTickets({ session, agents = [] }) {
         
         try {
           const res = await fetch('/api/upload', { method: 'POST', body: formData });
+          
+          if (!res.ok) {
+            const errText = await res.text();
+            alert(`Backend Error (${res.status}): ` + errText);
+            setEditSubmitting(false);
+            return;
+          }
+
           const data = await res.json();
           if (data.url) {
             uploadedAttachments.push({ name: data.name || fileObj.name, type: fileObj.file.type, preview: data.url });
+          } else {
+            alert('Upload failed: ' + JSON.stringify(data));
+            setEditSubmitting(false);
+            return;
           }
         } catch (err) {
           console.error("Failed to upload file:", err);
+          alert('Network or Server Error uploading file: ' + err.message + '\n\nAre you testing on localhost? The /api folder only works on Vercel or via "vercel dev".');
+          setEditSubmitting(false);
+          return;
         }
       } else {
         uploadedAttachments.push(fileObj);
