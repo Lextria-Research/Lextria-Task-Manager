@@ -62,6 +62,43 @@ export function parseTicketData(ticket, agentList = []) {
   return { text: cleanText, attachments, authorName, authorRole };
 }
 
+export const generateThumbnail = (dataUrl) => {
+  return new Promise((resolve) => {
+    if (!dataUrl || !dataUrl.startsWith('data:image')) {
+      resolve(dataUrl);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const MAX_WIDTH = 400;
+      const MAX_HEIGHT = 400;
+      let width = img.width;
+      let height = img.height;
+
+      if (width > height) {
+        if (width > MAX_WIDTH) {
+          height *= MAX_WIDTH / width;
+          width = MAX_WIDTH;
+        }
+      } else {
+        if (height > MAX_HEIGHT) {
+          width *= MAX_HEIGHT / height;
+          height = MAX_HEIGHT;
+        }
+      }
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', 0.6));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+};
+
+
 export default function QueryTickets({ session, agents = [] }) {
   const [selectedBoardKey, setSelectedBoardKey] = useState('litigation');
   const [activeView, setActiveView] = useState('board'); // 'board' | 'history'
@@ -184,6 +221,62 @@ export default function QueryTickets({ session, agents = [] }) {
     }
   };
 
+  const uploadAttachmentsAndUpdateTicket = async (recordId, attachmentsList, recordData, table) => {
+    try {
+      const updatedAttachments = await Promise.all(attachmentsList.map(async (att) => {
+        if (att.uploading && att.file) {
+          const formData = new FormData();
+          formData.append('file', att.file);
+          try {
+            const res = await fetch('/api/upload', { method: 'POST', body: formData });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.url) {
+                return {
+                  name: att.name,
+                  type: att.type,
+                  preview: att.preview,
+                  url: data.url
+                };
+              }
+            }
+          } catch (e) {
+            console.error("Upload fail for", att.name, e);
+          }
+        }
+        const { file, uploading, ...rest } = att;
+        return rest;
+      }));
+
+      if (table === 'tickets') {
+        const { text, authorName, authorRole } = parseTicketData(recordData, agentsList);
+        let newPayload = `[AUTHOR]:${JSON.stringify({name: authorName, role: authorRole})}\n\n[QUERY]:\n${text}`;
+        if (updatedAttachments.length > 0) {
+          newPayload += `\n\n[ATTACHMENTS]:${JSON.stringify(updatedAttachments)}`;
+        }
+        await supabase.from('tickets').update({ query: newPayload }).eq('id', recordId);
+        fetchTickets();
+        if (selectedTicket?.id === recordId) {
+           const { data } = await supabase.from('tickets').select('*').eq('id', recordId).single();
+           if (data) setSelectedTicket(data);
+        }
+      } else if (table === 'messages') {
+        let body = recordData.content;
+        const attMarker = '\n[ATTACHMENTS]:';
+        if (body && body.includes(attMarker)) {
+          body = body.substring(0, body.indexOf(attMarker));
+        }
+        if (updatedAttachments.length > 0) {
+          body += `\n[ATTACHMENTS]: ${JSON.stringify(updatedAttachments)}`;
+        }
+        await supabase.from('messages').update({ content: body }).eq('id', recordId);
+        fetchMessages(recordData.ticket_id);
+      }
+    } catch (err) {
+      console.error('Background upload failed', err);
+    }
+  };
+
   const handleCreateTicket = async (e) => {
     e.preventDefault();
     if (!queryText.trim()) return;
@@ -195,45 +288,29 @@ export default function QueryTickets({ session, agents = [] }) {
       role: session?.role || 'member'
     };
 
-    // Upload files to Zoho via our new backend API
-    const uploadedAttachments = [];
-    for (const fileObj of images) {
-      if (fileObj.file) {
-        const formData = new FormData();
-        formData.append('file', fileObj.file);
-        
-        try {
-          const res = await fetch('/api/upload', { method: 'POST', body: formData });
-          
-          if (!res.ok) {
-            const errText = await res.text();
-            alert(`Backend Error (${res.status}): ` + errText);
-            setSubmitting(false);
-            return;
-          }
-
-          const data = await res.json();
-          if (data.url) {
-            uploadedAttachments.push({ name: data.name || fileObj.name, type: fileObj.file.type, preview: data.url });
-          } else {
-            alert('Upload failed: ' + JSON.stringify(data));
-            setSubmitting(false);
-            return;
-          }
-        } catch (err) {
-          console.error("Failed to upload file:", err);
-          alert('Network or Server Error uploading file: ' + err.message + '\n\nAre you testing on localhost? The /api folder only works on Vercel or via "vercel dev".');
-          setSubmitting(false);
-          return;
-        }
+    let processedImages = [];
+    for (const img of images) {
+      if (img.file) {
+        const thumb = await generateThumbnail(img.preview);
+        processedImages.push({
+          name: img.name,
+          type: img.file.type,
+          preview: thumb,
+          file: img.file,
+          uploading: true
+        });
       } else {
-        uploadedAttachments.push(fileObj); // fallback if already uploaded
+        processedImages.push(img);
       }
     }
 
     let fullPayloadText = `[AUTHOR]:${JSON.stringify(authorMeta)}\n\n[QUERY]:\n${queryText.trim()}`;
-    if (uploadedAttachments.length > 0) {
-      fullPayloadText += `\n\n[ATTACHMENTS]:${JSON.stringify(uploadedAttachments)}`;
+    if (processedImages.length > 0) {
+      const toSave = processedImages.map(a => {
+        const { file, uploading, ...rest } = a;
+        return rest;
+      });
+      fullPayloadText += `\n\n[ATTACHMENTS]:${JSON.stringify(toSave)}`;
     }
 
     const { data, error } = await supabase
@@ -258,6 +335,12 @@ export default function QueryTickets({ session, agents = [] }) {
       setUrgency('Medium');
       setImages([]);
       fetchTickets();
+      
+      const ticketData = data[0];
+      const filesToUpload = processedImages.filter(a => a.uploading);
+      if (filesToUpload.length > 0) {
+        uploadAttachmentsAndUpdateTicket(ticketData.id, processedImages, ticketData, 'tickets');
+      }
     }
   };
 
@@ -336,49 +419,38 @@ export default function QueryTickets({ session, agents = [] }) {
     const authorName = session?.name || 'Member';
     let contentWithAuthor = `[${authorName}]: ${newMessage.trim()}`;
 
-    const uploadedAttachments = [];
-    for (const fileObj of messageAttachments) {
-      if (fileObj.file) {
-        const formData = new FormData();
-        formData.append('file', fileObj.file);
-        
-        try {
-          const res = await fetch('/api/upload', { method: 'POST', body: formData });
-          
-          if (!res.ok) {
-            const errText = await res.text();
-            alert(`Backend Error (${res.status}): ` + errText);
-            return;
-          }
-
-          const data = await res.json();
-          if (data.url) {
-            uploadedAttachments.push({ name: data.name || fileObj.name, type: fileObj.file.type, preview: data.url });
-          } else {
-            alert('Upload failed: ' + JSON.stringify(data));
-            return;
-          }
-        } catch (err) {
-          console.error("Failed to upload file:", err);
-          alert('Network or Server Error uploading file: ' + err.message + '\n\nAre you testing on localhost? The /api folder only works on Vercel or via "vercel dev".');
-          return;
-        }
+    let processedAttachments = [];
+    for (const att of messageAttachments) {
+      if (att.file) {
+        const thumb = await generateThumbnail(att.preview);
+        processedAttachments.push({
+          name: att.name,
+          type: att.file.type,
+          preview: thumb,
+          file: att.file,
+          uploading: true
+        });
       } else {
-        uploadedAttachments.push(fileObj);
+        processedAttachments.push(att);
       }
     }
 
-    if (uploadedAttachments.length > 0) {
-      contentWithAuthor += `\n[ATTACHMENTS]: ${JSON.stringify(uploadedAttachments)}`;
+    if (processedAttachments.length > 0) {
+      const toSave = processedAttachments.map(a => {
+        const { file, uploading, ...rest } = a;
+        return rest;
+      });
+      contentWithAuthor += `\n[ATTACHMENTS]: ${JSON.stringify(toSave)}`;
     }
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('messages')
       .insert([{
         ticket_id: selectedTicket.id,
         content: contentWithAuthor,
         agent_id: agentId
-      }]);
+      }])
+      .select();
 
     if (error) {
       console.error('Error sending message:', error);
@@ -389,6 +461,12 @@ export default function QueryTickets({ session, agents = [] }) {
       setMentionState({ active: false, query: '', startIndex: -1 });
       fetchMessages(selectedTicket.id);
       fetchMentions();
+
+      const msgData = data[0];
+      const filesToUpload = processedAttachments.filter(a => a.uploading);
+      if (filesToUpload.length > 0) {
+        uploadAttachmentsAndUpdateTicket(msgData.id, processedAttachments, msgData, 'messages');
+      }
     }
   };
 
@@ -430,44 +508,29 @@ export default function QueryTickets({ session, agents = [] }) {
     const { authorName, authorRole } = parseTicketData(editingTicket, agentsList);
     const authorMeta = { name: authorName, role: authorRole };
 
-    const uploadedAttachments = [];
-    for (const fileObj of editImages) {
-      if (fileObj.file) {
-        const formData = new FormData();
-        formData.append('file', fileObj.file);
-        
-        try {
-          const res = await fetch('/api/upload', { method: 'POST', body: formData });
-          
-          if (!res.ok) {
-            const errText = await res.text();
-            alert(`Backend Error (${res.status}): ` + errText);
-            setEditSubmitting(false);
-            return;
-          }
-
-          const data = await res.json();
-          if (data.url) {
-            uploadedAttachments.push({ name: data.name || fileObj.name, type: fileObj.file.type, preview: data.url });
-          } else {
-            alert('Upload failed: ' + JSON.stringify(data));
-            setEditSubmitting(false);
-            return;
-          }
-        } catch (err) {
-          console.error("Failed to upload file:", err);
-          alert('Network or Server Error uploading file: ' + err.message + '\n\nAre you testing on localhost? The /api folder only works on Vercel or via "vercel dev".');
-          setEditSubmitting(false);
-          return;
-        }
+    let processedImages = [];
+    for (const img of editImages) {
+      if (img.file) {
+        const thumb = await generateThumbnail(img.preview);
+        processedImages.push({
+          name: img.name,
+          type: img.file.type,
+          preview: thumb,
+          file: img.file,
+          uploading: true
+        });
       } else {
-        uploadedAttachments.push(fileObj);
+        processedImages.push(img);
       }
     }
 
     let fullPayloadText = `[AUTHOR]:${JSON.stringify(authorMeta)}\n\n[QUERY]:\n${editQueryText.trim()}`;
-    if (uploadedAttachments.length > 0) {
-      fullPayloadText += `\n\n[ATTACHMENTS]:${JSON.stringify(uploadedAttachments)}`;
+    if (processedImages.length > 0) {
+      const toSave = processedImages.map(a => {
+        const { file, uploading, ...rest } = a;
+        return rest;
+      });
+      fullPayloadText += `\n\n[ATTACHMENTS]:${JSON.stringify(toSave)}`;
     }
 
     const { data, error } = await supabase
@@ -491,6 +554,11 @@ export default function QueryTickets({ session, agents = [] }) {
         setSelectedTicket(updated);
       }
       setEditingTicket(null);
+      
+      const filesToUpload = processedImages.filter(a => a.uploading);
+      if (filesToUpload.length > 0) {
+        uploadAttachmentsAndUpdateTicket(updated.id, processedImages, updated, 'tickets');
+      }
     }
   };
 
@@ -913,22 +981,54 @@ export default function QueryTickets({ session, agents = [] }) {
                     {/* Attached Images preview right below author name */}
                     {attachments.length > 0 && (
                       <div className="mb-4 space-y-2">
-                        {attachments.map((att, idx) => (
-                          <div 
-                            key={idx}
-                            onClick={() => setPreviewImage(att)}
-                            className="rounded-xl overflow-hidden border border-slate-200 bg-slate-100 relative group cursor-pointer shadow-xs"
-                          >
-                            <img 
-                              src={att.preview} 
-                              alt={att.name || 'Attachment'} 
-                              className="w-full max-h-64 object-cover object-top group-hover:scale-[1.01] transition-transform duration-150" 
-                            />
-                            <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-semibold backdrop-blur-2xs">
-                              <Eye size={16} /> Click to expand
-                            </div>
-                          </div>
-                        ))}
+                        {attachments.map((att, idx) => {
+                          const hasUrl = !!att.url;
+                          const isLegacyExternal = att.preview && att.preview.startsWith('http');
+                          
+                          if (hasUrl || isLegacyExternal) {
+                            const linkHref = att.url || att.preview;
+                            const hasThumbnail = att.preview && !att.preview.startsWith('http');
+                            return (
+                              <a 
+                                key={idx}
+                                href={linkHref} 
+                                target="_blank" 
+                                rel="noreferrer"
+                                className="block rounded-xl border border-slate-200 bg-slate-50 overflow-hidden hover:border-slate-300 transition-colors"
+                              >
+                                {hasThumbnail ? (
+                                  <img 
+                                    src={att.preview} 
+                                    alt={att.name || 'Attachment'} 
+                                    className="w-full max-h-64 object-cover object-top hover:scale-[1.01] transition-transform duration-150" 
+                                  />
+                                ) : (
+                                  <div className="flex items-center gap-2 p-3 text-blue-600 font-medium hover:bg-slate-100 transition-colors">
+                                    <FileText size={20} />
+                                    View {att.name || 'Attachment'}
+                                  </div>
+                                )}
+                              </a>
+                            );
+                          } else {
+                            return (
+                              <div 
+                                key={idx}
+                                onClick={() => setPreviewImage(att)}
+                                className="rounded-xl overflow-hidden border border-slate-200 bg-slate-100 relative group cursor-pointer shadow-xs"
+                              >
+                                <img 
+                                  src={att.preview} 
+                                  alt={att.name || 'Attachment'} 
+                                  className="w-full max-h-64 object-cover object-top group-hover:scale-[1.01] transition-transform duration-150" 
+                                />
+                                <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-semibold backdrop-blur-2xs">
+                                  <Eye size={16} /> Click to expand
+                                </div>
+                              </div>
+                            );
+                          }
+                        })}
                       </div>
                     )}
 
@@ -1039,12 +1139,36 @@ export default function QueryTickets({ session, agents = [] }) {
                           {attachments.length > 0 && (
                             <div className={`flex flex-wrap gap-2 ${body ? 'mt-2 pt-2 border-t border-white/20' : ''}`}>
                               {attachments.map((att, idx) => {
-                                const isExternal = att.preview && att.preview.startsWith('http');
+                                const hasUrl = !!att.url;
+                                const isLegacyExternal = att.preview && att.preview.startsWith('http');
                                 const isImage = att.type && att.type.startsWith('image/');
                                 
                                 return (
                                 <div key={idx} className="relative group">
-                                  {isImage && !isExternal ? (
+                                  {(hasUrl || isLegacyExternal) ? (
+                                    <a 
+                                      href={att.url || att.preview} 
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="block"
+                                      title={`View ${att.name}`}
+                                    >
+                                      {att.preview && !att.preview.startsWith('http') ? (
+                                        <img 
+                                          src={att.preview} 
+                                          alt={att.name} 
+                                          className="h-16 w-16 object-cover rounded hover:opacity-90 border border-white/20"
+                                        />
+                                      ) : (
+                                        <div className={`flex items-center gap-1.5 p-1.5 rounded border transition-colors ${
+                                          isOwn ? 'bg-white/10 hover:bg-white/20 border-white/20 text-white' : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-blue-600'
+                                        }`}>
+                                          <FileText size={16} />
+                                          <span className="text-xs truncate max-w-[100px] font-medium">{att.name}</span>
+                                        </div>
+                                      )}
+                                    </a>
+                                  ) : isImage ? (
                                     <img 
                                       src={att.preview} 
                                       alt={att.name} 
@@ -1056,7 +1180,7 @@ export default function QueryTickets({ session, agents = [] }) {
                                       href={att.preview} 
                                       target="_blank"
                                       rel="noreferrer"
-                                      download={!isExternal ? att.name : undefined}
+                                      download={att.name}
                                       className={`flex items-center gap-1.5 p-1.5 rounded border transition-colors ${
                                         isOwn ? 'bg-white/10 hover:bg-white/20 border-white/20' : 'bg-slate-100 hover:bg-slate-200 border-slate-200'
                                       }`}
@@ -1439,15 +1563,38 @@ function TicketCardItem({ ticket, onClick, urgencyBadge, agentsList = [], onOpen
         {/* Attached Screenshot preview if available - prominent right below name */}
         {attachments.length > 0 && (
           <div className="mb-3 rounded-lg overflow-hidden border border-slate-200 bg-slate-50 relative">
-            <img 
-              src={attachments[0].preview} 
-              alt={attachments[0].name || 'Attached Screenshot'} 
-              className="w-full max-h-56 object-cover object-top hover:scale-[1.01] transition-transform duration-150"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (onOpenImage) onOpenImage(attachments[0]);
-              }}
-            />
+            {attachments[0].url || (attachments[0].preview && attachments[0].preview.startsWith('http')) ? (
+              <a 
+                href={attachments[0].url || attachments[0].preview} 
+                target="_blank" 
+                rel="noreferrer" 
+                className="block w-full"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {attachments[0].preview && !attachments[0].preview.startsWith('http') ? (
+                  <img 
+                    src={attachments[0].preview} 
+                    alt={attachments[0].name || 'Attached Screenshot'} 
+                    className="w-full max-h-56 object-cover object-top hover:scale-[1.01] transition-transform duration-150"
+                  />
+                ) : (
+                  <div className="flex items-center justify-center gap-2 w-full py-4 text-blue-600 hover:bg-blue-50 font-medium transition-colors">
+                    <FileText size={20} />
+                    View {attachments[0].name || 'Attachment'}
+                  </div>
+                )}
+              </a>
+            ) : (
+              <img 
+                src={attachments[0].preview} 
+                alt={attachments[0].name || 'Attached Screenshot'} 
+                className="w-full max-h-56 object-cover object-top hover:scale-[1.01] transition-transform duration-150"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onOpenImage) onOpenImage(attachments[0]);
+                }}
+              />
+            )}
             {attachments.length > 1 && (
               <span className="absolute bottom-2 right-2 bg-black/70 text-white text-[10px] font-bold px-2 py-0.5 rounded-md backdrop-blur-xs">
                 +{attachments.length - 1} more
