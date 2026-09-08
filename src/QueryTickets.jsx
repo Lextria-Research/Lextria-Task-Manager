@@ -195,9 +195,30 @@ export default function QueryTickets({ session, agents = [] }) {
       role: session?.role || 'member'
     };
 
+    // Upload files to Zoho via our new backend API
+    const uploadedAttachments = [];
+    for (const fileObj of images) {
+      if (fileObj.file) {
+        const formData = new FormData();
+        formData.append('file', fileObj.file);
+        
+        try {
+          const res = await fetch('/api/upload', { method: 'POST', body: formData });
+          const data = await res.json();
+          if (data.url) {
+            uploadedAttachments.push({ name: data.name || fileObj.name, type: fileObj.file.type, preview: data.url });
+          }
+        } catch (err) {
+          console.error("Failed to upload file:", err);
+        }
+      } else {
+        uploadedAttachments.push(fileObj); // fallback if already uploaded
+      }
+    }
+
     let fullPayloadText = `[AUTHOR]:${JSON.stringify(authorMeta)}\n\n[QUERY]:\n${queryText.trim()}`;
-    if (images.length > 0) {
-      fullPayloadText += `\n\n[ATTACHMENTS]:${JSON.stringify(images)}`;
+    if (uploadedAttachments.length > 0) {
+      fullPayloadText += `\n\n[ATTACHMENTS]:${JSON.stringify(uploadedAttachments)}`;
     }
 
     const { data, error } = await supabase
@@ -275,7 +296,7 @@ export default function QueryTickets({ session, agents = [] }) {
     files.forEach(file => {
       const reader = new FileReader();
       reader.onload = (ev) => {
-        setMessageAttachments(prev => [...prev, { name: file.name, type: file.type, preview: ev.target.result }]);
+        setMessageAttachments(prev => [...prev, { name: file.name, file: file, type: file.type, preview: ev.target.result }]);
       };
       reader.readAsDataURL(file);
     });
@@ -300,8 +321,28 @@ export default function QueryTickets({ session, agents = [] }) {
     const authorName = session?.name || 'Member';
     let contentWithAuthor = `[${authorName}]: ${newMessage.trim()}`;
 
-    if (messageAttachments.length > 0) {
-      contentWithAuthor += `\n[ATTACHMENTS]: ${JSON.stringify(messageAttachments)}`;
+    const uploadedAttachments = [];
+    for (const fileObj of messageAttachments) {
+      if (fileObj.file) {
+        const formData = new FormData();
+        formData.append('file', fileObj.file);
+        
+        try {
+          const res = await fetch('/api/upload', { method: 'POST', body: formData });
+          const data = await res.json();
+          if (data.url) {
+            uploadedAttachments.push({ name: data.name || fileObj.name, type: fileObj.file.type, preview: data.url });
+          }
+        } catch (err) {
+          console.error("Failed to upload file:", err);
+        }
+      } else {
+        uploadedAttachments.push(fileObj);
+      }
+    }
+
+    if (uploadedAttachments.length > 0) {
+      contentWithAuthor += `\n[ATTACHMENTS]: ${JSON.stringify(uploadedAttachments)}`;
     }
 
     const { error } = await supabase
@@ -334,7 +375,7 @@ export default function QueryTickets({ session, agents = [] }) {
     files.forEach(file => {
       const reader = new FileReader();
       reader.onload = (ev) => {
-        setImages(prev => [...prev, { name: file.name, preview: ev.target.result }]);
+        setImages(prev => [...prev, { name: file.name, file: file, preview: ev.target.result }]);
       };
       reader.readAsDataURL(file);
     });
@@ -362,9 +403,29 @@ export default function QueryTickets({ session, agents = [] }) {
     const { authorName, authorRole } = parseTicketData(editingTicket, agentsList);
     const authorMeta = { name: authorName, role: authorRole };
 
+    const uploadedAttachments = [];
+    for (const fileObj of editImages) {
+      if (fileObj.file) {
+        const formData = new FormData();
+        formData.append('file', fileObj.file);
+        
+        try {
+          const res = await fetch('/api/upload', { method: 'POST', body: formData });
+          const data = await res.json();
+          if (data.url) {
+            uploadedAttachments.push({ name: data.name || fileObj.name, type: fileObj.file.type, preview: data.url });
+          }
+        } catch (err) {
+          console.error("Failed to upload file:", err);
+        }
+      } else {
+        uploadedAttachments.push(fileObj);
+      }
+    }
+
     let fullPayloadText = `[AUTHOR]:${JSON.stringify(authorMeta)}\n\n[QUERY]:\n${editQueryText.trim()}`;
-    if (editImages.length > 0) {
-      fullPayloadText += `\n\n[ATTACHMENTS]:${JSON.stringify(editImages)}`;
+    if (uploadedAttachments.length > 0) {
+      fullPayloadText += `\n\n[ATTACHMENTS]:${JSON.stringify(uploadedAttachments)}`;
     }
 
     const { data, error } = await supabase
@@ -396,7 +457,7 @@ export default function QueryTickets({ session, agents = [] }) {
     files.forEach(file => {
       const reader = new FileReader();
       reader.onload = (ev) => {
-        setEditImages(prev => [...prev, { name: file.name, preview: ev.target.result }]);
+        setEditImages(prev => [...prev, { name: file.name, file: file, preview: ev.target.result }]);
       };
       reader.readAsDataURL(file);
     });
@@ -935,9 +996,13 @@ export default function QueryTickets({ session, agents = [] }) {
                           {body && <div className="whitespace-pre-line break-words">{body}</div>}
                           {attachments.length > 0 && (
                             <div className={`flex flex-wrap gap-2 ${body ? 'mt-2 pt-2 border-t border-white/20' : ''}`}>
-                              {attachments.map((att, idx) => (
+                              {attachments.map((att, idx) => {
+                                const isExternal = att.preview && att.preview.startsWith('http');
+                                const isImage = att.type && att.type.startsWith('image/');
+                                
+                                return (
                                 <div key={idx} className="relative group">
-                                  {att.type && att.type.startsWith('image/') ? (
+                                  {isImage && !isExternal ? (
                                     <img 
                                       src={att.preview} 
                                       alt={att.name} 
@@ -947,18 +1012,20 @@ export default function QueryTickets({ session, agents = [] }) {
                                   ) : (
                                     <a 
                                       href={att.preview} 
-                                      download={att.name}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      download={!isExternal ? att.name : undefined}
                                       className={`flex items-center gap-1.5 p-1.5 rounded border transition-colors ${
                                         isOwn ? 'bg-white/10 hover:bg-white/20 border-white/20' : 'bg-slate-100 hover:bg-slate-200 border-slate-200'
                                       }`}
-                                      title={`Download ${att.name}`}
+                                      title={`View ${att.name}`}
                                     >
                                       <FileText size={16} />
                                       <span className="text-xs truncate max-w-[100px] font-medium">{att.name}</span>
                                     </a>
                                   )}
                                 </div>
-                              ))}
+                              )})}
                             </div>
                           )}
                         </div>
