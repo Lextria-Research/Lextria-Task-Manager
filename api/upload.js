@@ -1,5 +1,6 @@
 import { IncomingForm } from 'formidable';
 import fs from 'fs';
+import FormDataNode from 'form-data';
 
 export const config = {
   api: {
@@ -47,7 +48,6 @@ export default async function handler(req, res) {
       // 3. Upload Fetch
       let uploadText = '';
       try {
-        const FormDataNode = require('form-data');
         const fileData = fs.readFileSync(file.filepath);
         const form = new FormDataNode();
         form.append('content', fileData, {
