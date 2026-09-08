@@ -16,32 +16,37 @@ export default async function handler(req, res) {
     const form = new IncomingForm();
     form.parse(req, async (err, fields, files) => {
       if (err) {
-        console.error('File parse error:', err);
-        return res.status(500).json({ error: 'File parse error' });
+        return res.status(500).json({ error: 'File parse error', details: err.message });
       }
 
-      // Check if file exists
       const fileArray = files.file || files.files;
       if (!fileArray || fileArray.length === 0) {
         return res.status(400).json({ error: 'No file uploaded' });
       }
-      
       const file = fileArray[0];
 
+      // 1. Check Env Vars
+      if (!process.env.ZOHO_DC || !process.env.ZOHO_CLIENT_ID) {
+        return res.status(500).json({ error: 'Missing Environment Variables. Please make sure they are saved for the "Preview" environment in Vercel as well as Production.' });
+      }
+
+      // 2. Token Fetch
+      let tokenText = '';
+      let accessToken = '';
       try {
-        // 1. Get Zoho Access Token
         const tokenUrl = `https://accounts.zoho.${process.env.ZOHO_DC}/oauth/v2/token?grant_type=refresh_token&client_id=${process.env.ZOHO_CLIENT_ID}&client_secret=${process.env.ZOHO_CLIENT_SECRET}&refresh_token=${process.env.ZOHO_REFRESH_TOKEN}`;
-        
         const tokenRes = await fetch(tokenUrl, { method: 'POST' });
-        const tokenData = await tokenRes.json();
-        const accessToken = tokenData.access_token;
+        tokenText = await tokenRes.text();
+        const tokenData = JSON.parse(tokenText);
+        accessToken = tokenData.access_token;
+        if (!accessToken) throw new Error('No access token in response');
+      } catch (e) {
+        return res.status(500).json({ error: 'Failed at Token Fetch', message: e.message, response: tokenText });
+      }
 
-        if (!accessToken) {
-          console.error('Zoho Auth Error:', tokenData);
-          return res.status(500).json({ error: 'Failed to authenticate with Zoho' });
-        }
-
-        // 2. Upload to Zoho
+      // 3. Upload Fetch
+      let uploadText = '';
+      try {
         const fileData = fs.readFileSync(file.filepath);
         const blob = new Blob([fileData], { type: file.mimetype || 'application/octet-stream' });
         const formData = new FormData();
@@ -57,23 +62,20 @@ export default async function handler(req, res) {
           },
           body: formData
         });
-
-        const uploadData = await uploadRes.json();
+        
+        uploadText = await uploadRes.text();
+        const uploadData = JSON.parse(uploadText);
         
         if (uploadData.data && uploadData.data.length > 0) {
-          const permalink = uploadData.data[0].attributes.Permalink;
-          return res.status(200).json({ url: permalink, name: file.originalFilename });
+          return res.status(200).json({ url: uploadData.data[0].attributes.Permalink, name: file.originalFilename });
         } else {
-          console.error('Zoho Upload Error:', uploadData);
           return res.status(500).json({ error: 'Zoho upload failed', details: uploadData });
         }
-      } catch (innerErr) {
-        console.error('Inner Error:', innerErr);
-        return res.status(500).json({ error: innerErr.message });
+      } catch (e) {
+        return res.status(500).json({ error: 'Failed at Upload Fetch', message: e.message, response: uploadText });
       }
     });
   } catch (error) {
-    console.error('Outer Error:', error);
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: 'Outer Exception', message: error.message });
   }
 }
