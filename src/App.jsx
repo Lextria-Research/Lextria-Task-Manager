@@ -33,7 +33,7 @@ import MemberManualModal from './MemberManualModal';
 // --- SYSTEM UNDER MAINTENANCE MODE ---
 // Set to true to lock down the site and pause all user interactions during upgrades.
 // Set to false to immediately restore the full dashboard once maintenance is complete.
-const IS_UNDER_MAINTENANCE = false;
+const IS_UNDER_MAINTENANCE = true;
 
 function MaintenanceScreen() {
   return (
@@ -65,7 +65,7 @@ function MaintenanceScreen() {
         </h1>
 
         <p className="text-slate-300 text-sm leading-relaxed mb-6">
-          The Lextria Task Dashboard is temporarily undergoing scheduled maintenance to add the queries bar login and system upgrades. All activities and interactions are paused to ensure data safety.
+          The Lextria Task Dashboard is temporarily undergoing scheduled server migration and infrastructure upgrades. All activities and interactions are paused to ensure data safety during the transition.
         </p>
 
         {/* Status Card */}
@@ -85,7 +85,7 @@ function MaintenanceScreen() {
           </div>
           <div className="flex items-center justify-between text-xs">
             <span className="text-slate-400">Current Task:</span>
-            <span className="text-brand-300 font-medium">Queries Bar & Login Integration</span>
+            <span className="text-brand-300 font-medium">Server Migration & Infrastructure Upgrade</span>
           </div>
         </div>
 
