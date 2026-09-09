@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node test_upload_and_attachments.js && node -e \"require('fs').writeFileSync('public/version.txt', Date.now().toString())\" && vite build",
+    "build": "node -e \"require('fs').writeFileSync('public/version.txt', Date.now().toString())\" && vite build",
     "test": "node test_upload_and_attachments.js",
     "lint": "eslint .",
     "preview": "vite preview"
