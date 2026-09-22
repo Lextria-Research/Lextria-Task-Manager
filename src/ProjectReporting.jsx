@@ -128,6 +128,43 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
     }
   };
 
+  const handleDeleteProject = async (projectId) => {
+    if (!window.confirm("Are you sure you want to delete this project? This action cannot be undone.")) return;
+    
+    // Optimistic update
+    const previousProjects = [...projects];
+    const previousSelected = selectedProject;
+    
+    setProjects(projects.filter(p => p.id !== projectId));
+    setSelectedProject(null);
+
+    // Delete associated updates first (if any cascading delete issues exist, this is safer)
+    await supabase.from('project_updates').delete().eq('project_id', projectId);
+    
+    const { error } = await supabase
+      .from('projects')
+      .delete()
+      .eq('id', projectId);
+      
+    if (error) {
+      console.error('Error deleting project:', error);
+      alert('Could not delete project: ' + (error.message || 'Please check connection.'));
+      // Rollback on failure
+      setProjects(previousProjects);
+      setSelectedProject(previousSelected);
+    } else {
+      // Clean up clients if this was the last project for that client
+      const deletedProject = previousProjects.find(p => p.id === projectId);
+      const remainingForClient = previousProjects.filter(p => p.id !== projectId && p.client === deletedProject?.client);
+      if (remainingForClient.length === 0) {
+        setClients(clients.filter(c => c !== deletedProject?.client));
+        if (activeClient === deletedProject?.client) {
+          setActiveClient('All Clients');
+        }
+      }
+    }
+  };
+
   const openProjectDetails = (project) => {
     setSelectedProject(project);
     fetchUpdates(project.id);
@@ -424,9 +461,16 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
                   ))}
                 </div>
               </div>
-              
-              <div className="mt-auto pt-6 border-t border-gray-100 text-sm text-gray-500 flex items-center gap-2">
-                <Calendar size={16} /> Created on {new Date(selectedProject.created_at).toLocaleString()}
+              <div className="mt-auto pt-6 border-t border-gray-100 flex items-center justify-between">
+                <div className="text-sm text-gray-500 flex items-center gap-2">
+                  <Calendar size={16} /> Created on {new Date(selectedProject.created_at).toLocaleDateString()}
+                </div>
+                <button 
+                  onClick={() => handleDeleteProject(selectedProject.id)}
+                  className="text-red-600 hover:text-red-800 hover:bg-red-50 text-sm font-medium px-3 py-1.5 rounded-md transition-colors"
+                >
+                  Delete Project
+                </button>
               </div>
             </div>
 
