@@ -25,7 +25,13 @@ export function parseTicketData(ticket, agentList = []) {
     cleanText = endIdx === -1 ? '' : cleanText.substring(endIdx).trim();
   } else if (ticket.created_by && agentList && agentList.length > 0) {
     const found = agentList.find(a => a.id === ticket.created_by);
-    if (found) authorName = found.name;
+    if (found) {
+      authorName = found.name;
+    } else if (ticket.created_by_name || ticket.author_name || ticket.author) {
+      authorName = ticket.created_by_name || ticket.author_name || ticket.author;
+    }
+  } else if (ticket.created_by_name || ticket.author_name || ticket.author) {
+    authorName = ticket.created_by_name || ticket.author_name || ticket.author;
   }
 
   if (cleanText.includes('[QUERY]:')) {
@@ -90,3 +96,71 @@ export function getImageSrc(att) {
   }
   return '';
 }
+
+export const BOARDS = [
+  { key: 'litigation', label: 'Litigation', prefix: 'LIT' },
+  { key: 'compliance', label: 'Compliance', prefix: 'CMP' },
+  { key: 'misc', label: 'Miscellaneous', prefix: 'MISC' },
+  { key: 'patent', label: 'Patent', prefix: 'PAT' },
+  { key: 'trademark', label: 'Trademark', prefix: 'TM' },
+  { key: 'copyright', label: 'Copyright', prefix: 'CR' },
+  { key: 'design', label: 'Design', prefix: 'DSN' },
+];
+
+export function extractMessageSnippet(content, userName) {
+  if (!content) return '';
+  let body = String(content);
+  if (body.startsWith('[') && body.includes(']:')) {
+    const closing = body.indexOf(']:');
+    body = body.substring(closing + 2);
+    if (body.startsWith(' ')) body = body.substring(1);
+  }
+  const attMarker = '[ATTACHMENTS]:';
+  if (body.includes(attMarker)) {
+    body = body.substring(0, body.indexOf(attMarker)).trim();
+  }
+  body = body.replace(/[\r\n]+/g, ' ').trim();
+  if (!body) return '';
+
+  if (body.length <= 80) return body;
+
+  if (userName) {
+    const cleanUser = String(userName).trim();
+    const mentionTarget = `@${cleanUser}`.toLowerCase();
+    let idx = body.toLowerCase().indexOf(mentionTarget);
+    let targetLength = mentionTarget.length;
+
+    // If full name mention is not found and user name has spaces, check for first name
+    if (idx === -1 && cleanUser.includes(' ')) {
+      const firstName = cleanUser.split(/\s+/)[0];
+      const firstTarget = `@${firstName}`.toLowerCase();
+      idx = body.toLowerCase().indexOf(firstTarget);
+      if (idx !== -1) {
+        targetLength = firstTarget.length;
+      }
+    }
+
+    if (idx !== -1) {
+      const start = Math.max(0, idx - 20);
+      const end = Math.min(body.length, idx + targetLength + 50);
+      let snippet = body.substring(start, end).trim();
+      if (start > 0) snippet = '...' + snippet;
+      if (end < body.length) snippet = snippet + '...';
+      return snippet;
+    }
+  }
+  return body.slice(0, 77) + '...';
+}
+
+export function getBoardKey(boardName) {
+  if (!boardName) return 'litigation';
+  const norm = String(boardName).toLowerCase().trim();
+  const match = BOARDS.find(b => 
+    b.key.toLowerCase() === norm || 
+    b.label.toLowerCase() === norm ||
+    (b.prefix && b.prefix.toLowerCase() === norm) ||
+    (b.key === 'misc' && (norm === 'misc' || norm === 'miscellaneous'))
+  );
+  return match ? match.key : 'litigation';
+}
+

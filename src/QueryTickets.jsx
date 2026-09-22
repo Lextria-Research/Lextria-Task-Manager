@@ -1,25 +1,30 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from './supabaseClient';
 import { 
   Plus, Clock, MessageSquare, X, Send, User, Calendar,
   Download, Eye, Image as ImageIcon, ChevronDown,
-  Pencil, Trash2, AlertTriangle, Paperclip, FileText
+  Pencil, Trash2, AlertTriangle, Paperclip, FileText,
+  Search, ArrowDown
 } from 'lucide-react';
 
-const BOARDS = [
-  { key: 'litigation', label: 'Litigation', prefix: 'LIT' },
-  { key: 'compliance', label: 'Compliance', prefix: 'CMP' },
-  { key: 'misc', label: 'Miscellaneous', prefix: 'MISC' },
-  { key: 'patent', label: 'Patent', prefix: 'PAT' },
-  { key: 'trademark', label: 'Trademark', prefix: 'TM' },
-  { key: 'copyright', label: 'Copyright', prefix: 'CR' },
-  { key: 'design', label: 'Design', prefix: 'DSN' },
-];
+export {
+  BOARDS,
+  extractMessageSnippet,
+  getBoardKey,
+  parseTicketData,
+  isImageAttachment,
+  getImageSrc
+} from './attachmentUtils';
+import {
+  BOARDS,
+  extractMessageSnippet,
+  getBoardKey,
+  parseTicketData,
+  isImageAttachment,
+  getImageSrc
+} from './attachmentUtils';
 
 const URGENCIES = ['High', 'Medium', 'Low'];
-
-export { parseTicketData, isImageAttachment, getImageSrc } from './attachmentUtils';
-import { parseTicketData, isImageAttachment, getImageSrc } from './attachmentUtils';
 
 export const generateThumbnail = (dataUrl) => {
   return new Promise((resolve) => {
@@ -64,10 +69,21 @@ export default function QueryTickets({ session, agents = [] }) {
   const [loading, setLoading] = useState(true);
   const [agentsList, setAgentsList] = useState(agents);
   const [membersList, setMembersList] = useState([]);
+  const allPersonnel = useMemo(() => {
+    return [...agentsList, ...membersList];
+  }, [agentsList, membersList]);
   const [mentionedTicketIds, setMentionedTicketIds] = useState(new Set());
+  const [mentionsList, setMentionsList] = useState([]);
+  const [showMentionsDropdown, setShowMentionsDropdown] = useState(false);
+  const mentionsDropdownRef = useRef(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const [showNewModal, setShowNewModal] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState(null);
+  const selectedTicketRef = useRef(selectedTicket);
+  useEffect(() => {
+    selectedTicketRef.current = selectedTicket;
+  }, [selectedTicket]);
   const [previewImage, setPreviewImage] = useState(null);
   const [lightboxError, setLightboxError] = useState(false);
   const handleOpenPreview = (img) => {
@@ -112,14 +128,144 @@ export default function QueryTickets({ session, agents = [] }) {
   const currentBoard = BOARDS.find(b => b.key === selectedBoardKey) || BOARDS[0];
 
   const fetchMentions = async () => {
-    if (!session?.name) return;
-    // Basic ilike query to find messages where content includes @UserName
-    const { data, error } = await supabase
-      .from('messages')
-      .select('ticket_id')
-      .ilike('content', `%@${session.name}%`);
-    if (!error && data) {
-      setMentionedTicketIds(new Set(data.map(d => d.ticket_id)));
+    if (!session?.name) {
+      setMentionsList([]);
+      setMentionedTicketIds(new Set());
+      return [];
+    }
+    try {
+      const cleanName = session.name.trim();
+      let { data, error } = await supabase
+        .from('messages')
+        .select('id, ticket_id, content, created_at')
+        .ilike('content', `%@${cleanName}%`)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      // If user has a full name with spaces, also check for first-name mentions matching extractMessageSnippet
+      if (cleanName.includes(' ')) {
+        const firstName = cleanName.split(/\s+/)[0];
+        if (firstName.length >= 2) {
+          const { data: firstData, error: firstErr } = await supabase
+            .from('messages')
+            .select('id, ticket_id, content, created_at')
+            .ilike('content', `%@${firstName}%`)
+            .order('created_at', { ascending: false })
+            .limit(50);
+          if (!firstErr && firstData) {
+            const existingIds = new Set((data || []).map(d => d.id));
+            const additional = firstData.filter(d => !existingIds.has(d.id));
+            data = [...(data || []), ...additional]
+              .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+              .slice(0, 50);
+          }
+        }
+      }
+
+      if (error) {
+        console.error('Error fetching mentions:', error);
+        return [];
+      }
+
+      if (!data || data.length === 0) {
+        setMentionsList([]);
+        setMentionedTicketIds(new Set());
+        return [];
+      }
+
+      const ticketIds = [...new Set(data.map(d => d.ticket_id).filter(Boolean))];
+
+      // Fetch corresponding tickets to get ticket code and board
+      let ticketMap = new Map();
+      if (ticketIds.length > 0) {
+        const { data: ticketData, error: ticketError } = await supabase
+          .from('tickets')
+          .select('id, code, board, query, status')
+          .in('id', ticketIds);
+
+        if (!ticketError && ticketData) {
+          ticketData.forEach(t => ticketMap.set(t.id, t));
+        }
+      }
+
+      // Filter to existing tickets so phantom records for deleted tickets are excluded
+      const validData = data.filter(m => ticketMap.has(m.ticket_id));
+      const validTicketIds = [...new Set(validData.map(d => d.ticket_id))];
+      setMentionedTicketIds(new Set(validTicketIds));
+
+      const mentions = validData.map(m => {
+        const ticket = ticketMap.get(m.ticket_id);
+        const snippet = extractMessageSnippet(m.content, session.name);
+        return {
+          id: ticket ? ticket.id : m.ticket_id,
+          ticket_id: m.ticket_id,
+          message_id: m.id,
+          code: ticket?.code || 'Q.1',
+          board: ticket?.board || 'Litigation',
+          snippet: snippet || 'Mentioned you in a message',
+          created_at: m.created_at
+        };
+      });
+
+      setMentionsList(mentions);
+      return mentions;
+    } catch (err) {
+      console.error('Failed to fetch mentions:', err);
+      return [];
+    }
+  };
+
+  const handleToggleMentions = () => {
+    const nextState = !showMentionsDropdown;
+    setShowMentionsDropdown(nextState);
+    if (nextState) {
+      fetchMentions();
+    }
+  };
+
+  // Close mentions dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (mentionsDropdownRef.current && !mentionsDropdownRef.current.contains(event.target)) {
+        setShowMentionsDropdown(false);
+      }
+    };
+    if (showMentionsDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showMentionsDropdown]);
+
+  const handleSelectMention = async (mention) => {
+    setShowMentionsDropdown(false);
+    const targetTicketId = mention.ticket_id || mention.id;
+    let targetTicket = tickets.find(t => t.id === targetTicketId);
+    if (!targetTicket) {
+      const { data, error } = await supabase
+        .from('tickets')
+        .select('*')
+        .eq('id', targetTicketId)
+        .maybeSingle();
+      if (data && !error) {
+        targetTicket = data;
+        setTickets(prev => prev.some(t => t.id === data.id) ? prev : [data, ...prev]);
+      }
+    }
+
+    if (targetTicket) {
+      const targetBoardKey = getBoardKey(targetTicket.board || mention.board);
+      setSelectedBoardKey(targetBoardKey);
+      setSearchQuery(''); // Reset search filter so target ticket is visible on board
+
+      if ((targetTicket.status || '').toLowerCase() === 'resolved') {
+        setActiveView('history');
+      } else {
+        setActiveView('board');
+      }
+      setSelectedTicket(targetTicket);
+      openTicket(targetTicket);
     }
   };
 
@@ -138,6 +284,31 @@ export default function QueryTickets({ session, agents = [] }) {
         setMembersList(data);
       }
     });
+
+    let refreshTimer;
+    const channel = supabase.channel('query-tickets-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
+        clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(() => {
+          fetchMentions();
+          if (selectedTicketRef.current) {
+            fetchMessages(selectedTicketRef.current.id);
+          }
+        }, 500);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets' }, () => {
+        clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(() => {
+          fetchTickets();
+          fetchMentions();
+        }, 500);
+      })
+      .subscribe();
+
+    return () => {
+      clearTimeout(refreshTimer);
+      supabase.removeChannel(channel);
+    };
   }, [session?.name]);
 
   // Close lightbox on Escape key
@@ -184,7 +355,9 @@ export default function QueryTickets({ session, agents = [] }) {
     if (error) {
       console.error('Error fetching messages:', error);
     } else {
-      setMessages(data || []);
+      if (selectedTicketRef.current && selectedTicketRef.current.id === ticketId) {
+        setMessages(data || []);
+      }
     }
   };
 
@@ -216,7 +389,7 @@ export default function QueryTickets({ session, agents = [] }) {
       }));
 
       if (table === 'tickets') {
-        const { text, authorName, authorRole } = parseTicketData(recordData, agentsList);
+        const { text, authorName, authorRole } = parseTicketData(recordData, allPersonnel);
         let newPayload = `[AUTHOR]:${JSON.stringify({name: authorName, role: authorRole})}\n\n[QUERY]:\n${text}`;
         if (updatedAttachments.length > 0) {
           newPayload += `\n\n[ATTACHMENTS]:${JSON.stringify(updatedAttachments)}`;
@@ -503,6 +676,7 @@ export default function QueryTickets({ session, agents = [] }) {
 
   const openTicket = (ticket) => {
     setSelectedTicket(ticket);
+    setMessages([]);
     fetchMessages(ticket.id);
   };
 
@@ -542,7 +716,7 @@ export default function QueryTickets({ session, agents = [] }) {
   // --- Edit Ticket Handlers ---
   const startEditTicket = (ticket, e) => {
     if (e) e.stopPropagation();
-    const { text, attachments } = parseTicketData(ticket, agentsList);
+    const { text, attachments } = parseTicketData(ticket, allPersonnel);
     setEditingTicket(ticket);
     setEditUrgency(ticket.urgency || 'Medium');
     setEditQueryText(text);
@@ -554,7 +728,7 @@ export default function QueryTickets({ session, agents = [] }) {
     if (!editQueryText.trim() || !editingTicket) return;
     setEditSubmitting(true);
 
-    const { authorName, authorRole } = parseTicketData(editingTicket, agentsList);
+    const { authorName, authorRole } = parseTicketData(editingTicket, allPersonnel);
     const authorMeta = { name: authorName, role: authorRole };
 
     let processedImages = [];
@@ -692,14 +866,33 @@ export default function QueryTickets({ session, agents = [] }) {
     }
   };
 
+  // Filter tickets by search query across query text, ticket code, author name, and urgency
+  const searchedTickets = useMemo(() => {
+    const q = (searchQuery || '').trim().toLowerCase();
+    if (!q) return tickets;
+    return tickets.filter(t => {
+      const code = String(t.code || '').toLowerCase();
+      const urgency = String(t.urgency || '').toLowerCase();
+      const parsed = parseTicketData(t, allPersonnel);
+      const text = String(parsed.text || '').toLowerCase();
+      const author = String(parsed.authorName || '').toLowerCase();
+      const directAuthor = String(t.author || t.author_name || t.created_by_name || '').toLowerCase();
+      const rawQuery = String(t.query || '').toLowerCase();
+      return code.includes(q) || urgency.includes(q) || text.includes(q) || author.includes(q) || directAuthor.includes(q) || rawQuery.includes(q);
+    });
+  }, [tickets, searchQuery, allPersonnel]);
+
   // Filter tickets by selected board
-  const boardTickets = tickets.filter(t => {
-    if (!t.board) return false;
-    const b = t.board.toLowerCase();
-    const curr = currentBoard.label.toLowerCase();
-    const key = currentBoard.key.toLowerCase();
-    return b === curr || b === key || (key === 'misc' && (b === 'misc' || b === 'miscellaneous'));
-  });
+  const boardTickets = useMemo(() => {
+    return searchedTickets.filter(t => {
+      if (!t.board) return false;
+      const b = t.board.toLowerCase().trim();
+      const curr = currentBoard.label.toLowerCase();
+      const key = currentBoard.key.toLowerCase();
+      const prefix = (currentBoard.prefix || '').toLowerCase();
+      return b === curr || b === key || (prefix && b === prefix) || (key === 'misc' && (b === 'misc' || b === 'miscellaneous'));
+    });
+  }, [searchedTickets, currentBoard]);
 
   // Auto sort by urgency: High > Medium > Low, then newest first
   const urgencyWeight = { 'high': 0, 'medium': 1, 'low': 2 };
@@ -723,12 +916,14 @@ export default function QueryTickets({ session, agents = [] }) {
   };
 
   const getBoardCounts = (boardKey, boardLabel) => {
+    const boardObj = BOARDS.find(b => b.key === boardKey);
+    const prefix = (boardObj?.prefix || '').toLowerCase();
     const matchingTickets = tickets.filter(t => {
       if (!t.board) return false;
-      const b = t.board.toLowerCase();
+      const b = t.board.toLowerCase().trim();
       const curr = boardLabel.toLowerCase();
       const key = boardKey.toLowerCase();
-      return b === curr || b === key || (key === 'misc' && (b === 'misc' || b === 'miscellaneous'));
+      return b === curr || b === key || (prefix && b === prefix) || (key === 'misc' && (b === 'misc' || b === 'miscellaneous'));
     });
 
     const unresolved = matchingTickets.filter(t => (t.status || '').toLowerCase() !== 'resolved').length;
@@ -788,9 +983,10 @@ export default function QueryTickets({ session, agents = [] }) {
         </div>
       </div>
 
-      {/* Board / History Tabs + New Query Button */}
-      <div className="px-6 pt-3 pb-3 flex items-center justify-between">
-        <div className="flex items-center gap-1">
+      {/* Toolbar: Board / History Tabs + Search Bar + Mentions Inbox + New Query Button */}
+      <div className="px-4 sm:px-6 pt-3 pb-3 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3">
+        {/* Left: Board / History Tabs */}
+        <div className="flex items-center gap-1 shrink-0">
           <button
             onClick={() => setActiveView('board')}
             className={`px-3.5 py-1.5 text-sm font-semibold rounded transition-colors ${
@@ -813,12 +1009,134 @@ export default function QueryTickets({ session, agents = [] }) {
           </button>
         </div>
 
-        <button 
-          onClick={() => setShowNewModal(true)}
-          className="flex items-center gap-1.5 bg-[#16234f] hover:bg-[#1f3169] text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm"
-        >
-          <Plus size={16} /> New query
-        </button>
+        {/* Center: Search Input */}
+        <div className="relative order-3 sm:order-2 w-full sm:w-auto flex-1 max-w-full sm:max-w-md mx-0 sm:mx-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={15} />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setSearchQuery('');
+                }
+              }}
+              placeholder="Search queries, codes, authors, urgency..."
+              aria-label="Search queries"
+              className="w-full bg-white border border-slate-200 rounded-lg pl-9 pr-8 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#16234f]/30 focus:border-[#16234f] shadow-2xs transition-all"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                aria-label="Clear search"
+                title="Clear search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Right: Mentions Navigation Button & New Query Button */}
+        <div className="flex items-center gap-2.5 shrink-0 order-2 sm:order-3">
+          {/* @Mention Follow-Up Button & Dropdown */}
+          <div className="relative" ref={mentionsDropdownRef}>
+            <button
+              type="button"
+              onClick={handleToggleMentions}
+              aria-label="Mentions inbox"
+              aria-haspopup="true"
+              aria-expanded={showMentionsDropdown}
+              title={mentionsList.length > 0 ? `${mentionsList.length} active mention${mentionsList.length > 1 ? 's' : ''}` : 'Mentions inbox'}
+              className={`relative w-9 h-9 rounded-full flex items-center justify-center border transition-all cursor-pointer shadow-xs ${
+                showMentionsDropdown
+                  ? 'bg-blue-50 border-blue-300 text-blue-700'
+                  : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+              }`}
+            >
+              <ArrowDown size={16} />
+              {mentionsList.length > 0 && (
+                <span className="absolute -top-1 -right-1 flex items-center justify-center w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] font-bold shadow-xs">
+                  @
+                </span>
+              )}
+            </button>
+
+            {/* Mentions Dropdown Panel */}
+            {showMentionsDropdown && (
+              <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 max-w-[calc(100vw-2rem)] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      @ Mentions Inbox
+                    </span>
+                    {mentionsList.length > 0 && (
+                      <span className="px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-bold">
+                        {mentionsList.length}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowMentionsDropdown(false)}
+                    className="text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                    title="Close"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+
+                <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 custom-scrollbar">
+                  {mentionsList.length === 0 ? (
+                    <div className="p-5 text-center text-slate-400 text-sm">
+                      <p className="font-medium text-slate-500">No mentions found</p>
+                      <p className="text-xs mt-0.5 text-slate-400">You haven't been mentioned in any messages yet.</p>
+                    </div>
+                  ) : (
+                    mentionsList.map((m) => (
+                      <button
+                        key={m.message_id ? `msg-${m.message_id}` : (m.id ? `tk-${m.id}` : `${m.ticket_id}-${m.created_at}`)}
+                        type="button"
+                        onClick={() => handleSelectMention(m)}
+                        className="w-full text-left p-3 hover:bg-slate-50 transition-colors flex flex-col gap-1 cursor-pointer group"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-xs text-slate-900 group-hover:text-blue-600 transition-colors">
+                            {m.code}
+                          </span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {m.created_at && (
+                              <span className="text-[10px] text-slate-400">
+                                {new Date(m.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                              </span>
+                            )}
+                            <span className="text-[10px] font-medium px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full">
+                              {m.board}
+                            </span>
+                          </div>
+                        </div>
+                        <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
+                          {m.snippet}
+                        </p>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* New Query Button */}
+          <button 
+            onClick={() => setShowNewModal(true)}
+            className="flex items-center gap-1.5 bg-[#16234f] hover:bg-[#1f3169] text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm cursor-pointer"
+          >
+            <Plus size={16} /> New query
+          </button>
+        </div>
       </div>
 
       {/* Main Kanban Content */}
@@ -845,7 +1163,7 @@ export default function QueryTickets({ session, agents = [] }) {
                       ticket={ticket} 
                       onClick={() => openTicket(ticket)} 
                       urgencyBadge={urgencyBadge} 
-                      agentsList={agentsList} 
+                      agentsList={allPersonnel} 
                       onOpenImage={handleOpenPreview}
                       onEdit={(t) => startEditTicket(t)}
                       onDelete={(t) => promptDeleteTicket(t)}
@@ -871,7 +1189,7 @@ export default function QueryTickets({ session, agents = [] }) {
                       ticket={ticket} 
                       onClick={() => openTicket(ticket)} 
                       urgencyBadge={urgencyBadge} 
-                      agentsList={agentsList} 
+                      agentsList={allPersonnel} 
                       onOpenImage={handleOpenPreview} 
                       onEdit={(t) => startEditTicket(t)}
                       onDelete={(t) => promptDeleteTicket(t)}
@@ -899,7 +1217,7 @@ export default function QueryTickets({ session, agents = [] }) {
                       ticket={ticket} 
                       onClick={() => openTicket(ticket)} 
                       urgencyBadge={urgencyBadge} 
-                      agentsList={agentsList} 
+                      agentsList={allPersonnel} 
                       onOpenImage={handleOpenPreview} 
                       onEdit={(t) => startEditTicket(t)}
                       onDelete={(t) => promptDeleteTicket(t)}
@@ -1062,7 +1380,7 @@ export default function QueryTickets({ session, agents = [] }) {
             {/* Left side: Ticket Details */}
             <div className="w-full md:w-[380px] bg-slate-50 border-r border-slate-200 p-6 flex flex-col overflow-y-auto custom-scrollbar">
               {(() => {
-                const { text, attachments, authorName, authorRole } = parseTicketData(selectedTicket, agentsList);
+                const { text, attachments, authorName, authorRole } = parseTicketData(selectedTicket, allPersonnel);
                 return (
                   <>
                     {/* Top Author Header matching the screenshot */}
@@ -1262,7 +1580,7 @@ export default function QueryTickets({ session, agents = [] }) {
                       author = body.substring(1, closing);
                       body = body.substring(closing + 3);
                     } else if (msg.agent_id) {
-                      const found = agentsList.find(a => a.id === msg.agent_id);
+                      const found = allPersonnel.find(a => a.id === msg.agent_id);
                       if (found) author = found.name;
                     }
 
@@ -1392,14 +1710,14 @@ export default function QueryTickets({ session, agents = [] }) {
                   {/* Mention Dropdown */}
                   {mentionState.active && (
                     <div className="absolute bottom-[calc(100%-10px)] left-4 bg-white border border-slate-200 rounded-lg shadow-lg w-64 max-h-48 overflow-y-auto z-50">
-                      {membersList.filter(a => a.name.toLowerCase().includes(mentionState.query)).length > 0 ? (
-                        membersList.filter(a => a.name.toLowerCase().includes(mentionState.query)).map(member => (
+                      {allPersonnel.filter(a => (a.name || '').toLowerCase().includes(mentionState.query)).length > 0 ? (
+                        allPersonnel.filter(a => (a.name || '').toLowerCase().includes(mentionState.query)).map((person, idx) => (
                           <div
-                            key={member.id}
+                            key={`${person.id || idx}-${person.name}`}
                             className="px-3 py-2 text-sm hover:bg-slate-100 cursor-pointer text-slate-800"
-                            onClick={() => handleMentionSelect(member.name)}
+                            onClick={() => handleMentionSelect(person.name)}
                           >
-                            {member.name}
+                            {person.name}
                           </div>
                         ))
                       ) : (

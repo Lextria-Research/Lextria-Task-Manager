@@ -35,7 +35,7 @@ import MemberManualModal from './MemberManualModal';
 // Set to false to immediately restore the full dashboard once maintenance is complete.
 const IS_UNDER_MAINTENANCE = true;
 
-function MaintenanceScreen() {
+function MaintenanceScreen({ onLogout }) {
   return (
     <div className="fixed inset-0 z-[99999] bg-[#03071b]/95 backdrop-blur-2xl flex items-center justify-center p-4 select-none cursor-not-allowed">
       {/* Ambient glowing background orbs */}
@@ -89,9 +89,19 @@ function MaintenanceScreen() {
           </div>
         </div>
 
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-slate-500 mb-3">
           Thank you for your patience. We will be back online as soon as the updates are completed.
         </p>
+
+        {onLogout && (
+          <button
+            type="button"
+            onClick={onLogout}
+            className="text-xs text-slate-400 hover:text-slate-200 underline cursor-pointer pointer-events-auto transition-colors"
+          >
+            Log out / Switch account
+          </button>
+        )}
       </div>
     </div>
   );
@@ -2099,14 +2109,14 @@ export default function App() {
     try {
       const saved = localStorage.getItem('lextria_user_session');
       const user = saved ? JSON.parse(saved) : null;
-      return user?.role === 'leader';
+      return user?.role?.toLowerCase() === 'leader';
     } catch {
       return false;
     }
   });
 
   useEffect(() => {
-    setIsAdmin(currentUser?.role === 'leader');
+    setIsAdmin(currentUser?.role?.toLowerCase() === 'leader');
   }, [currentUser]);
 
   // Member Manual / What's New popup on login
@@ -2133,7 +2143,7 @@ export default function App() {
     localStorage.setItem('lextria_user_session', JSON.stringify(sessionData));
     localStorage.setItem('lextria_query_session', JSON.stringify(sessionData));
     setCurrentUser(sessionData);
-    setIsAdmin(sessionData.role === 'leader');
+    setIsAdmin(sessionData.role?.toLowerCase() === 'leader');
 
     // Trigger manual on login if not permanently dismissed
     const storageKey = 'lextria_guide_seen_' + (userData.id || userData.name || 'user');
@@ -3765,8 +3775,22 @@ export default function App() {
 
   return (
     <div className="relative min-h-screen text-slate-100 overflow-x-hidden font-sans">
-      {/* System Under Maintenance Lockout */}
-      {IS_UNDER_MAINTENANCE && <MaintenanceScreen />}
+      {/* Maintenance Mode Warning Banner for Admins */}
+      {IS_UNDER_MAINTENANCE && isAdmin && (
+        <div 
+          role="alert"
+          aria-label="Maintenance mode active"
+          className="w-full bg-amber-500/20 border-b border-amber-500/30 text-amber-200 px-4 py-1.5 text-xs font-medium flex items-center justify-center gap-2 sticky top-0 z-50 backdrop-blur-md"
+        >
+          <Wrench size={13} className="text-amber-300 shrink-0" />
+          <span>
+            <strong className="font-semibold text-amber-300">Maintenance Mode Active:</strong> Site is currently locked for members. You have admin bypass access.
+          </span>
+        </div>
+      )}
+
+      {/* System Under Maintenance Lockout for Non-Admins */}
+      {IS_UNDER_MAINTENANCE && !isAdmin && <MaintenanceScreen onLogout={handleGlobalLogout} />}
 
       {/* Animated Intro Splash */}
       {showSplash && (

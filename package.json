@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node -e \"require('fs').writeFileSync('public/version.txt', Date.now().toString())\" && vite build",
-    "test": "node test_upload_and_attachments.js",
+    "build": "node test_preview_features.js && node -e \"require('fs').writeFileSync('public/version.txt', Date.now().toString())\" && vite build",
+    "test": "node test_upload_and_attachments.js && node test_preview_features.js",
     "lint": "eslint .",
     "preview": "vite preview"
   },
