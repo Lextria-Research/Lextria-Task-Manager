@@ -33,7 +33,7 @@ import MemberManualModal from './MemberManualModal';
 // --- SYSTEM UNDER MAINTENANCE MODE ---
 // Set to true to lock down the site and pause all user interactions during upgrades.
 // Set to false to immediately restore the full dashboard once maintenance is complete.
-const IS_UNDER_MAINTENANCE = true;
+const IS_UNDER_MAINTENANCE = false;
 
 function MaintenanceScreen({ onLogout }) {
   return (
@@ -1825,33 +1825,33 @@ function SortableBoard({
 // --- MAIN APP COMPONENT ---
 // --- 2-DAY UPDATE NOTICE ---
 function UpdateNotice({ onDismiss }) {
-  const [activeTab, setActiveTab] = useState('fixes');
+  const [activeTab, setActiveTab] = useState('features');
 
   const steps = [
     {
-      icon: '✅',
-      title: 'Marking a Task Complete',
-      desc: 'Click the circle icon next to any task, or open the task and toggle the Status button to "Completed".'
+      icon: '🔍',
+      title: 'Global Search',
+      desc: 'Use the new search bar in the Query Dashboard to instantly filter tickets by keyword, author, or code.'
     },
     {
-      icon: '📅',
-      title: 'Viewing Completion Date',
-      desc: 'Open any completed task → the Status card shows the exact "Completion Date & Time" that was permanently recorded.'
+      icon: '💬',
+      title: '@Mentions Inbox',
+      desc: 'Click the Arrow-Down button in the toolbar to see everywhere you have been tagged, and jump straight to the thread.'
     },
     {
-      icon: '📊',
-      title: 'Reading Reports',
-      desc: 'All charts, leaderboards, and history use the original completion date — even if a task was accidentally re-completed later.'
+      icon: '🛠️',
+      title: 'Admin Maintenance Bypass',
+      desc: 'Leaders can now access the dashboard and test features even when the system is locked down for maintenance.'
     },
     {
-      icon: '🗂️',
-      title: 'Task History / Archive',
-      desc: 'Click the "History" or "Archive" button in the top bar to view all completed tasks, filter by agent, date, or department.'
+      icon: '📎',
+      title: 'Document Attachments',
+      desc: 'Upload PDFs and DOCX files directly to the chat thread alongside regular image attachments.'
     },
     {
-      icon: '🔄',
-      title: 'If a Task Reverts to Incomplete',
-      desc: 'Simply re-mark it as completed. The system will automatically restore the original completion date — your reports will stay accurate.'
+      icon: '🚀',
+      title: 'Auto-Reload',
+      desc: 'Whenever a new version of the dashboard is released, your browser will now automatically refresh to the latest version.'
     }
   ];
 
@@ -1865,18 +1865,18 @@ function UpdateNotice({ onDismiss }) {
         <div className="flex-shrink-0 px-8 pt-7 pb-5 border-b border-white/10"
           style={{ background: 'linear-gradient(90deg, #1d4ed8 0%, #2563eb 100%)' }}>
           <div className="flex items-center gap-3 mb-1">
-            <span className="text-2xl">🛡️</span>
+            <span className="text-2xl">🚀</span>
             <span className="text-xs font-bold tracking-widest text-blue-200 uppercase">System Update — Lextria Task Manager</span>
           </div>
-          <h1 className="text-2xl font-bold text-white leading-snug">Important Fixes & Feature Update</h1>
+          <h1 className="text-2xl font-bold text-white leading-snug">New Productivity Features Live</h1>
           <p className="text-blue-100 text-sm mt-1 opacity-80">Please read before continuing · This notice will disappear in 2 days</p>
         </div>
 
         {/* Tabs */}
         <div className="flex-shrink-0 flex border-b border-white/10">
           {[
-            { key: 'fixes', label: '🔧 What Was Fixed' },
-            { key: 'guide', label: '📖 How To Use' },
+            { key: 'features', label: '✨ What\'s New' },
+            { key: 'guide', label: '📖 Quick Guide' },
           ].map(tab => (
             <button
               key={tab.key}
@@ -1895,64 +1895,38 @@ function UpdateNotice({ onDismiss }) {
         {/* Scrollable Body */}
         <div className="flex-1 overflow-y-auto p-7 space-y-5 custom-scrollbar">
 
-          {activeTab === 'fixes' && (
+          {activeTab === 'features' && (
             <>
-              {/* Fix 1 */}
+              {/* Feature 1 */}
               <div className="rounded-xl border border-green-500/25 bg-green-500/5 p-5">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="w-7 h-7 rounded-full bg-green-500/20 flex items-center justify-center text-green-400 font-bold text-sm flex-shrink-0">1</span>
-                  <h2 className="text-base font-bold text-green-300">Task Completion Reversion — Fixed</h2>
+                  <h2 className="text-base font-bold text-green-300">Instant Search Bar</h2>
                 </div>
                 <p className="text-slate-300 text-sm leading-relaxed">
-                  A bug caused completed tasks to sometimes revert to <span className="text-yellow-300 font-semibold">Incomplete</span> overnight.
-                  This happened because the system's auto-archiving process was silently failing for some tasks.
-                  The fix ensures all completed tasks are safely and permanently archived at the end of each day — they will no longer revert.
+                  We have added a powerful search bar to the Query Dashboard. You can now instantly filter through all your loaded tickets by typing a keyword, a ticket code (like Q.4), or a team member's name.
                 </p>
-                <div className="mt-3 p-3 rounded-lg bg-white/5 border border-white/10 text-xs text-slate-400">
-                  <span className="text-blue-300 font-semibold">Technical detail: </span>
-                  Archive writes are now batched and include error logging. A realtime sync delay guard also prevents stale data from overwriting fresh completions.
-                </div>
               </div>
 
-              {/* Fix 2 */}
+              {/* Feature 2 */}
               <div className="rounded-xl border border-blue-500/25 bg-blue-500/5 p-5">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="w-7 h-7 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold text-sm flex-shrink-0">2</span>
-                  <h2 className="text-base font-bold text-blue-300">Custom Completion Date — New Feature</h2>
+                  <h2 className="text-base font-bold text-blue-300">@Mentions Inbox</h2>
                 </div>
                 <p className="text-slate-300 text-sm leading-relaxed">
-                  A new <span className="text-emerald-300 font-semibold">Custom Completion Date</span> is now automatically recorded the moment any task is marked complete.
-                  This date is <span className="font-semibold text-white">permanently saved and never overwritten</span> — even if a task is accidentally un-marked and re-completed later.
+                  A new circular arrow-down button in the toolbar tracks everywhere you are tagged. When a team member mentions you, a blue badge will appear. Click the button to see a list of your mentions, and click a row to instantly jump straight to the correct chat thread!
                 </p>
-                <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                    <div className="text-emerald-300 font-semibold text-xs mb-1">✅ What this means for you</div>
-                    <ul className="text-slate-300 text-xs space-y-1 list-disc list-inside">
-                      <li>Reports always show the <span className="font-semibold text-white">true original date</span></li>
-                      <li>Re-completing a task won't change the recorded date</li>
-                      <li>Visible inside every completed task's detail card</li>
-                    </ul>
-                  </div>
-                  <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                    <div className="text-amber-300 font-semibold text-xs mb-1">⚠️ If a task was re-completed today</div>
-                    <ul className="text-slate-300 text-xs space-y-1 list-disc list-inside">
-                      <li>The original completion date is safely preserved</li>
-                      <li>Open the task → check "Completion Date & Time"</li>
-                      <li>Contact admin if the date looks incorrect</li>
-                    </ul>
-                  </div>
-                </div>
               </div>
 
-              {/* Fix 3 */}
+              {/* Feature 3 */}
               <div className="rounded-xl border border-purple-500/25 bg-purple-500/5 p-5">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="w-7 h-7 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-400 font-bold text-sm flex-shrink-0">3</span>
-                  <h2 className="text-base font-bold text-purple-300">Reports Use True Completion Dates</h2>
+                  <h2 className="text-base font-bold text-purple-300">Admin Maintenance Bypass</h2>
                 </div>
                 <p className="text-slate-300 text-sm leading-relaxed">
-                  All analytics dashboards, leaderboards, completion charts, and task history now use the <span className="text-emerald-300 font-semibold">Custom Completion Date</span> as the authoritative source.
-                  This means even if a task was re-completed on a different day due to the old bug, your reports will <span className="font-semibold text-white">reflect the correct original date</span>.
+                  During system upgrades, the dashboard is placed in Maintenance Mode. Now, team Leaders can bypass the maintenance lock screen and test the live application while regular members remain locked out.
                 </p>
               </div>
             </>
@@ -1960,7 +1934,7 @@ function UpdateNotice({ onDismiss }) {
 
           {activeTab === 'guide' && (
             <div className="space-y-4">
-              <p className="text-slate-400 text-sm">A quick reference for the most common actions in Lextria Task Manager.</p>
+              <p className="text-slate-400 text-sm">A quick reference for the new features in Lextria Task Manager.</p>
               {steps.map((step, i) => (
                 <div key={i} className="flex gap-4 p-4 rounded-xl border border-white/8 bg-white/4 hover:bg-white/8 transition-colors">
                   <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/25 flex items-center justify-center text-xl">
@@ -2085,7 +2059,7 @@ export default function App() {
 
   // 2-day update notice: displayed on every refresh for 48 hours until expiry timestamp passes
   const [showUpdateNotice, setShowUpdateNotice] = useState(() => {
-    const NOTICE_KEY = 'lextria_update_notice_expiry';
+    const NOTICE_KEY = 'lextria_update_notice_v2_expiry';
     let expiry = localStorage.getItem(NOTICE_KEY);
     if (!expiry) {
       // First time: set expiry to 48 hours from now
