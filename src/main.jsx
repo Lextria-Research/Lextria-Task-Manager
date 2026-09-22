@@ -55,7 +55,7 @@ function VersionChecker() {
       } catch (e) {
         // Ignore fetch errors
       }
-    }, 60000); // Check every 60 seconds
+    }, 15000); // Check every 15 seconds
     
     return () => clearInterval(interval);
   }, []);
