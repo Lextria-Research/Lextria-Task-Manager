@@ -3,26 +3,35 @@ import { supabase } from './supabaseClient';
 import { 
   Plus, Clock, MessageSquare, X, Send, 
   User, Calendar, Search, Filter,
-  Image as ImageIcon, Paperclip, FileText, Loader2, AlertCircle
+  Image as ImageIcon, Paperclip, FileText, Loader2, AlertCircle, Eye, Download, ExternalLink
 } from 'lucide-react';
 import { isImageAttachment, getImageSrc } from './attachmentUtils';
 import { generateThumbnail } from './QueryTickets';
 
+// Option A storage: attachments are appended to the project's description text
+// as "[ATTACHMENTS]: [...]" (same format as Query tickets) — no database change needed.
 const ATTACHMENTS_MARKER = '[ATTACHMENTS]:';
 
-// Splits an update's content into plain text and parsed attachment list
-const splitAttachments = (content) => {
-  if (!content || !content.includes(ATTACHMENTS_MARKER)) return { text: content || '', attachments: [] };
-  const idx = content.indexOf(ATTACHMENTS_MARKER);
-  const text = content.substring(0, idx).trim();
+const splitDescription = (description) => {
+  if (!description || !description.includes(ATTACHMENTS_MARKER)) {
+    return { text: description || '', attachments: [] };
+  }
+  const idx = description.indexOf(ATTACHMENTS_MARKER);
+  const text = description.substring(0, idx).trim();
   let attachments = [];
   try {
-    const parsed = JSON.parse(content.substring(idx + ATTACHMENTS_MARKER.length).trim());
+    const parsed = JSON.parse(description.substring(idx + ATTACHMENTS_MARKER.length).trim());
     if (Array.isArray(parsed)) attachments = parsed;
   } catch (e) {
-    console.error('Failed to parse project update attachments', e);
+    console.error('Failed to parse project attachments', e);
   }
   return { text, attachments };
+};
+
+const buildDescription = (text, attachments) => {
+  const clean = (text || '').trim();
+  if (!attachments || attachments.length === 0) return clean;
+  return `${clean}\n\n${ATTACHMENTS_MARKER} ${JSON.stringify(attachments)}`;
 };
 
 const STATUSES = ['Not Started', 'In Progress', 'Client Review', 'On Hold', 'Completed'];
@@ -39,19 +48,15 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
   
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [newProject, setNewProject] = useState({ client: '', title: '', description: '', urgency: 'Medium' });
+  const [newProjectAttachments, setNewProjectAttachments] = useState([]);
+  const [creating, setCreating] = useState(false);
+  const [previewImage, setPreviewImage] = useState(null); // { name, src, url }
+  const imageInputRef = useRef(null);
+  const docInputRef = useRef(null);
   
   const [selectedProject, setSelectedProject] = useState(null);
   const [updates, setUpdates] = useState([]);
   const [newUpdate, setNewUpdate] = useState('');
-  const [updateAttachments, setUpdateAttachments] = useState([]);
-  const [sending, setSending] = useState(false);
-  const imageInputRef = useRef(null);
-  const docInputRef = useRef(null);
-  const selectedProjectRef = useRef(null);
-
-  useEffect(() => {
-    selectedProjectRef.current = selectedProject;
-  }, [selectedProject]);
 
   useEffect(() => {
     fetchProjects();
@@ -92,35 +97,132 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
       .order('created_at', { ascending: true });
       
     if (error) console.error('Error fetching updates:', error);
-    else if (!selectedProjectRef.current || selectedProjectRef.current.id === projectId) {
-      // Ignore stale responses from a previously opened project
-      setUpdates(data || []);
+    else setUpdates(data || []);
+  };
+
+  // --- New Project attachment pickers ---
+  const readAsDataUrl = (file) => new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => resolve(ev.target.result);
+    reader.onerror = () => resolve('');
+    reader.readAsDataURL(file);
+  });
+
+  const addPickedFiles = async (fileList) => {
+    const files = Array.from(fileList || []);
+    for (const file of files) {
+      const isImg = file.type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name);
+      if (isImg) {
+        const preview = await readAsDataUrl(file);
+        setNewProjectAttachments(prev => [...prev, { name: file.name, type: file.type || 'image/png', preview, file }]);
+      } else {
+        setNewProjectAttachments(prev => [...prev, { name: file.name, type: file.type || 'application/octet-stream', preview: '', file }]);
+      }
+    }
+  };
+
+  const handleImagePick = (e) => { addPickedFiles(e.target.files); e.target.value = ''; };
+  const handleDocPick = (e) => { addPickedFiles(e.target.files); e.target.value = ''; };
+
+  const removeNewProjectAttachment = (index) => {
+    setNewProjectAttachments(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const closeNewProjectModal = () => {
+    if (creating) return;
+    setIsNewModalOpen(false);
+    setNewProject({ client: '', title: '', description: '', urgency: 'Medium' });
+    setNewProjectAttachments([]);
+  };
+
+  // Uploads each file to Zoho WorkDrive via /api/upload, then saves the real URLs into the project.
+  // Files are independent: one failure never removes the project or the other files.
+  const uploadProjectAttachments = async (projectRow, descriptionText, pendingList) => {
+    try {
+      const finalAttachments = await Promise.all(pendingList.map(async (att) => {
+        const { file, pending, ...meta } = att;
+        if (!file) return meta;
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          const res = await fetch('/api/upload', { method: 'POST', body: formData });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.url) return { ...meta, url: data.url };
+          }
+          console.error('Upload returned no URL for', att.name);
+        } catch (err) {
+          console.error('Upload failed for', att.name, err);
+        }
+        return { ...meta, failed: true };
+      }));
+
+      const newDescription = buildDescription(descriptionText, finalAttachments);
+      const { error } = await supabase
+        .from('projects')
+        .update({ description: newDescription })
+        .eq('id', projectRow.id);
+
+      if (error) {
+        console.error('Failed to save attachment links:', error);
+        return;
+      }
+      setProjects(prev => prev.map(p => p.id === projectRow.id ? { ...p, description: newDescription } : p));
+      setSelectedProject(prev => (prev && prev.id === projectRow.id ? { ...prev, description: newDescription } : prev));
+    } catch (err) {
+      console.error('Background project attachment upload failed', err);
     }
   };
 
   const handleCreateProject = async () => {
-    if (!newProject.title || !newProject.client) return;
-    const agentId = resolveAgentId(session?.name);
+    if (!newProject.title || !newProject.client || creating) return;
+    setCreating(true);
 
-    const { data, error } = await supabase.from('projects').insert([{
-      title: newProject.title,
-      client: newProject.client,
-      description: newProject.description,
-      urgency: newProject.urgency,
-      created_by: agentId,
-      status: 'Not Started'
-    }]).select();
-    
-    if (error) {
-      console.error('Error creating project:', error);
-      alert('Error creating project: ' + (error.message || 'Please check connection.'));
-    } else {
-      setProjects([data[0], ...projects]);
+    try {
+      const agentId = resolveAgentId(session?.name);
+
+      // Lightweight records: compressed thumbnails for images; raw files stay in memory only
+      const pendingList = [];
+      for (const att of newProjectAttachments) {
+        if (isImageAttachment(att)) {
+          const thumb = await generateThumbnail(att.preview);
+          pendingList.push({ name: att.name, type: att.file?.type || att.type || 'image/png', preview: thumb, pending: true, file: att.file });
+        } else {
+          pendingList.push({ name: att.name, type: att.file?.type || att.type || 'application/octet-stream', preview: '', pending: true, file: att.file });
+        }
+      }
+      const toSave = pendingList.map(({ file, ...rest }) => rest);
+      const descriptionText = newProject.description;
+
+      const { data, error } = await supabase.from('projects').insert([{
+        title: newProject.title,
+        client: newProject.client,
+        description: buildDescription(descriptionText, toSave),
+        urgency: newProject.urgency,
+        created_by: agentId,
+        status: 'Not Started'
+      }]).select();
+
+      if (error || !data || data.length === 0) {
+        console.error('Error creating project:', error);
+        alert('Error creating project: ' + (error?.message || 'Please check connection.'));
+        return; // Modal stays open with everything the user entered
+      }
+
+      const created = data[0];
+      setProjects(prev => [created, ...prev]);
       if (!clients.includes(newProject.client)) {
-        setClients([...clients, newProject.client]);
+        setClients(prev => [...prev, newProject.client]);
       }
       setIsNewModalOpen(false);
       setNewProject({ client: '', title: '', description: '', urgency: 'Medium' });
+      setNewProjectAttachments([]);
+
+      if (pendingList.some(a => a.file)) {
+        uploadProjectAttachments(created, descriptionText, pendingList);
+      }
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -138,136 +240,25 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
     }
   };
 
-  // --- Attachment pickers ---
-  const handleImagePick = (e) => {
-    const files = Array.from(e.target.files || []);
-    files.forEach(file => {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        setUpdateAttachments(prev => [...prev, {
-          name: file.name,
-          type: file.type || 'image/png',
-          preview: ev.target.result,
-          file
-        }]);
-      };
-      reader.readAsDataURL(file);
-    });
-    e.target.value = '';
-  };
-
-  const handleDocPick = (e) => {
-    const files = Array.from(e.target.files || []);
-    files.forEach(file => {
-      const isImg = file.type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name);
-      if (isImg) {
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          setUpdateAttachments(prev => [...prev, { name: file.name, type: file.type || 'image/png', preview: ev.target.result, file }]);
-        };
-        reader.readAsDataURL(file);
-      } else {
-        setUpdateAttachments(prev => [...prev, { name: file.name, type: file.type || 'application/octet-stream', preview: '', file }]);
-      }
-    });
-    e.target.value = '';
-  };
-
-  const removeUpdateAttachment = (index) => {
-    setUpdateAttachments(prev => prev.filter((_, i) => i !== index));
-  };
-
-  // Uploads files to Zoho WorkDrive via /api/upload, then patches the update row with real URLs.
-  // Each file is independent: one failure never discards the others or the message text.
-  const uploadProjectAttachments = async (updateRow, pendingList) => {
-    try {
-      const finalAttachments = await Promise.all(pendingList.map(async (att) => {
-        const { file, ...meta } = att;
-        if (!file) return meta;
-        try {
-          const formData = new FormData();
-          formData.append('file', file);
-          const res = await fetch('/api/upload', { method: 'POST', body: formData });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.url) {
-              const { pending, failed, ...rest } = meta;
-              return { ...rest, url: data.url };
-            }
-          }
-          console.error('Upload returned no URL for', att.name);
-        } catch (err) {
-          console.error('Upload failed for', att.name, err);
-        }
-        const { pending, ...rest } = meta;
-        return { ...rest, failed: true };
-      }));
-
-      const { text } = splitAttachments(updateRow.content);
-      const newContent = `${text}\n${ATTACHMENTS_MARKER} ${JSON.stringify(finalAttachments)}`;
-
-      const { error } = await supabase
-        .from('project_updates')
-        .update({ content: newContent })
-        .eq('id', updateRow.id);
-
-      if (error) {
-        console.error('Failed to save attachment URLs:', error);
-        return;
-      }
-      setUpdates(prev => prev.map(u => u.id === updateRow.id ? { ...u, content: newContent } : u));
-    } catch (err) {
-      console.error('Background project attachment upload failed', err);
-    }
-  };
-
   const postUpdate = async () => {
-    if ((!newUpdate.trim() && updateAttachments.length === 0) || !selectedProject || sending) return;
-    setSending(true);
-
-    try {
-      const agentId = resolveAgentId(session?.name);
-      const authorName = session?.name || 'Member';
-      let contentWithAuthor = `[${authorName}]: ${newUpdate.trim()}`;
-
-      // Build lightweight records (compressed thumbnails for images) — raw files are kept only in memory
-      const pendingList = [];
-      for (const att of updateAttachments) {
-        if (isImageAttachment(att)) {
-          const thumb = await generateThumbnail(att.preview);
-          pendingList.push({ name: att.name, type: att.file?.type || att.type || 'image/png', preview: thumb, pending: true, file: att.file });
-        } else {
-          pendingList.push({ name: att.name, type: att.file?.type || att.type || 'application/octet-stream', preview: '', pending: true, file: att.file });
-        }
-      }
-
-      if (pendingList.length > 0) {
-        const toSave = pendingList.map(({ file, ...rest }) => rest);
-        contentWithAuthor += `\n${ATTACHMENTS_MARKER} ${JSON.stringify(toSave)}`;
-      }
-
-      const { data, error } = await supabase.from('project_updates').insert([{
-        project_id: selectedProject.id,
-        agent_id: agentId,
-        content: contentWithAuthor
-      }]).select();
-
-      if (error || !data || data.length === 0) {
-        console.error('Error posting update:', error);
-        alert('Error posting update: ' + (error?.message || 'Please check connection.'));
-        return; // Composer is kept intact so nothing typed or attached is lost
-      }
-
-      const inserted = data[0];
-      setUpdates(prev => [...prev, inserted]);
+    if (!newUpdate.trim() || !selectedProject) return;
+    
+    const agentId = resolveAgentId(session?.name);
+    const authorName = session?.name || 'Member';
+    const contentWithAuthor = `[${authorName}]: ${newUpdate.trim()}`;
+    
+    const { data, error } = await supabase.from('project_updates').insert([{
+      project_id: selectedProject.id,
+      agent_id: agentId,
+      content: contentWithAuthor
+    }]).select();
+    
+    if (!error && data) {
+      setUpdates([...updates, data[0]]);
       setNewUpdate('');
-      setUpdateAttachments([]);
-
-      if (pendingList.some(a => a.file)) {
-        uploadProjectAttachments(inserted, pendingList);
-      }
-    } finally {
-      setSending(false);
+    } else if (error) {
+      console.error('Error posting update:', error);
+      alert('Error posting update: ' + (error.message || 'Please check connection.'));
     }
   };
 
@@ -309,10 +300,7 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
   };
 
   const openProjectDetails = (project) => {
-    selectedProjectRef.current = project;
     setSelectedProject(project);
-    setUpdates([]);
-    setUpdateAttachments([]);
     fetchUpdates(project.id);
   };
 
@@ -320,7 +308,7 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
     const matchesClient = activeClient === 'All Clients' || p.client === activeClient;
     const matchesUrgency = urgencyFilter === 'All' || p.urgency === urgencyFilter;
     const matchesSearch = p.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          (p.description || '').toLowerCase().includes(searchQuery.toLowerCase());
+                          splitDescription(p.description).text.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesClient && matchesUrgency && matchesSearch;
   });
 
@@ -451,6 +439,14 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
                       <h4 className="font-medium text-gray-900 mb-2">{project.title}</h4>
                       <div className="flex items-center text-gray-500 text-xs gap-4 mt-3">
                         <div className="flex items-center gap-1"><Clock size={14}/> {new Date(project.created_at).toLocaleDateString()}</div>
+                        {(() => {
+                          const count = splitDescription(project.description).attachments.length;
+                          return count > 0 ? (
+                            <div className="flex items-center gap-1" title={`${count} attachment${count > 1 ? 's' : ''}`}>
+                              <Paperclip size={13} /> {count}
+                            </div>
+                          ) : null;
+                        })()}
                       </div>
                     </div>
                   ))}
@@ -477,9 +473,12 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
                   </span>
                 </div>
                 <h4 className="font-semibold text-gray-900 mb-2">{project.title}</h4>
-                <p className="text-sm text-gray-600 line-clamp-2 mb-4">{project.description}</p>
+                <p className="text-sm text-gray-600 line-clamp-2 mb-4">{splitDescription(project.description).text}</p>
                 <div className="flex items-center text-gray-500 text-xs justify-between pt-3 border-t border-gray-100">
                   <div className="flex items-center gap-1"><Calendar size={14}/> Completed</div>
+                  {splitDescription(project.description).attachments.length > 0 && (
+                    <div className="flex items-center gap-1"><Paperclip size={13} /> {splitDescription(project.description).attachments.length}</div>
+                  )}
                 </div>
               </div>
             ))
@@ -490,14 +489,14 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
       {/* New Project Modal */}
       {isNewModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden max-h-[92vh] flex flex-col">
             <div className="flex justify-between items-center p-5 border-b border-gray-200">
               <h2 className="text-xl font-bold text-gray-800">New Project</h2>
-              <button onClick={() => setIsNewModalOpen(false)} className="text-gray-400 hover:text-gray-600">
+              <button onClick={closeNewProjectModal} className="text-gray-400 hover:text-gray-600">
                 <X size={20} />
               </button>
             </div>
-            <div className="p-5 space-y-4">
+            <div className="p-5 space-y-4 overflow-y-auto">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Client Name</label>
                 <input 
@@ -537,20 +536,69 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
                   placeholder="Add details..."
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Attachments <span className="text-gray-400 font-normal">(optional)</span></label>
+                <input ref={imageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleImagePick} />
+                <input ref={docInputRef} type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv" multiple className="hidden" onChange={handleDocPick} />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => imageInputRef.current?.click()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 bg-white hover:bg-gray-50"
+                  >
+                    <ImageIcon size={15} /> Attach image
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => docInputRef.current?.click()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 bg-white hover:bg-gray-50"
+                  >
+                    <Paperclip size={15} /> Attach document
+                  </button>
+                </div>
+                {newProjectAttachments.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    {newProjectAttachments.map((att, i) => (
+                      <div key={`new-att-${i}`} className="relative flex items-center rounded-md border border-gray-200 bg-gray-50 overflow-hidden">
+                        {isImageAttachment(att) && att.preview ? (
+                          <img src={att.preview} alt={att.name} className="w-16 h-16 object-cover" />
+                        ) : (
+                          <div className="flex items-center gap-1.5 px-2 py-2 max-w-[180px]">
+                            <FileText size={15} className="text-[#1e3a5f] shrink-0" />
+                            <span className="truncate text-xs text-gray-700">{att.name}</span>
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeNewProjectAttachment(i)}
+                          className="absolute top-0.5 right-0.5 bg-white/90 hover:bg-white rounded-full p-0.5 text-gray-500 hover:text-red-600 shadow"
+                          title="Remove attachment"
+                          aria-label={`Remove ${att.name}`}
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="bg-gray-50 p-4 border-t border-gray-200 flex justify-end gap-3">
               <button 
-                onClick={() => setIsNewModalOpen(false)}
-                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50 font-medium"
+                onClick={closeNewProjectModal}
+                disabled={creating}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50 font-medium disabled:opacity-50"
               >
                 Cancel
               </button>
               <button 
                 onClick={handleCreateProject}
-                className="px-4 py-2 rounded-md text-white font-medium"
+                disabled={creating}
+                className="px-4 py-2 rounded-md text-white font-medium flex items-center gap-2 disabled:opacity-70"
                 style={{ backgroundColor: '#1e3a5f' }}
               >
-                Create project
+                {creating && <Loader2 size={16} className="animate-spin" />}
+                {creating ? 'Creating…' : 'Create project'}
               </button>
             </div>
           </div>
@@ -582,12 +630,126 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
                 </span>
               </div>
 
-              <div className="mb-8">
+              <div className="mb-6">
                 <h3 className="text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Description</h3>
                 <div className="bg-gray-50 p-4 rounded-md text-gray-700 whitespace-pre-wrap border border-gray-100">
-                  {selectedProject.description || 'No description provided.'}
+                  {splitDescription(selectedProject.description).text || 'No description provided.'}
                 </div>
               </div>
+
+              {/* Attachments Preview section right below description */}
+              {(() => {
+                const { attachments } = splitDescription(selectedProject.description);
+                if (!attachments || attachments.length === 0) return null;
+                return (
+                  <div className="mb-6">
+                    <h3 className="text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+                      <Paperclip size={15} /> Attachments ({attachments.length})
+                    </h3>
+                    <div className="space-y-2.5">
+                      {attachments.map((att, idx) => {
+                        const isImg = isImageAttachment(att);
+                        const imgSrc = isImg ? getImageSrc(att) : '';
+                        const linkHref = att.url || (att.preview && att.preview.startsWith('http') ? att.preview : null);
+                        const isUploading = att.pending || (!att.url && !att.failed && !att.preview);
+                        const isFailed = !!att.failed;
+
+                        if (isImg) {
+                          return (
+                            <div 
+                              key={idx}
+                              onClick={() => {
+                                if (imgSrc || linkHref) {
+                                  setPreviewImage({ name: att.name, src: imgSrc, url: linkHref });
+                                }
+                              }}
+                              className={`rounded-xl overflow-hidden border border-gray-200 bg-gray-50 relative group shadow-xs ${
+                                (imgSrc || linkHref) ? 'cursor-pointer hover:border-gray-300' : 'cursor-default'
+                              }`}
+                            >
+                              {imgSrc ? (
+                                <img 
+                                  src={imgSrc} 
+                                  alt={att.name || 'Attachment'} 
+                                  className="w-full max-h-56 object-cover object-top group-hover:scale-[1.01] transition-transform duration-150" 
+                                />
+                              ) : (
+                                <div className="w-full h-28 flex items-center justify-center gap-2 bg-gray-100 text-gray-500 font-medium">
+                                  <ImageIcon size={22} />
+                                  <span className="text-xs truncate max-w-xs">{att.name || 'Image'}</span>
+                                </div>
+                              )}
+                              
+                              {/* Hover overlay if image is ready */}
+                              {(imgSrc || linkHref) && !isUploading && (
+                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 text-white text-xs font-semibold backdrop-blur-xs">
+                                  <Eye size={16} /> Click to expand
+                                </div>
+                              )}
+
+                              {/* Uploading / Failed badge */}
+                              {isUploading && (
+                                <div className="absolute bottom-0 inset-x-0 bg-black/70 text-white text-[11px] py-1 px-2 flex items-center justify-center gap-1.5 font-medium">
+                                  <Loader2 size={12} className="animate-spin" /> Uploading to WorkDrive…
+                                </div>
+                              )}
+                              {isFailed && (
+                                <div className="absolute bottom-0 inset-x-0 bg-red-600/90 text-white text-[11px] py-1 px-2 flex items-center justify-center gap-1.5 font-medium">
+                                  <AlertCircle size={12} /> Upload failed
+                                </div>
+                              )}
+                            </div>
+                          );
+                        } else {
+                          const docUrl = linkHref;
+                          return (
+                            <div
+                              key={idx}
+                              className="flex items-center justify-between p-3 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 transition-colors shadow-xs"
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                                <div className="p-2 rounded-lg bg-blue-50 text-blue-600 shrink-0">
+                                  <FileText size={18} />
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="text-xs font-medium text-gray-800 truncate" title={att.name}>
+                                    {att.name || 'Document'}
+                                  </div>
+                                  <div className="text-[10px] text-gray-400">
+                                    {isUploading ? (
+                                      <span className="flex items-center gap-1 text-amber-600 font-medium">
+                                        <Loader2 size={10} className="animate-spin" /> Uploading to WorkDrive…
+                                      </span>
+                                    ) : isFailed ? (
+                                      <span className="text-red-500 font-medium">Upload failed</span>
+                                    ) : (
+                                      <span>Zoho WorkDrive Document</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {docUrl && !isUploading && (
+                                <a
+                                  href={docUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  download={docUrl.startsWith('data:') ? (att.name || 'document') : undefined}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#1e3a5f] hover:bg-[#162a45] text-white text-xs font-medium transition shrink-0"
+                                  title="Open in Zoho WorkDrive"
+                                >
+                                  <ExternalLink size={12} />
+                                  <span>Open / Download</span>
+                                </a>
+                              )}
+                            </div>
+                          );
+                        }
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div className="mb-8">
                 <h3 className="text-sm font-bold text-gray-700 mb-3 uppercase tracking-wide">Update Status</h3>
@@ -647,7 +809,6 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
                       const agent = list.find(a => a.id === update.agent_id);
                       if (agent) agentName = agent.name;
                     }
-                    const { text: bodyText, attachments: atts } = splitAttachments(content);
 
                     return (
                       <div key={update.id} className="bg-white p-3 rounded-lg shadow-sm border border-gray-100">
@@ -659,46 +820,7 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
                             {new Date(update.created_at).toLocaleString()}
                           </span>
                         </div>
-                        {bodyText && <p className="text-gray-700 text-sm whitespace-pre-wrap">{bodyText}</p>}
-                        {atts.length > 0 && (
-                          <div className="flex flex-wrap gap-2 mt-2">
-                            {atts.map((att, i) => {
-                              const isImg = isImageAttachment(att);
-                              const imgSrc = isImg ? getImageSrc(att) : '';
-                              const status = att.url ? 'done' : att.failed ? 'failed' : 'uploading';
-                              const Wrapper = att.url ? 'a' : 'div';
-                              const wrapperProps = att.url ? { href: att.url, target: '_blank', rel: 'noopener noreferrer' } : {};
-                              return (
-                                <Wrapper
-                                  key={`${update.id}-att-${i}`}
-                                  {...wrapperProps}
-                                  title={att.url ? `Open ${att.name} in WorkDrive` : att.name}
-                                  className={`group relative flex items-center gap-2 rounded-md border text-xs overflow-hidden ${
-                                    status === 'failed' ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-gray-50 hover:bg-gray-100'
-                                  } ${att.url ? 'cursor-pointer' : 'cursor-default'}`}
-                                >
-                                  {isImg && imgSrc ? (
-                                    <img src={imgSrc} alt={att.name} className="w-24 h-24 object-cover" />
-                                  ) : (
-                                    <div className="flex items-center gap-2 px-3 py-2 max-w-[220px]">
-                                      {isImg ? <ImageIcon size={16} className="text-[#1e3a5f] shrink-0" /> : <FileText size={16} className="text-[#1e3a5f] shrink-0" />}
-                                      <span className="truncate text-gray-700">{att.name}</span>
-                                    </div>
-                                  )}
-                                  {status !== 'done' && (
-                                    <div className={`absolute bottom-0 inset-x-0 flex items-center justify-center gap-1 py-0.5 text-[10px] font-medium ${
-                                      status === 'failed' ? 'bg-red-600/90 text-white' : 'bg-black/60 text-white'
-                                    }`}>
-                                      {status === 'failed'
-                                        ? (<><AlertCircle size={10} /> Upload failed</>)
-                                        : (<><Loader2 size={10} className="animate-spin" /> Uploading…</>)}
-                                    </div>
-                                  )}
-                                </Wrapper>
-                              );
-                            })}
-                          </div>
-                        )}
+                        <p className="text-gray-700 text-sm whitespace-pre-wrap">{content}</p>
                       </div>
                     );
                   })
@@ -706,54 +828,7 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
               </div>
 
               <div className="p-4 bg-white border-t border-gray-200">
-                {updateAttachments.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mb-2">
-                    {updateAttachments.map((att, i) => (
-                      <div key={`pending-${i}`} className="relative flex items-center rounded-md border border-gray-200 bg-gray-50 overflow-hidden">
-                        {isImageAttachment(att) && att.preview ? (
-                          <img src={att.preview} alt={att.name} className="w-14 h-14 object-cover" />
-                        ) : (
-                          <div className="flex items-center gap-1.5 px-2 py-1.5 max-w-[180px]">
-                            <FileText size={14} className="text-[#1e3a5f] shrink-0" />
-                            <span className="truncate text-xs text-gray-700">{att.name}</span>
-                          </div>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => removeUpdateAttachment(i)}
-                          className="absolute top-0.5 right-0.5 bg-white/90 hover:bg-white rounded-full p-0.5 text-gray-500 hover:text-red-600 shadow"
-                          title="Remove attachment"
-                          aria-label={`Remove ${att.name}`}
-                        >
-                          <X size={12} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <input ref={imageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleImagePick} />
-                <input ref={docInputRef} type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv" multiple className="hidden" onChange={handleDocPick} />
                 <div className="flex items-end gap-2">
-                  <div className="flex flex-col gap-1 mb-1">
-                    <button
-                      type="button"
-                      onClick={() => imageInputRef.current?.click()}
-                      className="p-2 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-[#1e3a5f]"
-                      title="Attach image"
-                      aria-label="Attach image"
-                    >
-                      <ImageIcon size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => docInputRef.current?.click()}
-                      className="p-2 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-[#1e3a5f]"
-                      title="Attach document (PDF, Word, PowerPoint, Excel)"
-                      aria-label="Attach document"
-                    >
-                      <Paperclip size={16} />
-                    </button>
-                  </div>
                   <textarea
                     value={newUpdate}
                     onChange={(e) => setNewUpdate(e.target.value)}
@@ -762,11 +837,10 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
                   />
                   <button 
                     onClick={postUpdate}
-                    disabled={sending || (!newUpdate.trim() && updateAttachments.length === 0)}
+                    disabled={!newUpdate.trim()}
                     className="p-2 rounded-md text-white bg-[#1e3a5f] disabled:opacity-50 mb-1"
-                    title="Send update"
                   >
-                    {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+                    <Send size={18} />
                   </button>
                 </div>
               </div>
@@ -774,6 +848,85 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
           </div>
         </div>
       )}
+
+      {/* Image Preview / Expand Lightbox Modal */}
+      {previewImage && (() => {
+        const previewSrc = typeof previewImage === 'string' 
+          ? previewImage 
+          : (previewImage?.src || previewImage?.preview || previewImage?.url || '');
+        const previewName = (typeof previewImage === 'object' && previewImage?.name) 
+          ? previewImage.name 
+          : 'Attachment Preview';
+        const downloadHref = (typeof previewImage === 'object' && (previewImage?.url || previewImage?.src || previewImage?.preview)) 
+          ? (previewImage.url || previewImage.src || previewImage.preview) 
+          : (typeof previewImage === 'string' ? previewImage : '');
+
+        return (
+          <div 
+            className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-xs flex flex-col items-center justify-center p-4 animate-in fade-in duration-150"
+            onClick={() => setPreviewImage(null)}
+          >
+            <div 
+              className="relative max-w-4xl w-full max-h-[92vh] flex flex-col items-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Top Toolbar */}
+              <div className="w-full flex items-center justify-between py-2.5 px-4 bg-slate-900/90 rounded-t-xl text-white">
+                <span className="text-xs sm:text-sm font-medium truncate max-w-md">
+                  📷 {previewName}
+                </span>
+                <div className="flex items-center gap-2">
+                  {downloadHref && (
+                    <a
+                      href={downloadHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      download={previewName}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-white text-xs font-medium transition cursor-pointer"
+                    >
+                      <Download size={14} /> Download / Open
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPreviewImage(null)}
+                    className="p-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-white transition cursor-pointer"
+                    title="Close"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Image display */}
+              <div className="bg-black/60 w-full flex items-center justify-center p-3 rounded-b-xl overflow-auto max-h-[82vh]">
+                {previewSrc ? (
+                  <img
+                    src={previewSrc}
+                    alt={previewName}
+                    className="max-h-[78vh] max-w-full object-contain rounded shadow-2xl"
+                  />
+                ) : (
+                  <div className="text-slate-300 py-12 flex flex-col items-center gap-3 text-center">
+                    <ImageIcon size={48} className="opacity-50" />
+                    <p className="text-sm font-medium">Image preview unavailable</p>
+                    {downloadHref && (
+                      <a
+                        href={downloadHref}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition"
+                      >
+                        <ExternalLink size={14} /> Open in Zoho WorkDrive
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
