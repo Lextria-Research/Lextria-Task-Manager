@@ -1,9 +1,29 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { 
   Plus, Clock, MessageSquare, X, Send, 
-  User, Calendar, Search, Filter
+  User, Calendar, Search, Filter,
+  Image as ImageIcon, Paperclip, FileText, Loader2, AlertCircle
 } from 'lucide-react';
+import { isImageAttachment, getImageSrc } from './attachmentUtils';
+import { generateThumbnail } from './QueryTickets';
+
+const ATTACHMENTS_MARKER = '[ATTACHMENTS]:';
+
+// Splits an update's content into plain text and parsed attachment list
+const splitAttachments = (content) => {
+  if (!content || !content.includes(ATTACHMENTS_MARKER)) return { text: content || '', attachments: [] };
+  const idx = content.indexOf(ATTACHMENTS_MARKER);
+  const text = content.substring(0, idx).trim();
+  let attachments = [];
+  try {
+    const parsed = JSON.parse(content.substring(idx + ATTACHMENTS_MARKER.length).trim());
+    if (Array.isArray(parsed)) attachments = parsed;
+  } catch (e) {
+    console.error('Failed to parse project update attachments', e);
+  }
+  return { text, attachments };
+};
 
 const STATUSES = ['Not Started', 'In Progress', 'Client Review', 'On Hold', 'Completed'];
 const URGENCIES = ['High', 'Medium', 'Low'];
@@ -23,6 +43,15 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
   const [selectedProject, setSelectedProject] = useState(null);
   const [updates, setUpdates] = useState([]);
   const [newUpdate, setNewUpdate] = useState('');
+  const [updateAttachments, setUpdateAttachments] = useState([]);
+  const [sending, setSending] = useState(false);
+  const imageInputRef = useRef(null);
+  const docInputRef = useRef(null);
+  const selectedProjectRef = useRef(null);
+
+  useEffect(() => {
+    selectedProjectRef.current = selectedProject;
+  }, [selectedProject]);
 
   useEffect(() => {
     fetchProjects();
@@ -63,7 +92,10 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
       .order('created_at', { ascending: true });
       
     if (error) console.error('Error fetching updates:', error);
-    else setUpdates(data || []);
+    else if (!selectedProjectRef.current || selectedProjectRef.current.id === projectId) {
+      // Ignore stale responses from a previously opened project
+      setUpdates(data || []);
+    }
   };
 
   const handleCreateProject = async () => {
@@ -106,25 +138,136 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
     }
   };
 
+  // --- Attachment pickers ---
+  const handleImagePick = (e) => {
+    const files = Array.from(e.target.files || []);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        setUpdateAttachments(prev => [...prev, {
+          name: file.name,
+          type: file.type || 'image/png',
+          preview: ev.target.result,
+          file
+        }]);
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  };
+
+  const handleDocPick = (e) => {
+    const files = Array.from(e.target.files || []);
+    files.forEach(file => {
+      const isImg = file.type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name);
+      if (isImg) {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          setUpdateAttachments(prev => [...prev, { name: file.name, type: file.type || 'image/png', preview: ev.target.result, file }]);
+        };
+        reader.readAsDataURL(file);
+      } else {
+        setUpdateAttachments(prev => [...prev, { name: file.name, type: file.type || 'application/octet-stream', preview: '', file }]);
+      }
+    });
+    e.target.value = '';
+  };
+
+  const removeUpdateAttachment = (index) => {
+    setUpdateAttachments(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Uploads files to Zoho WorkDrive via /api/upload, then patches the update row with real URLs.
+  // Each file is independent: one failure never discards the others or the message text.
+  const uploadProjectAttachments = async (updateRow, pendingList) => {
+    try {
+      const finalAttachments = await Promise.all(pendingList.map(async (att) => {
+        const { file, ...meta } = att;
+        if (!file) return meta;
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          const res = await fetch('/api/upload', { method: 'POST', body: formData });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.url) {
+              const { pending, failed, ...rest } = meta;
+              return { ...rest, url: data.url };
+            }
+          }
+          console.error('Upload returned no URL for', att.name);
+        } catch (err) {
+          console.error('Upload failed for', att.name, err);
+        }
+        const { pending, ...rest } = meta;
+        return { ...rest, failed: true };
+      }));
+
+      const { text } = splitAttachments(updateRow.content);
+      const newContent = `${text}\n${ATTACHMENTS_MARKER} ${JSON.stringify(finalAttachments)}`;
+
+      const { error } = await supabase
+        .from('project_updates')
+        .update({ content: newContent })
+        .eq('id', updateRow.id);
+
+      if (error) {
+        console.error('Failed to save attachment URLs:', error);
+        return;
+      }
+      setUpdates(prev => prev.map(u => u.id === updateRow.id ? { ...u, content: newContent } : u));
+    } catch (err) {
+      console.error('Background project attachment upload failed', err);
+    }
+  };
+
   const postUpdate = async () => {
-    if (!newUpdate.trim() || !selectedProject) return;
-    
-    const agentId = resolveAgentId(session?.name);
-    const authorName = session?.name || 'Member';
-    const contentWithAuthor = `[${authorName}]: ${newUpdate.trim()}`;
-    
-    const { data, error } = await supabase.from('project_updates').insert([{
-      project_id: selectedProject.id,
-      agent_id: agentId,
-      content: contentWithAuthor
-    }]).select();
-    
-    if (!error && data) {
-      setUpdates([...updates, data[0]]);
+    if ((!newUpdate.trim() && updateAttachments.length === 0) || !selectedProject || sending) return;
+    setSending(true);
+
+    try {
+      const agentId = resolveAgentId(session?.name);
+      const authorName = session?.name || 'Member';
+      let contentWithAuthor = `[${authorName}]: ${newUpdate.trim()}`;
+
+      // Build lightweight records (compressed thumbnails for images) — raw files are kept only in memory
+      const pendingList = [];
+      for (const att of updateAttachments) {
+        if (isImageAttachment(att)) {
+          const thumb = await generateThumbnail(att.preview);
+          pendingList.push({ name: att.name, type: att.file?.type || att.type || 'image/png', preview: thumb, pending: true, file: att.file });
+        } else {
+          pendingList.push({ name: att.name, type: att.file?.type || att.type || 'application/octet-stream', preview: '', pending: true, file: att.file });
+        }
+      }
+
+      if (pendingList.length > 0) {
+        const toSave = pendingList.map(({ file, ...rest }) => rest);
+        contentWithAuthor += `\n${ATTACHMENTS_MARKER} ${JSON.stringify(toSave)}`;
+      }
+
+      const { data, error } = await supabase.from('project_updates').insert([{
+        project_id: selectedProject.id,
+        agent_id: agentId,
+        content: contentWithAuthor
+      }]).select();
+
+      if (error || !data || data.length === 0) {
+        console.error('Error posting update:', error);
+        alert('Error posting update: ' + (error?.message || 'Please check connection.'));
+        return; // Composer is kept intact so nothing typed or attached is lost
+      }
+
+      const inserted = data[0];
+      setUpdates(prev => [...prev, inserted]);
       setNewUpdate('');
-    } else if (error) {
-      console.error('Error posting update:', error);
-      alert('Error posting update: ' + (error.message || 'Please check connection.'));
+      setUpdateAttachments([]);
+
+      if (pendingList.some(a => a.file)) {
+        uploadProjectAttachments(inserted, pendingList);
+      }
+    } finally {
+      setSending(false);
     }
   };
 
@@ -166,7 +309,10 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
   };
 
   const openProjectDetails = (project) => {
+    selectedProjectRef.current = project;
     setSelectedProject(project);
+    setUpdates([]);
+    setUpdateAttachments([]);
     fetchUpdates(project.id);
   };
 
@@ -501,6 +647,7 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
                       const agent = list.find(a => a.id === update.agent_id);
                       if (agent) agentName = agent.name;
                     }
+                    const { text: bodyText, attachments: atts } = splitAttachments(content);
 
                     return (
                       <div key={update.id} className="bg-white p-3 rounded-lg shadow-sm border border-gray-100">
@@ -512,7 +659,46 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
                             {new Date(update.created_at).toLocaleString()}
                           </span>
                         </div>
-                        <p className="text-gray-700 text-sm whitespace-pre-wrap">{content}</p>
+                        {bodyText && <p className="text-gray-700 text-sm whitespace-pre-wrap">{bodyText}</p>}
+                        {atts.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {atts.map((att, i) => {
+                              const isImg = isImageAttachment(att);
+                              const imgSrc = isImg ? getImageSrc(att) : '';
+                              const status = att.url ? 'done' : att.failed ? 'failed' : 'uploading';
+                              const Wrapper = att.url ? 'a' : 'div';
+                              const wrapperProps = att.url ? { href: att.url, target: '_blank', rel: 'noopener noreferrer' } : {};
+                              return (
+                                <Wrapper
+                                  key={`${update.id}-att-${i}`}
+                                  {...wrapperProps}
+                                  title={att.url ? `Open ${att.name} in WorkDrive` : att.name}
+                                  className={`group relative flex items-center gap-2 rounded-md border text-xs overflow-hidden ${
+                                    status === 'failed' ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-gray-50 hover:bg-gray-100'
+                                  } ${att.url ? 'cursor-pointer' : 'cursor-default'}`}
+                                >
+                                  {isImg && imgSrc ? (
+                                    <img src={imgSrc} alt={att.name} className="w-24 h-24 object-cover" />
+                                  ) : (
+                                    <div className="flex items-center gap-2 px-3 py-2 max-w-[220px]">
+                                      {isImg ? <ImageIcon size={16} className="text-[#1e3a5f] shrink-0" /> : <FileText size={16} className="text-[#1e3a5f] shrink-0" />}
+                                      <span className="truncate text-gray-700">{att.name}</span>
+                                    </div>
+                                  )}
+                                  {status !== 'done' && (
+                                    <div className={`absolute bottom-0 inset-x-0 flex items-center justify-center gap-1 py-0.5 text-[10px] font-medium ${
+                                      status === 'failed' ? 'bg-red-600/90 text-white' : 'bg-black/60 text-white'
+                                    }`}>
+                                      {status === 'failed'
+                                        ? (<><AlertCircle size={10} /> Upload failed</>)
+                                        : (<><Loader2 size={10} className="animate-spin" /> Uploading…</>)}
+                                    </div>
+                                  )}
+                                </Wrapper>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     );
                   })
@@ -520,7 +706,54 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
               </div>
 
               <div className="p-4 bg-white border-t border-gray-200">
+                {updateAttachments.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {updateAttachments.map((att, i) => (
+                      <div key={`pending-${i}`} className="relative flex items-center rounded-md border border-gray-200 bg-gray-50 overflow-hidden">
+                        {isImageAttachment(att) && att.preview ? (
+                          <img src={att.preview} alt={att.name} className="w-14 h-14 object-cover" />
+                        ) : (
+                          <div className="flex items-center gap-1.5 px-2 py-1.5 max-w-[180px]">
+                            <FileText size={14} className="text-[#1e3a5f] shrink-0" />
+                            <span className="truncate text-xs text-gray-700">{att.name}</span>
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeUpdateAttachment(i)}
+                          className="absolute top-0.5 right-0.5 bg-white/90 hover:bg-white rounded-full p-0.5 text-gray-500 hover:text-red-600 shadow"
+                          title="Remove attachment"
+                          aria-label={`Remove ${att.name}`}
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <input ref={imageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleImagePick} />
+                <input ref={docInputRef} type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv" multiple className="hidden" onChange={handleDocPick} />
                 <div className="flex items-end gap-2">
+                  <div className="flex flex-col gap-1 mb-1">
+                    <button
+                      type="button"
+                      onClick={() => imageInputRef.current?.click()}
+                      className="p-2 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-[#1e3a5f]"
+                      title="Attach image"
+                      aria-label="Attach image"
+                    >
+                      <ImageIcon size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => docInputRef.current?.click()}
+                      className="p-2 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-[#1e3a5f]"
+                      title="Attach document (PDF, Word, PowerPoint, Excel)"
+                      aria-label="Attach document"
+                    >
+                      <Paperclip size={16} />
+                    </button>
+                  </div>
                   <textarea
                     value={newUpdate}
                     onChange={(e) => setNewUpdate(e.target.value)}
@@ -529,10 +762,11 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
                   />
                   <button 
                     onClick={postUpdate}
-                    disabled={!newUpdate.trim()}
+                    disabled={sending || (!newUpdate.trim() && updateAttachments.length === 0)}
                     className="p-2 rounded-md text-white bg-[#1e3a5f] disabled:opacity-50 mb-1"
+                    title="Send update"
                   >
-                    <Send size={18} />
+                    {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
                   </button>
                 </div>
               </div>
