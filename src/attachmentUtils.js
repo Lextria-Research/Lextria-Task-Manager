@@ -38,6 +38,16 @@ export function parseTicketData(ticket, agentList = []) {
     cleanText = cleanText.replace(/\[QUERY\]:\s*/i, '').trim();
   }
 
+  // Extract [DEADLINE]:...
+  let deadline = ticket.deadline || '';
+  const deadlineMarker = '[DEADLINE]:';
+  if (cleanText.includes(deadlineMarker)) {
+    const dStart = cleanText.indexOf(deadlineMarker) + deadlineMarker.length;
+    const dEnd = cleanText.indexOf('\n', dStart);
+    deadline = dEnd === -1 ? cleanText.substring(dStart).trim() : cleanText.substring(dStart, dEnd).trim();
+    cleanText = (cleanText.substring(0, cleanText.indexOf(deadlineMarker)) + (dEnd === -1 ? '' : cleanText.substring(dEnd))).trim();
+  }
+
   // 2. Extract [ATTACHMENTS]:[...]
   const attMarker = '[ATTACHMENTS]:';
   if (cleanText.includes(attMarker)) {
@@ -50,7 +60,7 @@ export function parseTicketData(ticket, agentList = []) {
     } catch {}
   }
 
-  return { text: cleanText, attachments, authorName, authorRole };
+  return { text: cleanText, attachments, authorName, authorRole, deadline };
 }
 
 /**
@@ -184,5 +194,90 @@ export function isSameMember(a, b) {
   const cleanB = String(typeof b === 'object' ? b.name || '' : b).trim().toLowerCase().replace(/\s+/g, '');
   if (!cleanA || !cleanB) return false;
   return cleanA === cleanB || cleanA.includes(cleanB) || cleanB.includes(cleanA);
+}
+
+/**
+ * Uploads a file to Zoho WorkDrive via /api/upload.
+ * Guarantees all file/photo attachments in the TQ Manager are saved to Zoho WorkDrive instead of Supabase.
+ * Returns { url, name, type } on success, or null with error.
+ */
+export async function uploadFileToZohoWorkDrive(file) {
+  if (!file) return null;
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const res = await fetch('/api/upload', {
+      method: 'POST',
+      body: formData
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.url) {
+        return {
+          url: data.url,
+          name: data.name || file.name,
+          type: file.type || 'application/octet-stream'
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Zoho WorkDrive upload failed, using local preview fallback:', err);
+  }
+  return null;
+}
+
+const _memoryPinStorage = {};
+
+/**
+ * Retrieves up to 3 pinned task IDs for a given team member from storage.
+ */
+export function getPinnedTaskIds(employeeId) {
+  if (!employeeId) return [];
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(`lextria_pinned_tasks_${employeeId}`);
+      if (raw) return JSON.parse(raw);
+    }
+  } catch {}
+  return _memoryPinStorage[employeeId] || [];
+}
+
+/**
+ * Saves up to 3 pinned task IDs for a given member.
+ */
+export function savePinnedTaskIds(employeeId, ids = []) {
+  if (!employeeId) return;
+  const sliced = ids.slice(0, 3);
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(`lextria_pinned_tasks_${employeeId}`, JSON.stringify(sliced));
+    }
+  } catch {}
+  _memoryPinStorage[employeeId] = sliced;
+}
+
+/**
+ * Toggles a pinned task for a member (max 3 allowed).
+ * Returns { pinned: boolean, ids: string[], error?: string }
+ */
+export function togglePinnedTaskId(employeeId, taskId, maxPins = 3) {
+  if (!employeeId || !taskId) return { pinned: false, ids: [] };
+  const current = getPinnedTaskIds(employeeId);
+  if (current.includes(taskId)) {
+    const next = current.filter(id => id !== taskId);
+    savePinnedTaskIds(employeeId, next);
+    return { pinned: false, ids: next };
+  } else {
+    if (current.length >= maxPins) {
+      return {
+        pinned: false,
+        ids: current,
+        error: `Maximum ${maxPins} tasks can be pinned as top priorities. Please unpin one first.`
+      };
+    }
+    const next = [taskId, ...current].slice(0, maxPins);
+    savePinnedTaskIds(employeeId, next);
+    return { pinned: true, ids: next };
+  }
 }
 

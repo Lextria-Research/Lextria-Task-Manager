@@ -12,13 +12,15 @@ import { generateThumbnail } from './QueryTickets';
 // as "[ATTACHMENTS]: [...]" (same format as Query tickets) — no database change needed.
 const ATTACHMENTS_MARKER = '[ATTACHMENTS]:';
 const AUTHOR_MARKER = '[AUTHOR]:';
+const DEADLINE_MARKER = '[DEADLINE]:';
 
 const splitDescription = (description) => {
   if (!description) {
-    return { text: '', attachments: [], authorName: '', authorRole: '' };
+    return { text: '', attachments: [], authorName: '', authorRole: '', deadline: '' };
   }
   let authorName = '';
   let authorRole = '';
+  let deadline = '';
   let clean = description;
 
   if (clean.includes(AUTHOR_MARKER)) {
@@ -33,8 +35,15 @@ const splitDescription = (description) => {
     clean = endIdx === -1 ? '' : clean.substring(endIdx).trim();
   }
 
+  if (clean.includes(DEADLINE_MARKER)) {
+    const startIdx = clean.indexOf(DEADLINE_MARKER) + DEADLINE_MARKER.length;
+    const endIdx = clean.indexOf('\n', startIdx);
+    deadline = endIdx === -1 ? clean.substring(startIdx).trim() : clean.substring(startIdx, endIdx).trim();
+    clean = endIdx === -1 ? '' : clean.substring(endIdx).trim();
+  }
+
   if (!clean.includes(ATTACHMENTS_MARKER)) {
-    return { text: clean || '', attachments: [], authorName, authorRole };
+    return { text: clean || '', attachments: [], authorName, authorRole, deadline };
   }
   const idx = clean.indexOf(ATTACHMENTS_MARKER);
   const text = clean.substring(0, idx).trim();
@@ -45,7 +54,7 @@ const splitDescription = (description) => {
   } catch (e) {
     console.error('Failed to parse project attachments', e);
   }
-  return { text, attachments, authorName, authorRole };
+  return { text, attachments, authorName, authorRole, deadline };
 };
 
 const buildDescription = (text, attachments) => {
@@ -55,7 +64,7 @@ const buildDescription = (text, attachments) => {
 };
 
 const STATUSES = ['Not Started', 'In Progress', 'Client Review', 'On Hold', 'Completed'];
-const URGENCIES = ['High', 'Medium', 'Low'];
+const URGENCIES = ['SOS Urgent', 'High', 'Medium', 'Low'];
 
 export default function ProjectReporting({ agents = [], isAdmin = false, session = null }) {
   const [projects, setProjects] = useState([]);
@@ -67,7 +76,7 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
   const [agentsList, setAgentsList] = useState(agents);
   
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
-  const [newProject, setNewProject] = useState({ client: '', title: '', description: '', urgency: 'Medium' });
+  const [newProject, setNewProject] = useState({ client: '', title: '', description: '', urgency: 'Medium', deadline: '' });
   const [newProjectAttachments, setNewProjectAttachments] = useState([]);
   const [creating, setCreating] = useState(false);
   const [previewImage, setPreviewImage] = useState(null); // { name, src, url }
@@ -151,7 +160,7 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
   const closeNewProjectModal = () => {
     if (creating) return;
     setIsNewModalOpen(false);
-    setNewProject({ client: '', title: '', description: '', urgency: 'Medium' });
+    setNewProject({ client: '', title: '', description: '', urgency: 'Medium', deadline: '' });
     setNewProjectAttachments([]);
   };
 
@@ -196,6 +205,12 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
 
   const handleCreateProject = async () => {
     if (!newProject.title || !newProject.client || creating) return;
+
+    if (newProject.urgency === 'SOS Urgent' && !newProject.deadline) {
+      alert('A compulsory deadline is required for SOS Urgent project reports as they are urgent and important.');
+      return;
+    }
+
     setCreating(true);
 
     try {
@@ -213,7 +228,8 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
       }
       const toSave = pendingList.map(({ file, ...rest }) => rest);
       const authorHeader = session?.name ? `[AUTHOR]:${JSON.stringify({ name: session.name, role: session.role || 'member', id: session.id })}\n` : '';
-      const descriptionText = authorHeader + (newProject.description || '');
+      const deadlineHeader = newProject.deadline ? `[DEADLINE]:${newProject.deadline}\n` : '';
+      const descriptionText = authorHeader + deadlineHeader + (newProject.description || '');
 
       const { data, error } = await supabase.from('projects').insert([{
         title: newProject.title,
@@ -231,12 +247,40 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
       }
 
       const created = data[0];
+
+      // Cross-board Sync: Route SOS Urgent project report into PRANAV DO NOW in Eisenhower Matrix
+      if (newProject.urgency === 'SOS Urgent') {
+        try {
+          const STORAGE_KEY = 'lextria_leader_ticktick_data';
+          const saved = localStorage.getItem(STORAGE_KEY);
+          const leaderData = saved ? JSON.parse(saved) : null;
+          if (leaderData && Array.isArray(leaderData.tasks)) {
+            const sosTask = {
+              id: `sos-proj-${created.id || Date.now()}`,
+              title: `[SOS PROJECT] ${newProject.client}: ${newProject.title.trim()}`,
+              list: 'Inbox',
+              quadrant: 'do_now',
+              dueDate: newProject.deadline,
+              priority: 'High',
+              completed: false,
+              tags: ['SOS Urgent', 'project', newProject.client],
+              notes: `🚨 SOS Urgent Project Report submitted by ${session?.name || 'Member'}.\nClient: ${newProject.client}\nProject: ${newProject.title}\nDeadline: ${newProject.deadline}\n\nDetails:\n${newProject.description || 'No description'}`,
+              subtasks: []
+            };
+            leaderData.tasks.unshift(sosTask);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(leaderData));
+          }
+        } catch (e) {
+          console.error('Failed to sync SOS project into leader board:', e);
+        }
+      }
+
       setProjects(prev => [created, ...prev]);
       if (!clients.includes(newProject.client)) {
         setClients(prev => [...prev, newProject.client]);
       }
       setIsNewModalOpen(false);
-      setNewProject({ client: '', title: '', description: '', urgency: 'Medium' });
+      setNewProject({ client: '', title: '', description: '', urgency: 'Medium', deadline: '' });
       setNewProjectAttachments([]);
 
       if (pendingList.some(a => a.file)) {
@@ -364,6 +408,7 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
 
   const getUrgencyColor = (urgency) => {
     switch (urgency) {
+      case 'SOS Urgent': return 'bg-red-600 text-white font-extrabold animate-pulse shadow-[0_0_8px_rgba(220,38,38,0.5)]';
       case 'High': return 'bg-red-100 text-red-800';
       case 'Medium': return 'bg-yellow-100 text-yellow-800';
       case 'Low': return 'bg-green-100 text-green-800';
@@ -489,13 +534,23 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
                       onClick={() => openProjectDetails(project)}
                       className="bg-white p-4 rounded-md shadow-sm border border-gray-200 cursor-pointer hover:shadow-md transition-shadow"
                     >
-                      <div className="flex justify-between items-start mb-2">
+                      <div className="flex justify-between items-start mb-2 gap-2">
                         <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{project.client}</span>
                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${getUrgencyColor(project.urgency)}`}>
-                          {project.urgency}
+                          {project.urgency === 'SOS Urgent' ? '🚨 SOS Urgent' : project.urgency}
                         </span>
                       </div>
                       <h4 className="font-medium text-gray-900 mb-2">{project.title}</h4>
+                      {(() => {
+                        const parsed = splitDescription(project.description);
+                        return parsed.deadline ? (
+                          <div className="mb-2">
+                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-red-100 text-red-700 border border-red-200">
+                              <Calendar size={11} /> Deadline: {parsed.deadline}
+                            </span>
+                          </div>
+                        ) : null;
+                      })()}
                       <div className="flex items-center text-gray-500 text-xs gap-4 mt-3">
                         <div className="flex items-center gap-1"><Clock size={14}/> {new Date(project.created_at).toLocaleDateString()}</div>
                         {(() => {
@@ -525,13 +580,23 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
                 onClick={() => openProjectDetails(project)}
                 className="bg-white p-5 rounded-md shadow-sm border border-gray-200 cursor-pointer hover:shadow-md transition-shadow"
               >
-                <div className="flex justify-between items-start mb-3">
+                <div className="flex justify-between items-start mb-3 gap-2">
                   <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{project.client}</span>
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${getUrgencyColor(project.urgency)}`}>
-                    {project.urgency}
+                    {project.urgency === 'SOS Urgent' ? '🚨 SOS Urgent' : project.urgency}
                   </span>
                 </div>
                 <h4 className="font-semibold text-gray-900 mb-2">{project.title}</h4>
+                {(() => {
+                  const parsed = splitDescription(project.description);
+                  return parsed.deadline ? (
+                    <div className="mb-2">
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-red-100 text-red-700 border border-red-200">
+                        <Calendar size={11} /> Deadline: {parsed.deadline}
+                      </span>
+                    </div>
+                  ) : null;
+                })()}
                 <p className="text-sm text-gray-600 line-clamp-2 mb-4">{splitDescription(project.description).text}</p>
                 <div className="flex items-center text-gray-500 text-xs justify-between pt-3 border-t border-gray-100">
                   <div className="flex items-center gap-1"><Calendar size={14}/> Completed</div>
@@ -583,9 +648,31 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
                   onChange={e => setNewProject({...newProject, urgency: e.target.value})}
                   className="w-full border border-gray-300 rounded-md p-2 bg-white text-gray-900 focus:outline-none focus:ring-1 focus:ring-[#1e3a5f]"
                 >
-                  {URGENCIES.map(u => <option key={u} value={u} className="text-gray-900 bg-white">{u}</option>)}
+                  {URGENCIES.map(u => (
+                    <option key={u} value={u} className="text-gray-900 bg-white">
+                      {u === 'SOS Urgent' ? '🚨 SOS Urgent' : u}
+                    </option>
+                  ))}
                 </select>
               </div>
+
+              {newProject.urgency === 'SOS Urgent' && (
+                <div className="bg-red-50 border border-red-200 rounded-md p-3">
+                  <label className="block text-xs font-bold text-red-700 uppercase tracking-wide mb-1">
+                    🚨 Compulsory Deadline (SOS Urgent) *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={newProject.deadline || ''}
+                    onChange={e => setNewProject({...newProject, deadline: e.target.value})}
+                    className="w-full border border-red-300 rounded-md p-2 bg-white text-gray-900 font-medium focus:outline-none focus:ring-2 focus:ring-red-500"
+                  />
+                  <p className="text-[11px] text-red-600 mt-1">
+                    SOS Urgent projects require a deadline and are automatically escalated to Pranav's Eisenhower Matrix (PRANAV DO NOW).
+                  </p>
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
                 <textarea 
@@ -680,13 +767,21 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
                 </button>
               </div>
 
-              <div className="flex gap-3 mb-6">
+              <div className="flex flex-wrap gap-3 mb-6">
                 <span className={`px-3 py-1 rounded-full text-sm font-medium ${getUrgencyColor(selectedProject.urgency)}`}>
-                  {selectedProject.urgency} Urgency
+                  {selectedProject.urgency === 'SOS Urgent' ? '🚨 SOS Urgent' : `${selectedProject.urgency} Urgency`}
                 </span>
                 <span className="px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800">
                   {selectedProject.status}
                 </span>
+                {(() => {
+                  const parsed = splitDescription(selectedProject.description);
+                  return parsed.deadline ? (
+                    <span className="px-3 py-1 rounded-full text-sm font-semibold bg-red-100 text-red-700 border border-red-200 flex items-center gap-1.5">
+                      <Calendar size={14} /> Due: {parsed.deadline}
+                    </span>
+                  ) : null;
+                })()}
               </div>
 
               <div className="mb-6">

@@ -24,14 +24,27 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   Search, Shield, Plus, Trash2, Edit2, CheckCircle2, Circle,
   Bell, Calendar, X, Lock, Unlock, AlertCircle, GripVertical, GripHorizontal, Building2, Layout, Users, ChevronRight, ChevronLeft, ArrowLeft, History, RotateCcw, Tag, BarChart3, Filter, SlidersHorizontal, Image, UploadCloud, Link, Clock, Download, FileSpreadsheet, ArrowUpDown, ArrowUp, ArrowDown,
-  CheckSquare, Database, Wrench, FolderKanban
+  CheckSquare, Database, Wrench, FolderKanban, Settings, Pin, Sun, Flame, Copy, Check, Sparkles
 } from 'lucide-react';
 import QueryManager from './QueryManager';
 import ProjectReporting from './ProjectReporting';
 import LoginPage from './LoginPage';
 import MemberManualModal from './MemberManualModal';
 import LeaderTaskboard from './LeaderTaskboard';
-import { isLeaderOrSharan } from './attachmentUtils';
+import SettingsPage, { getStoredProfiles } from './SettingsPage';
+import {
+  isLeaderOrSharan,
+  uploadFileToZohoWorkDrive,
+  getPinnedTaskIds,
+  savePinnedTaskIds,
+  togglePinnedTaskId
+} from './attachmentUtils';
+import {
+  getCliqConfig,
+  getSharedCalendarConfig,
+  sendCliqNotification,
+  checkAndDispatchApproachingDeadlines
+} from './cliqSyncUtils';
 
 // Helper to reliably check if a board agent corresponds to the currently logged in member
 export function isSameMember(agentName, memberName) {
@@ -255,11 +268,16 @@ function renderDescriptionWithLinks(text) {
 }
 
 // --- SORTABLE TASK ITEM ---
-function SortableTaskItem({ task, employeeId, updateTask, deleteTask, onTaskClick, timerTick }) {
+function SortableTaskItem({ task, employeeId, updateTask, deleteTask, onTaskClick, timerTick, onPreviewPhoto }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
     data: { type: 'Task', task, employeeId }
   });
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const isUrgent = (task.priority === 'High' || task.priority === 'SOS Urgent') ||
+    (task.dueDate && task.dueDate < todayStr && !task.completed) ||
+    (task.dueDate && task.dueDate === todayStr && !task.completed);
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -271,18 +289,32 @@ function SortableTaskItem({ task, employeeId, updateTask, deleteTask, onTaskClic
     <div
       ref={setNodeRef}
       style={style}
-      className={`group relative bg-white/5 border border-white/10 rounded-lg p-3 flex flex-col gap-2 transition-all hover:bg-white/10 ${task.completed ? 'opacity-50' : ''}`}
+      className={`group relative bg-white/5 border rounded-lg p-3 flex flex-col gap-2 transition-all hover:bg-white/10 ${
+        isUrgent && !task.completed
+          ? 'ring-1 ring-red-500/50 border-red-500/60 shadow-[0_0_15px_rgba(239,68,68,0.25)] animate-pulse'
+          : 'border-white/10'
+      } ${task.completed ? 'opacity-50' : ''}`}
     >
       {task.screenshotUrl && (
         <div 
-          onClick={() => onTaskClick(employeeId, task.id)}
-          className="w-full h-28 rounded-md overflow-hidden border border-white/5 mb-1 cursor-pointer flex-shrink-0"
+          onClick={() => {
+            if (onPreviewPhoto) {
+              onPreviewPhoto(task.screenshotUrl, task.title);
+            } else {
+              onTaskClick(employeeId, task.id);
+            }
+          }}
+          className="w-full h-28 rounded-md overflow-hidden border border-white/5 mb-1 cursor-pointer flex-shrink-0 relative group/img"
+          title="Click to preview attached image (Zoho WorkDrive)"
         >
           <img 
             src={task.screenshotUrl} 
             alt={task.title} 
-            className="w-full h-full object-cover"
+            className="w-full h-full object-cover transition-transform group-hover/img:scale-105"
           />
+          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-xs text-white font-semibold">
+            <span>📷 View Photo</span>
+          </div>
         </div>
       )}
       <div className="flex items-start gap-2">
@@ -311,12 +343,29 @@ function SortableTaskItem({ task, employeeId, updateTask, deleteTask, onTaskClic
       </div>
       
       <div className="flex flex-wrap items-center gap-2 pl-8">
-        <span className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+        {/* Attached Photo Badge (Sketch [Photo] element) */}
+        {task.screenshotUrl && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onPreviewPhoto && onPreviewPhoto(task.screenshotUrl, task.title);
+            }}
+            className="text-[10px] px-1.5 py-0.5 rounded border border-blue-500/30 bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 flex items-center gap-1 font-semibold transition cursor-pointer"
+            title="Click to view attached photo/file (Zoho WorkDrive)"
+          >
+            <span>📷</span>
+            <span>Photo</span>
+          </button>
+        )}
+
+        <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold transition-colors ${
+          task.priority === 'SOS Urgent' ? 'bg-red-600/30 text-red-200 border-red-500/50 animate-pulse font-bold' :
           task.priority === 'High' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
           task.priority === 'Medium' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
           'bg-green-500/20 text-green-400 border-green-500/30'
         }`}>
-          {task.priority}
+          {task.priority === 'SOS Urgent' ? '🔥 SOS Urgent' : (task.priority || 'Normal')}
         </span>
         {task.requiredTime && task.requiredTime !== 'Undefined' && (
           <span className="text-[10px] px-1.5 py-0.5 rounded border flex items-center gap-1 font-medium transition-colors bg-cyan-500/15 text-cyan-300 border-cyan-500/30">
@@ -355,7 +404,7 @@ function SortableTaskItem({ task, employeeId, updateTask, deleteTask, onTaskClic
 }
 
 // --- SORTABLE EMPLOYEE CARD (KANBAN COLUMN) ---
-function SortableEmployeeCard({ employee, isAdmin, currentUser, onDelete, onEdit, updateTask, deleteTask, addTask, onTaskClick, priorityFilter, dueDateFilter, archivedTasks = [], timerTick }) {
+function SortableEmployeeCard({ employee, isAdmin, currentUser, onDelete, onEdit, updateTask, deleteTask, addTask, onTaskClick, priorityFilter, dueDateFilter, archivedTasks = [], timerTick, onPreviewPhoto }) {
   const [isAdding, setIsAdding] = useState(false);
   const [titleInput, setTitleInput] = useState('');
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -372,6 +421,9 @@ function SortableEmployeeCard({ employee, isAdmin, currentUser, onDelete, onEdit
   const isOwner = currentUser && isSameMember(employee.name, currentUser?.name);
   const canViewTasks = isAdmin || isOwner;
 
+  const profiles = getStoredProfiles();
+  const empProfile = profiles[(employee.name || '').trim().toLowerCase()] || {};
+
   if (!canViewTasks) {
     return (
       <div
@@ -381,9 +433,17 @@ function SortableEmployeeCard({ employee, isAdmin, currentUser, onDelete, onEdit
       >
         <div className="p-4 bg-white/5 border-b border-white/10 relative group">
           <div className="flex items-center space-x-3 mt-1">
-            <div className={`w-10 h-10 rounded-full ${employee.color} flex items-center justify-center text-sm font-bold shadow-lg flex-shrink-0`}>
-              {getInitials(employee.name)}
-            </div>
+            {empProfile.photoUrl ? (
+              <img
+                src={empProfile.photoUrl}
+                alt={employee.name}
+                className="w-10 h-10 rounded-full object-cover shadow-lg border border-white/20 flex-shrink-0"
+              />
+            ) : (
+              <div className={`w-10 h-10 rounded-full ${employee.color} flex items-center justify-center text-sm font-bold shadow-lg flex-shrink-0`}>
+                {getInitials(employee.name)}
+              </div>
+            )}
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5 justify-between">
                 <h3 className="font-semibold text-base truncate text-white">{employee.name}</h3>
@@ -391,7 +451,12 @@ function SortableEmployeeCard({ employee, isAdmin, currentUser, onDelete, onEdit
                   <Lock size={10} /> Confidential
                 </span>
               </div>
-              <p className="text-slate-400 text-xs truncate">{employee.role}</p>
+              <p className="text-slate-300 text-xs truncate font-medium">{empProfile.designation || employee.role}</p>
+              {empProfile.department && (
+                <span className="inline-block text-[9px] px-1.5 py-0.2 rounded bg-white/10 text-blue-300 mt-0.5 font-medium">
+                  {empProfile.department}
+                </span>
+              )}
             </div>
           </div>
           <div className="mt-3 py-2 px-3 rounded-xl bg-white/5 border border-white/5 text-xs text-slate-400 flex items-center gap-2">
@@ -507,12 +572,25 @@ function SortableEmployeeCard({ employee, isAdmin, currentUser, onDelete, onEdit
           )}
         </div>
         <div className="flex items-center space-x-3 mt-3">
-          <div className={`w-10 h-10 rounded-full ${employee.color} flex items-center justify-center text-sm font-bold shadow-lg flex-shrink-0`}>
-            {getInitials(employee.name)}
-          </div>
-          <div className="min-w-0">
+          {empProfile.photoUrl ? (
+            <img
+              src={empProfile.photoUrl}
+              alt={employee.name}
+              className="w-10 h-10 rounded-full object-cover shadow-lg border border-white/20 flex-shrink-0"
+            />
+          ) : (
+            <div className={`w-10 h-10 rounded-full ${employee.color} flex items-center justify-center text-sm font-bold shadow-lg flex-shrink-0`}>
+              {getInitials(employee.name)}
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
             <h3 className="font-semibold text-base truncate text-white">{employee.name}</h3>
-            <p className="text-slate-400 text-xs truncate">{employee.role}</p>
+            <p className="text-slate-300 text-xs truncate font-medium">{empProfile.designation || employee.role}</p>
+            {empProfile.department && (
+              <span className="inline-block text-[9px] px-1.5 py-0.2 rounded bg-white/10 text-blue-300 mt-0.5 font-medium">
+                {empProfile.department}
+              </span>
+            )}
           </div>
         </div>
         <div className="mt-3 space-y-2">
@@ -586,6 +664,7 @@ function SortableEmployeeCard({ employee, isAdmin, currentUser, onDelete, onEdit
               deleteTask={deleteTask} 
               onTaskClick={onTaskClick}
               timerTick={timerTick}
+              onPreviewPhoto={onPreviewPhoto}
             />
           ))}
         </SortableContext>
@@ -650,6 +729,1122 @@ function SortableEmployeeCard({ employee, isAdmin, currentUser, onDelete, onEdit
           >
             <Plus size={16} /> Add Task
           </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// --- ATTACHMENT LIGHTBOX MODAL ---
+// Allows clicking any attached photo or document to view high-res preview and access Zoho WorkDrive
+function AttachmentLightboxModal({ previewPhoto, onClose }) {
+  if (!previewPhoto) return null;
+  const isImage = typeof previewPhoto.url === 'string' && (
+    previewPhoto.url.startsWith('data:image/') ||
+    /\.(png|jpe?g|gif|webp|svg|bmp)(\?.*)?$/i.test(previewPhoto.url) ||
+    previewPhoto.url.includes('workdrive')
+  );
+
+  return (
+    <div 
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200"
+      onClick={onClose}
+    >
+      <div 
+        className="relative max-w-4xl w-full bg-[#160d2b] border border-brand-500/30 rounded-2xl p-5 shadow-[0_0_50px_rgba(124,58,237,0.35)] flex flex-col gap-4 max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-white/10 pb-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">📷</span>
+            <div>
+              <h3 className="text-base font-bold text-white leading-tight">
+                {previewPhoto.title || 'Task Attachment'}
+              </h3>
+              <p className="text-xs text-brand-300">
+                Uploaded to Zoho WorkDrive
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {previewPhoto.url && previewPhoto.url.startsWith('http') && (
+              <a
+                href={previewPhoto.url}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-1.5 rounded-lg text-xs bg-brand-600 hover:bg-brand-500 text-white font-medium flex items-center gap-1.5 transition"
+              >
+                <span>Open in Zoho WorkDrive</span>
+                <Link size={13} />
+              </a>
+            )}
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-auto flex items-center justify-center min-h-[300px] bg-black/40 rounded-xl p-2 border border-white/5">
+          {isImage ? (
+            <img 
+              src={previewPhoto.url} 
+              alt={previewPhoto.title || 'Attached photo'}
+              className="max-h-[65vh] w-auto max-w-full object-contain rounded-lg shadow-2xl" 
+            />
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 text-slate-300 gap-3">
+              <span className="text-5xl">📎</span>
+              <p className="text-sm font-semibold">{previewPhoto.title || 'Attached Document'}</p>
+              {previewPhoto.url && (
+                <a
+                  href={previewPhoto.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold transition flex items-center gap-2"
+                >
+                  <Download size={14} /> Download from Zoho WorkDrive
+                </a>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- DAILY STANDUP DRAWER (CLICKUP-STYLE via Alt + D) ---
+// Slide-over drawer for member's Today Focus & 1-click formatted standup summary copy for Zoho Cliq
+function DailyStandupDrawer({
+  isOpen,
+  onClose,
+  employee,
+  onTaskClick
+}) {
+  const [copied, setCopied] = useState(false);
+  if (!isOpen) return null;
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const allTasks = employee?.tasks || [];
+  
+  // Tasks due today or active in progress
+  const dueTodayTasks = allTasks.filter(t => !t.completed && (t.dueDate === todayStr || t.due_date === todayStr));
+  const inProgressTasks = allTasks.filter(t => !t.completed && (t.workflowStage === 'in_progress' || t.workflow_stage === 'in_progress' || t.timerStartedAt));
+  const urgentTasks = allTasks.filter(t => !t.completed && (t.priority === 'High' || t.priority === 'SOS Urgent'));
+  const completedTodayTasks = allTasks.filter(t => t.completed);
+
+  // Combine active focus (deduplicated)
+  const focusMap = new Map();
+  [...dueTodayTasks, ...inProgressTasks, ...urgentTasks].forEach(t => focusMap.set(t.id, t));
+  const activeFocusList = Array.from(focusMap.values());
+
+  const totalFocus = activeFocusList.length + completedTodayTasks.length;
+  const progressPercent = totalFocus > 0 ? Math.round((completedTodayTasks.length / totalFocus) * 100) : 0;
+
+  // Format Standup for Zoho Cliq
+  const handleCopyStandup = () => {
+    const dateFormatted = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    let text = `🚀 *Daily Standup — ${employee?.name || 'Member'}* (${dateFormatted})\n\n`;
+    
+    text += `*🔥 Today's Focus & Active Tasks:*\n`;
+    if (activeFocusList.length === 0) {
+      text += `• No pending focus tasks scheduled for today\n`;
+    } else {
+      activeFocusList.forEach(t => {
+        const prioTag = t.priority ? ` [${t.priority}]` : '';
+        const dueTag = t.dueDate ? ` (Due: ${t.dueDate})` : '';
+        text += `• [ ] ${t.title}${prioTag}${dueTag}\n`;
+      });
+    }
+
+    text += `\n*✅ Completed / Done:*\n`;
+    if (completedTodayTasks.length === 0) {
+      text += `• None yet\n`;
+    } else {
+      completedTodayTasks.slice(0, 10).forEach(t => {
+        text += `• [x] ${t.title}\n`;
+      });
+    }
+
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
+
+  return (
+    <div 
+      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex justify-end animate-in fade-in duration-200"
+      onClick={onClose}
+    >
+      <div 
+        className="w-full max-w-md bg-[#120824] border-l border-white/10 h-full p-6 flex flex-col gap-5 shadow-2xl overflow-y-auto animate-in slide-in-from-right duration-300"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-white/10 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-xl shadow-[0_0_15px_rgba(245,158,11,0.2)]">
+              🌅
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white leading-tight">Today's Focus & Standup</h3>
+              <p className="text-xs text-slate-400 mt-0.5">{employee?.name}'s Daily Command Drawer</p>
+            </div>
+          </div>
+          <button 
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Daily Progress Bar */}
+        <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-slate-300 font-medium">Daily Completion</span>
+            <span className="text-emerald-400 font-bold">{progressPercent}%</span>
+          </div>
+          <div className="w-full bg-white/10 h-2 rounded-full overflow-hidden">
+            <div 
+              className="bg-gradient-to-r from-amber-500 to-emerald-400 h-full transition-all duration-500 rounded-full"
+              style={{ width: `${progressPercent}%` }}
+            />
+          </div>
+          <p className="text-[11px] text-slate-400 text-right">
+            {completedTodayTasks.length} done • {activeFocusList.length} remaining
+          </p>
+        </div>
+
+        {/* 1-Click Copy for Zoho Cliq */}
+        <button
+          onClick={handleCopyStandup}
+          className={`w-full py-3 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95 cursor-pointer ${
+            copied
+              ? 'bg-emerald-600 text-white shadow-emerald-600/30'
+              : 'bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white shadow-brand-600/30'
+          }`}
+        >
+          {copied ? <Check size={16} /> : <Copy size={16} />}
+          <span>{copied ? 'Copied Standup to Clipboard!' : '📋 Copy Standup Summary for Zoho Cliq'}</span>
+        </button>
+
+        {/* Active Focus Section */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+              <span>🔥</span> Today's Focus ({activeFocusList.length})
+            </h4>
+          </div>
+          <div className="space-y-2 max-h-[220px] overflow-y-auto custom-scrollbar">
+            {activeFocusList.length === 0 ? (
+              <div className="p-4 rounded-xl border border-dashed border-white/10 text-center text-xs text-slate-500">
+                No active urgent or today-due tasks right now. Great job!
+              </div>
+            ) : (
+              activeFocusList.map(task => (
+                <div 
+                  key={task.id}
+                  onClick={() => onTaskClick(employee.id, task.id)}
+                  className="p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition-all cursor-pointer flex items-center justify-between gap-2"
+                >
+                  <span className="text-xs text-slate-200 font-medium truncate flex-1">{task.title}</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold shrink-0 ${
+                    task.priority === 'High' || task.priority === 'SOS Urgent' 
+                      ? 'bg-red-500/20 text-red-300 border border-red-500/30 animate-pulse'
+                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                  }`}>
+                    {task.priority || 'Normal'}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Finished Section */}
+        <div className="space-y-3">
+          <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+            <span>✅</span> Finished ({completedTodayTasks.length})
+          </h4>
+          <div className="space-y-2 max-h-[180px] overflow-y-auto custom-scrollbar">
+            {completedTodayTasks.length === 0 ? (
+              <div className="p-4 rounded-xl border border-dashed border-white/10 text-center text-xs text-slate-500">
+                No completed tasks yet. Finish a task to see it here!
+              </div>
+            ) : (
+              completedTodayTasks.map(task => (
+                <div 
+                  key={task.id}
+                  className="p-2.5 rounded-xl bg-emerald-500/5 border border-emerald-500/20 flex items-center gap-2 text-xs text-slate-300"
+                >
+                  <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                  <span className="line-through text-slate-400 truncate">{task.title}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Keyboard shortcut hint */}
+        <div className="mt-auto pt-4 border-t border-white/10 text-center text-[11px] text-slate-500 flex items-center justify-center gap-1.5">
+          <span>Tip: Press</span>
+          <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white font-mono text-[10px] border border-white/20">Alt + D</kbd>
+          <span>to toggle this standup anytime</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- QUICK TASK MODAL (LINEAR-STYLE via Alt + N) ---
+function QuickTaskModal({ isOpen, onClose, employee, onAddTask }) {
+  const [title, setTitle] = useState('');
+  const [priority, setPriority] = useState('Medium');
+  const [stage, setStage] = useState('todo');
+  const [dueDate, setDueDate] = useState('');
+
+  if (!isOpen) return null;
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!title.trim() || !employee?.id) return;
+    onAddTask(employee.id, title.trim(), {
+      priority,
+      workflowStage: stage,
+      dueDate: dueDate || null
+    });
+    setTitle('');
+    onClose();
+  };
+
+  return (
+    <div 
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+      onClick={onClose}
+    >
+      <form 
+        onSubmit={handleSubmit}
+        className="w-full max-w-lg bg-[#140b29] border border-brand-500/40 rounded-2xl p-6 shadow-[0_0_40px_rgba(124,58,237,0.3)] space-y-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-white/10 pb-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">⚡</span>
+            <h3 className="text-base font-bold text-white">Quick Add Task (Alt + N)</h3>
+          </div>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-white cursor-pointer">
+            <X size={18} />
+          </button>
+        </div>
+
+        <input 
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="What needs to be done? (Press Enter to create)"
+          className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/20 text-white placeholder-slate-500 outline-none focus:border-brand-500 text-sm font-medium"
+          autoFocus
+        />
+
+        <div className="grid grid-cols-3 gap-3 text-xs">
+          <div>
+            <label className="text-slate-400 block mb-1">Stage</label>
+            <select
+              value={stage}
+              onChange={(e) => setStage(e.target.value)}
+              className="w-full px-2.5 py-2 rounded-lg bg-white/10 border border-white/20 text-white outline-none cursor-pointer"
+            >
+              <option value="todo" className="bg-[#1a0a2e]">To Do</option>
+              <option value="in_progress" className="bg-[#1a0a2e]">In Progress</option>
+              <option value="review" className="bg-[#1a0a2e]">Review</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="text-slate-400 block mb-1">Priority</label>
+            <select
+              value={priority}
+              onChange={(e) => setPriority(e.target.value)}
+              className="w-full px-2.5 py-2 rounded-lg bg-white/10 border border-white/20 text-white outline-none cursor-pointer"
+            >
+              <option value="Low" className="bg-[#1a0a2e]">Low</option>
+              <option value="Medium" className="bg-[#1a0a2e]">Medium</option>
+              <option value="High" className="bg-[#1a0a2e]">High</option>
+              <option value="SOS Urgent" className="bg-[#1a0a2e]">🔥 SOS Urgent</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="text-slate-400 block mb-1">Due Date</label>
+            <input 
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              className="w-full px-2.5 py-1.5 rounded-lg bg-white/10 border border-white/20 text-white outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between pt-2 border-t border-white/10">
+          <span className="text-[11px] text-slate-500">Assignee: {employee?.name}</span>
+          <div className="flex gap-2">
+            <button 
+              type="button" 
+              onClick={onClose}
+              className="px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button 
+              type="submit"
+              disabled={!title.trim()}
+              className="px-4 py-1.5 rounded-lg text-xs bg-brand-600 hover:bg-brand-500 text-white font-bold transition disabled:opacity-50 cursor-pointer shadow-lg"
+            >
+              Create Task
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// --- MY EXPANDED MEMBER BOARD (4-COLUMN FULL-WIDTH WORKFLOW VIEW) ---
+// Renders the logged in member's tasks across 4 workflow columns spanning 100% of the screen width
+function MyExpandedMemberBoard({
+  employee,
+  isAdmin,
+  currentUser,
+  updateTask,
+  deleteTask,
+  addTask,
+  onTaskClick,
+  priorityFilter,
+  dueDateFilter,
+  timerTick,
+  onPreviewPhoto,
+  onOpenStandup
+}) {
+  const [addingStage, setAddingStage] = useState(null);
+  const [inlineTitle, setInlineTitle] = useState('');
+  const [pinnedIds, setPinnedIds] = useState(() => getPinnedTaskIds(employee?.id));
+  const [pinErrorToast, setPinErrorToast] = useState(null);
+
+  useEffect(() => {
+    setPinnedIds(getPinnedTaskIds(employee?.id));
+  }, [employee?.id]);
+
+  const handleTogglePin = (taskId, e) => {
+    if (e) e.stopPropagation();
+    const result = togglePinnedTaskId(employee?.id, taskId, 3);
+    if (result.error) {
+      setPinErrorToast(result.error);
+      setTimeout(() => setPinErrorToast(null), 3500);
+    } else {
+      setPinnedIds(result.ids);
+    }
+  };
+
+  const profiles = getStoredProfiles();
+  const empProfile = profiles[(employee?.name || '').trim().toLowerCase()] || {};
+
+  // Define 4 workflow stages matching user's sketch
+  const stages = [
+    {
+      id: 'todo',
+      title: 'To Do',
+      subtitle: 'Backlog & Pending',
+      color: 'from-blue-500/20 to-indigo-500/10',
+      badgeBg: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
+      borderColor: 'border-blue-500/20',
+      icon: '📋'
+    },
+    {
+      id: 'in_progress',
+      title: 'In Progress',
+      subtitle: 'Active Working',
+      color: 'from-amber-500/20 to-orange-500/10',
+      badgeBg: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+      borderColor: 'border-amber-500/20',
+      icon: '⚡'
+    },
+    {
+      id: 'review',
+      title: 'Under Review',
+      subtitle: 'Client / Lead Review',
+      color: 'from-purple-500/20 to-pink-500/10',
+      badgeBg: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
+      borderColor: 'border-purple-500/20',
+      icon: '🔍'
+    },
+    {
+      id: 'completed',
+      title: 'Completed',
+      subtitle: 'Finished & Verified',
+      color: 'from-emerald-500/20 to-teal-500/10',
+      badgeBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+      borderColor: 'border-emerald-500/20',
+      icon: '✅'
+    }
+  ];
+
+  // Helper to determine stage
+  const getTaskStage = (task) => {
+    if (task.completed) return 'completed';
+    if (task.workflowStage) return task.workflowStage;
+    if (task.workflow_stage) return task.workflow_stage;
+    if (task.timerStartedAt || task.timer_started_at) return 'in_progress';
+    if (task.tag && (task.tag.toLowerCase().includes('review') || task.tag.toLowerCase().includes('hold'))) return 'review';
+    return 'todo';
+  };
+
+  // Filter tasks based on priority and due date filters
+  const filteredTasks = (employee?.tasks || []).filter(t => {
+    if (priorityFilter && priorityFilter !== 'All' && t.priority !== priorityFilter) return false;
+    if (dueDateFilter && dueDateFilter !== 'All') {
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (dueDateFilter === 'Today') {
+        if (t.dueDate !== todayStr && t.due_date !== todayStr) return false;
+      } else if (dueDateFilter === 'Overdue') {
+        const d = t.dueDate || t.due_date;
+        if (!d || d >= todayStr) return false;
+      }
+    }
+    return true;
+  });
+
+  // Group tasks into the 4 columns
+  const columnTasks = {
+    todo: filteredTasks.filter(t => getTaskStage(t) === 'todo'),
+    in_progress: filteredTasks.filter(t => getTaskStage(t) === 'in_progress'),
+    review: filteredTasks.filter(t => getTaskStage(t) === 'review'),
+    completed: filteredTasks.filter(t => getTaskStage(t) === 'completed')
+  };
+
+  // Stage transition handler
+  const handleMoveStage = (task, newStage) => {
+    if (newStage === 'completed') {
+      updateTask(employee.id, task.id, { completed: true, workflowStage: 'completed' });
+    } else if (newStage === 'in_progress') {
+      updateTask(employee.id, task.id, {
+        completed: false,
+        workflowStage: 'in_progress',
+        timerStartedAt: task.timerStartedAt || new Date().toISOString()
+      });
+    } else if (newStage === 'review') {
+      updateTask(employee.id, task.id, { completed: false, workflowStage: 'review', timerStartedAt: null });
+    } else {
+      updateTask(employee.id, task.id, { completed: false, workflowStage: 'todo', timerStartedAt: null });
+    }
+  };
+
+  // Inline task addition into a specific column
+  const handleAddInline = (stageId) => {
+    if (!inlineTitle.trim()) return;
+    addTask(employee.id, inlineTitle.trim(), {
+      workflowStage: stageId,
+      completed: stageId === 'completed'
+    });
+    setInlineTitle('');
+    setAddingStage(null);
+  };
+
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  return (
+    <div className="w-full space-y-6 animate-in fade-in duration-300">
+      {/* Toast alert if trying to pin > 3 tasks */}
+      {pinErrorToast && (
+        <div className="p-3.5 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-200 text-xs font-semibold flex items-center gap-2.5 animate-in fade-in shadow-xl">
+          <AlertCircle size={18} className="text-amber-400 shrink-0" />
+          <span>{pinErrorToast}</span>
+        </div>
+      )}
+
+      {/* Member Profile Summary Strip */}
+      <div className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-md flex-wrap gap-4">
+        <div className="flex items-center gap-3.5">
+          {empProfile.photoUrl ? (
+            <img
+              src={empProfile.photoUrl}
+              alt={employee?.name || 'Member'}
+              className="w-12 h-12 rounded-2xl object-cover border-2 border-blue-500/40 shadow-xl"
+            />
+          ) : (
+            <div className={`w-12 h-12 rounded-2xl ${employee?.color || 'bg-blue-600'} flex items-center justify-center text-white font-extrabold text-base shadow-xl border border-white/20`}>
+              {getInitials(employee?.name || 'ME')}
+            </div>
+          )}
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-bold text-white leading-tight">{employee?.name}'s Personal Board</h3>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 font-semibold">
+                Expanded View
+              </span>
+              {pinnedIds.length > 0 && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold flex items-center gap-1">
+                  <Pin size={10} className="fill-amber-300" />
+                  {pinnedIds.length}/3 Pinned
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-300 font-medium">
+              {empProfile.designation || employee?.role || 'Member'} • {empProfile.department || 'General'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4 text-xs">
+          {/* 1-Click Today's Focus Drawer Button */}
+          <button
+            type="button"
+            onClick={onOpenStandup}
+            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 border border-amber-500/40 text-amber-300 font-bold text-xs flex items-center gap-2 transition shadow-lg active:scale-95 cursor-pointer"
+            title="Open Today's Focus & Standup Drawer (Alt + D)"
+          >
+            <Sun size={15} className="text-amber-400" />
+            <span>🌅 Today's Focus</span>
+            <kbd className="hidden sm:inline-block px-1.5 py-0.2 rounded bg-black/30 text-[10px] text-amber-200/80 font-mono border border-amber-500/30">Alt+D</kbd>
+          </button>
+
+          <div className="h-8 w-px bg-white/10" />
+
+          <div className="text-right">
+            <span className="text-slate-400 block text-[10px] uppercase tracking-wider">Active Tasks</span>
+            <span className="text-sm font-bold text-white">
+              {(employee?.tasks || []).filter(t => !t.completed).length} Pending
+            </span>
+          </div>
+          <div className="h-8 w-px bg-white/10" />
+          <div className="text-right">
+            <span className="text-slate-400 block text-[10px] uppercase tracking-wider">Completed</span>
+            <span className="text-sm font-bold text-emerald-400">
+              {(employee?.tasks || []).filter(t => t.completed).length} Tasks
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* 4-COLUMN WORKFLOW GRID (100% WIDTH) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 w-full items-start">
+        {stages.map((stage) => {
+          // Sort tasks so pinned tasks stick to the top (max 3 pins)
+          const tasks = (columnTasks[stage.id] || []).sort((a, b) => {
+            const aPin = pinnedIds.includes(a.id);
+            const bPin = pinnedIds.includes(b.id);
+            if (aPin && !bPin) return -1;
+            if (!aPin && bPin) return 1;
+            return 0;
+          });
+
+          return (
+            <div
+              key={stage.id}
+              className={`rounded-2xl border ${stage.borderColor} bg-white/[0.03] backdrop-blur-md flex flex-col min-h-[580px] shadow-xl overflow-hidden transition-all`}
+            >
+              {/* Column Header */}
+              <div className={`p-4 border-b border-white/10 bg-gradient-to-r ${stage.color} flex items-center justify-between`}>
+                <div className="flex items-center gap-2">
+                  <span className="text-base">{stage.icon}</span>
+                  <div>
+                    <h4 className="text-sm font-bold text-white leading-none">{stage.title}</h4>
+                    <span className="text-[10px] text-slate-400 mt-0.5 block">{stage.subtitle}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${stage.badgeBg}`}>
+                    {tasks.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddingStage(addingStage === stage.id ? null : stage.id);
+                      setInlineTitle('');
+                    }}
+                    className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
+                    title={`Add task to ${stage.title}`}
+                  >
+                    <Plus size={14} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Inline Task Addition */}
+              {addingStage === stage.id && (
+                <div className="p-3 bg-black/40 border-b border-white/10 animate-in fade-in">
+                  <input
+                    type="text"
+                    value={inlineTitle}
+                    onChange={(e) => setInlineTitle(e.target.value)}
+                    placeholder={`Task title in ${stage.title}...`}
+                    className="w-full px-3 py-1.5 text-xs rounded-xl bg-white/10 border border-white/20 text-white outline-none focus:border-blue-400"
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleAddInline(stage.id);
+                      if (e.key === 'Escape') setAddingStage(null);
+                    }}
+                  />
+                  <div className="flex items-center justify-end gap-1.5 mt-2">
+                    <button
+                      type="button"
+                      onClick={() => setAddingStage(null)}
+                      className="px-2 py-1 text-[10px] text-slate-400 hover:text-white cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddInline(stage.id)}
+                      className="px-3 py-1 text-[10px] bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg cursor-pointer"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Tasks List in Column */}
+              <div className="flex-1 p-3 space-y-3 overflow-y-auto max-h-[650px] custom-scrollbar">
+                {tasks.length === 0 ? (
+                  <div className="py-12 text-center text-slate-500 border border-dashed border-white/10 rounded-xl m-1">
+                    <p className="text-xs">No tasks in {stage.title}</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddingStage(stage.id);
+                        setInlineTitle('');
+                      }}
+                      className="text-[11px] text-blue-400 hover:text-blue-300 mt-1 cursor-pointer font-medium"
+                    >
+                      + Add a task
+                    </button>
+                  </div>
+                ) : (
+                  tasks.map((task) => {
+                    const isOverdue = task.dueDate && task.dueDate < todayStr && !task.completed;
+                    const isDueToday = task.dueDate && task.dueDate === todayStr;
+                    const isPinned = pinnedIds.includes(task.id);
+                    const isUrgent = (task.priority === 'High' || task.priority === 'SOS Urgent') ||
+                      (isOverdue && !task.completed) ||
+                      (isDueToday && !task.completed);
+
+                    return (
+                      <div
+                        key={task.id}
+                        onClick={() => onTaskClick(employee.id, task.id)}
+                        className={`group relative p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col gap-2.5 shadow-md ${
+                          isUrgent && !task.completed
+                            ? 'ring-1 ring-red-500/60 border-red-500/60 shadow-[0_0_20px_rgba(239,68,68,0.3)] animate-pulse bg-red-950/20'
+                            : isPinned
+                            ? 'ring-1 ring-amber-500/50 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.2)] bg-amber-500/[0.04]'
+                            : 'border-white/10 bg-white/5 hover:bg-white/10'
+                        } ${task.completed ? 'opacity-65' : ''}`}
+                      >
+                        {/* Task Screenshot if present */}
+                        {task.screenshotUrl && (
+                          <div 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onPreviewPhoto && onPreviewPhoto(task.screenshotUrl, task.title);
+                            }}
+                            className="w-full h-24 rounded-lg overflow-hidden border border-white/10 flex-shrink-0 relative group/photo"
+                            title="Click to preview attached photo/file (Zoho WorkDrive)"
+                          >
+                            <img src={task.screenshotUrl} alt={task.title} className="w-full h-full object-cover transition-transform group-hover/photo:scale-105" />
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/photo:opacity-100 transition-opacity flex items-center justify-center text-[11px] font-semibold text-white">
+                              <span>📷 Preview Attachment</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Top row: Checkbox, Title, Pin & Delete */}
+                        <div className="flex items-start gap-2">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              updateTask(employee.id, task.id, { completed: !task.completed });
+                            }}
+                            className={`mt-0.5 transition-colors cursor-pointer shrink-0 ${
+                              task.completed ? 'text-emerald-400' : 'text-slate-400 hover:text-emerald-300'
+                            }`}
+                          >
+                            {task.completed ? <CheckCircle2 size={16} /> : <Circle size={16} />}
+                          </button>
+
+                          <div className="flex-1 min-w-0">
+                            <h5 className={`text-xs font-semibold leading-snug break-words ${
+                              task.completed ? 'line-through text-slate-400' : 'text-slate-100'
+                            }`}>
+                              {task.title}
+                            </h5>
+                            {task.description && (
+                              <p className="text-[11px] text-slate-400 mt-1 line-clamp-2 leading-relaxed">
+                                {task.description}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            {/* Pin Toggle Button (Max 3 pins) */}
+                            <button
+                              type="button"
+                              onClick={(e) => handleTogglePin(task.id, e)}
+                              className={`p-1 rounded-lg transition cursor-pointer ${
+                                isPinned
+                                  ? 'text-amber-400 bg-amber-500/20 hover:bg-amber-500/30'
+                                  : 'opacity-0 group-hover:opacity-100 text-slate-500 hover:text-amber-400'
+                              }`}
+                              title={isPinned ? 'Unpin Task' : 'Pin as Top Priority (Max 3)'}
+                            >
+                              <Pin size={13} className={isPinned ? 'fill-amber-400 rotate-45' : ''} />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteTask(employee.id, task);
+                              }}
+                              className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition p-1 cursor-pointer"
+                              title="Delete Task"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Badges Row: [Photo] Attachment, Priority, Pin, Urgent, Date, Timer */}
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-white/5 text-[10px]">
+                          {/* Attached Photo Badge (Sketch [Photo] clarification: opens attached photo/file) */}
+                          {task.screenshotUrl && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onPreviewPhoto && onPreviewPhoto(task.screenshotUrl, task.title);
+                              }}
+                              className="px-2 py-0.5 rounded border border-blue-500/30 bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 flex items-center gap-1 font-semibold transition cursor-pointer hover:scale-105 active:scale-95"
+                              title="Click to view attached photo/file (Zoho WorkDrive)"
+                            >
+                              <span>📷</span>
+                              <span>Photo</span>
+                            </button>
+                          )}
+
+                          {/* Pinned Badge */}
+                          {isPinned && (
+                            <span className="px-1.5 py-0.5 rounded border bg-amber-500/20 text-amber-300 border-amber-500/40 text-[9px] font-bold flex items-center gap-0.5">
+                              <Pin size={9} className="fill-amber-300" />
+                              <span>PINNED</span>
+                            </span>
+                          )}
+
+                          {/* Urgent Glow Badge */}
+                          {isUrgent && !task.completed && (
+                            <span className="px-1.5 py-0.5 rounded border bg-red-500/25 text-red-300 border-red-500/40 text-[9px] font-extrabold flex items-center gap-0.5 animate-pulse">
+                              <Flame size={10} className="text-red-400" />
+                              <span>URGENT</span>
+                            </span>
+                          )}
+
+                          {/* Priority / Status Badge */}
+                          <span className={`px-1.5 py-0.5 rounded border font-semibold ${
+                            task.priority === 'SOS Urgent' ? 'bg-red-600/30 text-red-200 border-red-500/50 font-bold' :
+                            task.priority === 'High' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+                            task.priority === 'Medium' ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' :
+                            'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                          }`}>
+                            {task.priority === 'SOS Urgent' ? '🔥 SOS Urgent' : (task.priority || 'Normal')}
+                          </span>
+
+                          {/* Date Badge */}
+                          {task.dueDate && (
+                            <span className={`px-1.5 py-0.5 rounded border flex items-center gap-1 font-medium ${
+                              isOverdue ? 'bg-red-500/20 text-red-300 border-red-500/40 animate-pulse' :
+                              isDueToday ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' :
+                              'bg-white/5 text-slate-300 border-white/10'
+                            }`}>
+                              <Calendar size={10} />
+                              <span>{formatDateToDDMMYY(task.dueDate)}</span>
+                            </span>
+                          )}
+
+                          {/* Time Estimate Badge */}
+                          {task.requiredTime && task.requiredTime !== 'Undefined' && (
+                            <span className="px-1.5 py-0.5 rounded border bg-cyan-500/15 text-cyan-300 border-cyan-500/30 flex items-center gap-1 font-medium">
+                              <Clock size={10} /> {task.requiredTime}
+                            </span>
+                          )}
+
+                          {/* Live Timer if running */}
+                          {(() => {
+                            const timerInfo = formatTimerDisplay(task, timerTick);
+                            if (!timerInfo) return null;
+                            return (
+                              <span className={`px-1.5 py-0.5 rounded border font-bold flex items-center gap-1 ${
+                                timerInfo.overtime ? 'bg-red-500/20 text-red-400 border-red-500/30 animate-pulse' : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                              }`}>
+                                ⏱ {timerInfo.text}
+                              </span>
+                            );
+                          })()}
+                        </div>
+
+                        {/* Stage Mover Toolbar */}
+                        <div className="flex items-center justify-between pt-1 border-t border-white/5 opacity-80 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+                          <span className="text-[10px] text-slate-400">Move:</span>
+                          <div className="flex items-center gap-1">
+                            {stage.id !== 'todo' && (
+                              <button
+                                type="button"
+                                onClick={() => handleMoveStage(task, 'todo')}
+                                className="px-1.5 py-0.5 rounded text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 transition cursor-pointer"
+                                title="Move to To Do"
+                              >
+                                📋 To Do
+                              </button>
+                            )}
+                            {stage.id !== 'in_progress' && (
+                              <button
+                                type="button"
+                                onClick={() => handleMoveStage(task, 'in_progress')}
+                                className="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 transition cursor-pointer"
+                                title="Move to In Progress"
+                              >
+                                ⚡ Work
+                              </button>
+                            )}
+                            {stage.id !== 'review' && (
+                              <button
+                                type="button"
+                                onClick={() => handleMoveStage(task, 'review')}
+                                className="px-1.5 py-0.5 rounded text-[10px] bg-purple-500/15 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 transition cursor-pointer"
+                                title="Move to Review"
+                              >
+                                🔍 Review
+                              </button>
+                            )}
+                            {stage.id !== 'completed' && (
+                              <button
+                                type="button"
+                                onClick={() => handleMoveStage(task, 'completed')}
+                                className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 transition cursor-pointer"
+                                title="Mark Complete"
+                              >
+                                ✅ Done
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// --- SHARED TEAM CALENDAR VIEW ---
+// Allows all members to look at the team's shared Google or Zoho Calendar inside the taskboard
+function SharedTeamCalendarView({
+  departments = [],
+  allEmployees = [],
+  onOpenSettings,
+  onTaskClick
+}) {
+  const config = getSharedCalendarConfig();
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  // Collect all tasks with deadlines across all agents
+  const allScheduledTasks = useMemo(() => {
+    const list = [];
+    allEmployees.forEach(emp => {
+      (emp.tasks || []).forEach(task => {
+        if (task.dueDate || task.due_date) {
+          list.push({
+            ...task,
+            dueDate: task.dueDate || task.due_date,
+            agentName: emp.name,
+            agentColor: emp.color,
+            agentId: emp.id
+          });
+        }
+      });
+    });
+    // Sort by due date ascending
+    return list.sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
+  }, [allEmployees]);
+
+  const dueTodayTasks = allScheduledTasks.filter(t => t.dueDate === todayStr && !t.completed);
+  const overdueTasks = allScheduledTasks.filter(t => t.dueDate < todayStr && !t.completed);
+  const upcomingTasks = allScheduledTasks.filter(t => t.dueDate > todayStr && !t.completed);
+
+  return (
+    <div className="w-full space-y-6 animate-in fade-in duration-300">
+      {/* Calendar Header Card */}
+      <div className="flex items-center justify-between p-5 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-md flex-wrap gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-cyan-600 to-blue-600 flex items-center justify-center text-white shadow-xl border border-white/10">
+            <Calendar size={24} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-bold text-white">{config.title || 'Lextria Team Calendar'}</h2>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 uppercase">
+                {config.calendarType === 'zoho' ? 'Zoho Calendar' : config.calendarType === 'google' ? 'Google Calendar' : 'Team Schedule'}
+              </span>
+            </div>
+            <p className="text-xs text-slate-300 mt-0.5">
+              Shared team deadlines, events, and deliverables visible to all organization members.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5">
+          {config.calendarUrl && (
+            <a
+              href={config.calendarUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="px-4 py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 border border-cyan-500/30 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <ExternalLink size={13} /> Open in New Tab
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer border border-white/10"
+          >
+            <Settings size={13} /> Calendar Settings
+          </button>
+        </div>
+      </div>
+
+      {/* Main Calendar Display */}
+      {config.calendarUrl ? (
+        <div className="w-full h-[760px] rounded-2xl overflow-hidden border border-white/15 shadow-2xl bg-black/40 backdrop-blur-md relative">
+          <iframe
+            src={config.calendarUrl}
+            className="w-full h-full border-0 rounded-2xl"
+            title="Shared Team Calendar"
+            loading="lazy"
+          />
+        </div>
+      ) : (
+        /* Setup Prompt when embed URL is not yet entered */
+        <div className="p-8 rounded-2xl border border-cyan-500/30 bg-gradient-to-r from-cyan-950/40 via-blue-950/30 to-purple-950/20 text-center space-y-4 shadow-xl">
+          <div className="w-16 h-16 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-300 mx-auto shadow-xl">
+            <Calendar size={32} />
+          </div>
+          <div className="max-w-lg mx-auto">
+            <h3 className="text-lg font-bold text-white mb-1.5">Connect Your Google or Zoho Team Calendar</h3>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Your team can embed a shared Google Calendar or Zoho Calendar directly in this view. Simply paste your calendar embed URL in the <strong>Settings</strong> tab.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-semibold text-xs shadow-lg transition cursor-pointer inline-flex items-center gap-2"
+          >
+            <Settings size={14} /> Open Calendar Settings
+          </button>
+        </div>
+      )}
+
+      {/* Interactive Team Deadlines Schedule Summary */}
+      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-md space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <Calendar size={18} className="text-blue-400" />
+              <span>Upcoming Team Deadlines Schedule</span>
+            </h3>
+            <p className="text-xs text-slate-400">
+              {allScheduledTasks.length} scheduled {allScheduledTasks.length === 1 ? 'task' : 'tasks'} across team members
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs">
+            {overdueTasks.length > 0 && (
+              <span className="px-2.5 py-1 rounded-lg bg-red-500/20 text-red-300 border border-red-500/30 font-semibold">
+                ⚠️ {overdueTasks.length} Overdue
+              </span>
+            )}
+            {dueTodayTasks.length > 0 && (
+              <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">
+                ⏰ {dueTodayTasks.length} Due Today
+              </span>
+            )}
+            <span className="px-2.5 py-1 rounded-lg bg-blue-500/20 text-blue-300 border border-blue-500/30 font-semibold">
+              📅 {upcomingTasks.length} Upcoming
+            </span>
+          </div>
+        </div>
+
+        {allScheduledTasks.length === 0 ? (
+          <div className="py-10 text-center text-slate-500 border border-dashed border-white/10 rounded-xl">
+            No scheduled deadlines found on any active tasks. Add deadlines to tasks to see them appear here.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5 pt-2">
+            {allScheduledTasks.slice(0, 12).map(task => {
+              const isOverdue = task.dueDate < todayStr && !task.completed;
+              const isDueToday = task.dueDate === todayStr && !task.completed;
+
+              return (
+                <div
+                  key={task.id}
+                  onClick={() => onTaskClick(task.agentId, task.id)}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer flex flex-col justify-between gap-2 bg-white/5 hover:bg-white/10 ${
+                    task.completed ? 'opacity-60 border-white/5' :
+                    isOverdue ? 'border-red-500/40 bg-red-500/5' :
+                    isDueToday ? 'border-amber-500/40 bg-amber-500/5' :
+                    'border-white/10'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <h5 className="text-xs font-semibold text-white line-clamp-1">{task.title}</h5>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase shrink-0 ${
+                      task.priority === 'High' ? 'bg-red-500/20 text-red-400' :
+                      task.priority === 'Medium' ? 'bg-amber-500/20 text-amber-400' :
+                      'bg-blue-500/20 text-blue-400'
+                    }`}>
+                      {task.priority || 'Normal'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-white/5">
+                    <div className="flex items-center gap-1.5">
+                      <div className={`w-4 h-4 rounded-full ${task.agentColor || 'bg-blue-600'} flex items-center justify-center text-[8px] font-bold text-white`}>
+                        {getInitials(task.agentName)}
+                      </div>
+                      <span className="truncate max-w-[90px]">{task.agentName}</span>
+                    </div>
+
+                    <span className={`font-semibold flex items-center gap-1 ${
+                      isOverdue ? 'text-red-400 font-bold' :
+                      isDueToday ? 'text-amber-400 font-bold' :
+                      'text-slate-300'
+                    }`}>
+                      <Calendar size={10} /> {formatDateToDDMMYY(task.dueDate)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>
@@ -2229,6 +3424,7 @@ export default function App() {
       setActiveTab('tasks');
     }
   }, [currentUser, activeTab]);
+  const [tasksSubTab, setTasksSubTab] = useState('tasks'); // 'tasks' | 'calendar'
   const [boardViewFilter, setBoardViewFilter] = useState('MY'); // 'MY' | 'ALL'
   const [priorityFilter, setPriorityFilter] = useState('All');
   const [dueDateFilter, setDueDateFilter] = useState('All');
@@ -2305,6 +3501,42 @@ export default function App() {
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [showAssigneePopover, setShowAssigneePopover] = useState(false);
   const [assigneeSearchQuery, setAssigneeSearchQuery] = useState('');
+
+  // Modern Member Board States
+  const [previewPhoto, setPreviewPhoto] = useState(null); // { url, title }
+  const [showStandupDrawer, setShowStandupDrawer] = useState(false);
+  const [showQuickAddModal, setShowQuickAddModal] = useState(false);
+  const [isUploadingScreenshot, setIsUploadingScreenshot] = useState(false);
+
+  // ⚡ Keyboard Quick-Actions (Linear-Style via Alt + Key)
+  useEffect(() => {
+    const handleAltShortcuts = (e) => {
+      if (!e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key === 'n') {
+        e.preventDefault();
+        setShowQuickAddModal(prev => !prev);
+      } else if (key === 'm') {
+        e.preventDefault();
+        setBoardViewFilter(prev => prev === 'MY' ? 'ALL' : 'MY');
+      } else if (key === 'c') {
+        e.preventDefault();
+        setTasksSubTab(prev => prev === 'calendar' ? 'tasks' : 'calendar');
+      } else if (key === 'd') {
+        e.preventDefault();
+        setShowStandupDrawer(prev => !prev);
+      } else if (key === 'f') {
+        e.preventDefault();
+        setPriorityFilter(prev => {
+          const cycle = ['All', 'High', 'Medium', 'Low'];
+          const nextIdx = (cycle.indexOf(prev) + 1) % cycle.length;
+          return cycle[nextIdx];
+        });
+      }
+    };
+    window.addEventListener('keydown', handleAltShortcuts);
+    return () => window.removeEventListener('keydown', handleAltShortcuts);
+  }, []);
 
   // Dynamic toast reminder states & checker
   const notificationsRef = useRef([]);
@@ -2924,17 +4156,22 @@ export default function App() {
     const role = formData.get('role');
     const color = formData.get('color');
 
+    const activeDept = (selectedDeptId ? departments.find(d => d.id === selectedDeptId) : departments[0]) || null;
+    const activeBoard = (activeDept && selectedBoardId ? activeDept.boards?.find(b => b.id === selectedBoardId) : null) || activeDept?.boards?.[0] || null;
+    const targetDeptId = selectedDeptId || activeDept?.id || null;
+    const targetBoardId = selectedBoardId || activeBoard?.id || null;
+
     if (editingEmployee) {
       // Optimistic edit
-      setDepartments(prev => prev.map(d => d.id === selectedDeptId ? {
+      setDepartments(prev => prev.map(d => ({
         ...d,
-        boards: d.boards.map(b => b.id === selectedBoardId ? {
+        boards: (d.boards || []).map(b => ({
           ...b,
-          employees: b.employees.map(emp => emp.id === editingEmployee.id ? {
+          employees: (b.employees || []).map(emp => emp.id === editingEmployee.id ? {
             ...emp, name, role, color
           } : emp)
-        } : b)
-      } : d));
+        }))
+      })));
       setShowAddEmpModal(false);
       const originalEmployee = { ...editingEmployee };
       setEditingEmployee(null);
@@ -2948,7 +4185,7 @@ export default function App() {
       const tempId = 'temp-emp-' + Math.random().toString(36).substring(2, 11);
       const newEmpObj = {
         id: tempId,
-        board_id: selectedBoardId,
+        board_id: targetBoardId,
         name,
         role,
         color,
@@ -2957,28 +4194,28 @@ export default function App() {
       };
 
       // Optimistic insert
-      setDepartments(prev => prev.map(d => d.id === selectedDeptId ? {
+      setDepartments(prev => prev.map(d => ({
         ...d,
-        boards: d.boards.map(b => b.id === selectedBoardId ? {
+        boards: (d.boards || []).map(b => (b.id === targetBoardId || (!targetBoardId && b === d.boards?.[0])) ? {
           ...b,
           employees: [...(b.employees || []), newEmpObj]
         } : b)
-      } : d));
+      })));
       setShowAddEmpModal(false);
 
       try {
-        const { data, error } = await supabase.from('agents').insert([{ board_id: selectedBoardId, name, role, color }]).select();
+        const { data, error } = await supabase.from('agents').insert([{ board_id: targetBoardId, name, role, color }]).select();
         
         if (error) {
           console.error(error);
           // Rollback
-          setDepartments(prev => prev.map(d => d.id === selectedDeptId ? {
+          setDepartments(prev => prev.map(d => ({
             ...d,
-            boards: d.boards.map(b => b.id === selectedBoardId ? {
+            boards: (d.boards || []).map(b => ({
               ...b,
-              employees: b.employees.filter(emp => emp.id !== tempId)
-            } : b)
-          } : d));
+              employees: (b.employees || []).filter(emp => emp.id !== tempId)
+            }))
+          })));
           return;
         }
 
@@ -2987,24 +4224,24 @@ export default function App() {
             ...data[0],
             tasks: []
           };
-          setDepartments(prev => prev.map(d => d.id === selectedDeptId ? {
+          setDepartments(prev => prev.map(d => ({
             ...d,
-            boards: d.boards.map(b => b.id === selectedBoardId ? {
+            boards: (d.boards || []).map(b => ({
               ...b,
-              employees: b.employees.map(emp => emp.id === tempId ? realEmp : emp)
-            } : b)
-          } : d));
+              employees: (b.employees || []).map(emp => emp.id === tempId ? realEmp : emp)
+            }))
+          })));
         }
       } catch (err) {
         console.error(err);
         // Rollback
-        setDepartments(prev => prev.map(d => d.id === selectedDeptId ? {
+        setDepartments(prev => prev.map(d => ({
           ...d,
-          boards: d.boards.map(b => b.id === selectedBoardId ? {
+          boards: (d.boards || []).map(b => ({
             ...b,
-            employees: b.employees.filter(emp => emp.id !== tempId)
-          } : b)
-        } : d));
+            employees: (b.employees || []).filter(emp => emp.id !== tempId)
+          }))
+        })));
       }
     }
   };
@@ -3021,7 +4258,7 @@ export default function App() {
     await supabase.from('agents').delete().eq('id', empId);
   };
 
-  const addTask = async (empId, title = 'New Task') => {
+  const addTask = async (empId, title = 'New Task', extra = {}) => {
     if (!isAdmin) {
       const targetEmp = allEmployees.find(e => e.id === empId);
       if (targetEmp && !isSameMember(targetEmp.name, currentUser?.name)) {
@@ -3034,18 +4271,30 @@ export default function App() {
       id: tempId,
       agent_id: empId,
       title: title,
-      description: '',
-      completed: false,
-      priority: 'Medium',
-      dueDate: '',
-      reminderTime: '',
-      tag: 'Undefined',
-      requiredTime: '',
-      screenshotUrl: '',
-      timerStartedAt: null,
+      description: extra.description || '',
+      completed: !!extra.completed,
+      workflowStage: extra.workflowStage || (extra.completed ? 'completed' : 'todo'),
+      workflow_stage: extra.workflowStage || (extra.completed ? 'completed' : 'todo'),
+      priority: extra.priority || 'Medium',
+      dueDate: extra.dueDate || '',
+      due_date: extra.dueDate || '',
+      reminderTime: extra.reminderTime || '',
+      tag: extra.tag || 'Undefined',
+      requiredTime: extra.requiredTime || '',
+      screenshotUrl: extra.screenshotUrl || '',
+      timerStartedAt: extra.workflowStage === 'in_progress' ? new Date().toISOString() : null,
       customCompletedAt: null,
       position: 0
     };
+
+    if (extra.dueDate) {
+      const targetEmp = allEmployees.find(e => e.id === empId);
+      sendCliqNotification({
+        task: newTaskObj,
+        memberName: targetEmp?.name || currentUser?.name || 'Team Member',
+        type: 'deadline_set'
+      });
+    }
 
     // Optimistic insert
     setDepartments(prev => prev.map(d => ({
@@ -3060,9 +4309,14 @@ export default function App() {
     })));
 
     try {
+      const insertPayload = { agent_id: empId, title };
+      if (extra.dueDate) insertPayload.due_date = extra.dueDate;
+      if (extra.priority) insertPayload.priority = extra.priority;
+      if (extra.completed !== undefined) insertPayload.completed = extra.completed;
+
       const { data, error } = await supabase
         .from('tasks')
-        .insert([{ agent_id: empId, title }])
+        .insert([insertPayload])
         .select();
 
       if (error) {
@@ -3350,7 +4604,17 @@ export default function App() {
       }
     }
     if (updates.priority !== undefined) dbUpdates.priority = updates.priority;
-    if (updates.dueDate !== undefined) dbUpdates.due_date = updates.dueDate;
+    if (updates.dueDate !== undefined) {
+      dbUpdates.due_date = updates.dueDate;
+      if (updates.dueDate && updates.dueDate !== currentTask?.dueDate && updates.dueDate !== currentTask?.due_date) {
+        const targetEmp = allEmployees.find(e => e.id === empId);
+        sendCliqNotification({
+          task: { ...(currentTask || {}), ...updates, dueDate: updates.dueDate },
+          memberName: targetEmp?.name || currentUser?.name || 'Team Member',
+          type: 'deadline_set'
+        });
+      }
+    }
     if (updates.requiredTime !== undefined) {
       const newRequiredTime = updates.requiredTime ? updates.requiredTime.trim() : '';
       dbUpdates.required_time = newRequiredTime;
@@ -3619,32 +4883,55 @@ export default function App() {
   };
 
   // --- RENDER HELPERS ---
-  const currentDept = selectedDeptId ? departments.find(d => d.id === selectedDeptId) : null;
-  const currentBoard = currentDept && selectedBoardId ? currentDept.boards.find(b => b.id === selectedBoardId) : null;
-
-  const displayedEmployees = useMemo(() => {
-    if (!currentBoard) return [];
-    if (isAdmin || boardViewFilter === 'ALL') {
-      return currentBoard.employees || [];
-    }
-    return (currentBoard.employees || []).filter(e => isSameMember(e.name, currentUser?.name));
-  }, [currentBoard, isAdmin, boardViewFilter, currentUser]);
+  const currentDept = selectedDeptId ? departments.find(d => d.id === selectedDeptId) : (departments[0] || null);
+  const currentBoard = (currentDept && selectedBoardId ? currentDept.boards?.find(b => b.id === selectedBoardId) : null) || currentDept?.boards?.[0] || null;
 
   const allEmployees = useMemo(() => {
     const list = [];
+    const seenIds = new Set();
     departments.forEach(dept => {
       dept.boards?.forEach(board => {
         board.employees?.forEach(emp => {
-          list.push({
-            ...emp,
-            boardName: board.name,
-            deptName: dept.name
-          });
+          if (!seenIds.has(emp.id)) {
+            seenIds.add(emp.id);
+            list.push({
+              ...emp,
+              boardName: board.name,
+              deptName: dept.name
+            });
+          }
         });
       });
     });
     return list;
   }, [departments]);
+
+  // Auto-check and notify Zoho Cliq for approaching deadlines (due today or within 24h)
+  useEffect(() => {
+    if (allEmployees.length > 0) {
+      const allTasksList = allEmployees.flatMap(e => e.tasks || []);
+      checkAndDispatchApproachingDeadlines(allTasksList, allEmployees);
+    }
+    const interval = setInterval(() => {
+      if (allEmployees.length > 0) {
+        const allTasksList = allEmployees.flatMap(e => e.tasks || []);
+        checkAndDispatchApproachingDeadlines(allTasksList, allEmployees);
+      }
+    }, 15 * 60 * 1000); // Check every 15 mins
+    return () => clearInterval(interval);
+  }, [allEmployees]);
+
+  const currentMemberEmp = useMemo(() => {
+    return allEmployees.find(e => isSameMember(e.name, currentUser?.name)) || null;
+  }, [allEmployees, currentUser]);
+
+  const displayedEmployees = useMemo(() => {
+    if (isAdmin || boardViewFilter === 'ALL') {
+      return allEmployees.length > 0 ? allEmployees : (currentBoard?.employees || []);
+    }
+    if (currentMemberEmp) return [currentMemberEmp];
+    return allEmployees.filter(e => isSameMember(e.name, currentUser?.name));
+  }, [allEmployees, currentBoard, currentMemberEmp, isAdmin, boardViewFilter, currentUser]);
 
   const activeTaskDetails = useMemo(() => {
     if (!selectedTaskDetails) return null;
@@ -4114,6 +5401,7 @@ export default function App() {
               { id: 'tasks', label: 'Tasks', icon: Layout },
               { id: 'queries', label: 'Queries', icon: Database },
               { id: 'projects', label: 'Project Reporting', icon: FolderKanban },
+              { id: 'settings', label: 'Settings', icon: Settings },
             ].map(({ id, label, icon: Icon, badge }) => (
               <button
                 key={id}
@@ -4178,7 +5466,7 @@ export default function App() {
           )}
 
           {/* Main Content */}
-          <main className={`flex-1 ${activeTab === 'queries' || activeTab === 'projects' || activeTab === 'leader-board' ? 'p-0 flex flex-col min-h-0 overflow-auto' : 'px-6 py-6'}`}>
+          <main className={`flex-1 ${activeTab === 'queries' || activeTab === 'projects' || activeTab === 'leader-board' || activeTab === 'settings' ? 'p-0 flex flex-col min-h-0 overflow-auto' : 'px-6 py-6'}`}>
 
           {/* Leader Taskboard Page (Exclusive to Pranav Bhat and Sharan) */}
           {activeTab === 'leader-board' && isLeaderOrSharan(currentUser) && (
@@ -4204,267 +5492,305 @@ export default function App() {
             />
           )}
 
+          {/* Settings Page Tab */}
+          {activeTab === 'settings' && (
+            <SettingsPage 
+              isAdmin={isAdmin || isLeaderOrSharan(currentUser)} 
+              currentUser={currentUser}
+              onUpdateUser={(updated) => {
+                setCurrentUser(updated);
+              }}
+            />
+          )}
+
           {activeTab === 'tasks' && (showAnalytics && isAdmin ? (
             <AnalyticsDashboard departments={departments} archivedTasks={archivedTasks} />
           ) : (
-            <>
-            {/* LEVEL 1: DEPARTMENTS LIST */}
-            {!selectedDeptId && (
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <h2 className="text-2xl font-bold mb-6 text-white flex items-center gap-2"><Building2 className="text-brand-400"/> Select a Department</h2>
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDepartmentDragEnd}>
-              <SortableContext items={departments.map(d => d.id)} strategy={rectSortingStrategy}>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                  {departments.map(dept => (
-                    <SortableDepartment
-                      key={dept.id}
-                      dept={dept}
-                      isAdmin={isAdmin}
-                      unlockedDepartments={unlockedDepartments}
-                      setSelectedDeptId={setSelectedDeptId}
-                      setDeptToUnlock={setDeptToUnlock}
-                      setDeptUnlockPassword={setDeptUnlockPassword}
-                      setDeptUnlockError={setDeptUnlockError}
-                      setEditingDepartment={setEditingDepartment}
-                      setShowAddDeptModal={setShowAddDeptModal}
-                      setDepartmentToDelete={setDepartmentToDelete}
-                      getDeptTaskStats={getDeptTaskStats}
-                    />
-                  ))}
-                  {departments.length === 0 && (
-                    <div className="col-span-full py-12 text-center text-slate-500 border-2 border-dashed border-white/10 rounded-2xl">
-                      No departments found. Add one to get started.
-                    </div>
-                  )}
+            <div className="space-y-5 animate-in fade-in duration-300">
+              {/* Taskboard Top Header & Sub-Tab Bar (matching user reference sketch) */}
+              <div className="flex items-center justify-between flex-wrap gap-4 pb-3 border-b border-white/10">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-600 flex items-center justify-center text-white shadow-lg border border-white/10">
+                    <CheckSquare size={20} />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                      Tasks
+                    </h2>
+                    <p className="text-xs text-slate-400">
+                      {tasksSubTab === 'tasks' 
+                        ? (boardViewFilter === 'MY' ? "Personal expanded workflow & timeline" : "Team agent columns")
+                        : "Shared team calendar & scheduled deadlines"}
+                    </p>
+                  </div>
                 </div>
-              </SortableContext>
-            </DndContext>
-          </div>
-        )}
 
-        {/* LEVEL 2: BOARDS LIST */}
-        {selectedDeptId && !selectedBoardId && currentDept && (
-          <div className="animate-in fade-in slide-in-from-right-4 duration-300">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-white flex items-center gap-2"><Layout className="text-brand-400"/> Boards in {currentDept.name}</h2>
-              <button onClick={() => setSelectedDeptId(null)} className="glass-button text-sm py-2 px-4 flex items-center gap-2"><ArrowLeft size={16}/> Back</button>
-            </div>
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleBoardDragEnd}>
-              <SortableContext items={currentDept.boards.map(b => b.id)} strategy={rectSortingStrategy}>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                  {currentDept.boards.map(board => (
-                    <SortableBoard
-                      key={board.id}
-                      board={board}
-                      isAdmin={isAdmin}
-                      setSelectedBoardId={setSelectedBoardId}
-                      setEditingBoard={setEditingBoard}
-                      setShowAddBoardModal={setShowAddBoardModal}
-                      setBoardToDelete={setBoardToDelete}
-                      getBoardTaskStats={getBoardTaskStats}
-                    />
-                  ))}
-                  {currentDept.boards.length === 0 && (
-                    <div className="col-span-full py-12 text-center text-slate-500 border-2 border-dashed border-white/10 rounded-2xl">
-                      No boards found in this department.
-                    </div>
-                  )}
-                </div>
-              </SortableContext>
-            </DndContext>
-          </div>
-        )}
-
-        {/* LEVEL 3: AGENTS KANBAN VIEW */}
-        {selectedBoardId && currentBoard && (
-          <div className="animate-in fade-in slide-in-from-right-4 duration-300 h-full">
-            <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-              <h2 className="text-2xl font-bold text-white flex items-center gap-2"><Users className="text-brand-400"/> Agents: {currentBoard.name}</h2>
-              <div className="flex items-center gap-3 flex-wrap">
-                {!isAdmin && (
-                  <div className="flex items-center p-1 bg-white/5 border border-white/10 rounded-xl text-xs">
+                {/* Sub-Tab Selector [ Tasks ] | [ Calendar ] matching sketch */}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="flex items-center p-1 bg-white/5 border border-white/10 rounded-xl text-xs shadow-inner">
                     <button
-                      onClick={() => setBoardViewFilter('MY')}
-                      className={`px-3 py-1 rounded-lg font-medium transition-all cursor-pointer ${
-                        boardViewFilter === 'MY'
-                          ? 'bg-brand-500 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)] font-semibold'
+                      onClick={() => setTasksSubTab('tasks')}
+                      className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                        tasksSubTab === 'tasks'
+                          ? 'bg-brand-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.5)]'
                           : 'text-slate-400 hover:text-white'
                       }`}
-                      title="Show only my column"
                     >
-                      My Column
+                      <Layout size={14} />
+                      <span>Tasks</span>
                     </button>
                     <button
-                      onClick={() => setBoardViewFilter('ALL')}
-                      className={`px-3 py-1 rounded-lg font-medium transition-all cursor-pointer ${
-                        boardViewFilter === 'ALL'
-                          ? 'bg-brand-500 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)] font-semibold'
+                      onClick={() => setTasksSubTab('calendar')}
+                      className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                        tasksSubTab === 'calendar'
+                          ? 'bg-cyan-600 text-white shadow-[0_0_15px_rgba(6,182,212,0.5)]'
                           : 'text-slate-400 hover:text-white'
                       }`}
-                      title="Show all team columns"
                     >
-                      All Columns
+                      <Calendar size={14} />
+                      <span>Calendar</span>
                     </button>
                   </div>
-                )}
-                <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 shadow-md">
-                  <Filter size={14} className="text-slate-400" />
-                  <select 
-                    value={priorityFilter} 
-                    onChange={(e) => setPriorityFilter(e.target.value)}
-                    className="bg-transparent text-sm text-slate-300 focus:outline-none appearance-none cursor-pointer"
-                  >
-                    <option value="All" className="bg-[#1a0a2e]">All Priorities</option>
-                    <option value="High" className="bg-[#1a0a2e]">High</option>
-                    <option value="Medium" className="bg-[#1a0a2e]">Medium</option>
-                    <option value="Low" className="bg-[#1a0a2e]">Low</option>
-                  </select>
-                </div>
-                <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 shadow-md">
-                  <Calendar size={14} className="text-slate-400" />
-                  <select 
-                    value={dueDateFilter} 
-                    onChange={(e) => setDueDateFilter(e.target.value)}
-                    className="bg-transparent text-sm text-slate-300 focus:outline-none appearance-none cursor-pointer"
-                  >
-                    <option value="All" className="bg-[#1a0a2e]">Any Date</option>
-                    <option value="Today" className="bg-[#1a0a2e]">Due Today</option>
-                    <option value="Overdue" className="bg-[#1a0a2e]">Overdue</option>
-                  </select>
-                </div>
-                <button 
-                  onClick={() => setShowHistorySidebar(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm text-slate-300 hover:text-white transition-all shadow-md active:scale-95 cursor-pointer"
-                >
-                  <History size={16} className="text-slate-400" />
-                  <span>History</span>
-                  {completedTasks.length > 0 && (
-                    <span className="bg-brand-500/20 text-brand-300 border border-brand-500/30 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                      {completedTasks.length}
-                    </span>
-                  )}
-                </button>
-                {isAdmin && (
-                <button 
-                  onClick={() => setShowArchivePage(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm text-slate-300 hover:text-white transition-all shadow-md active:scale-95 cursor-pointer"
-                >
-                  <Building2 size={16} className="text-slate-400" />
-                  <span>Archive & Reports</span>
-                </button>
-                )}
-                <button onClick={() => setSelectedBoardId(null)} className="glass-button text-sm py-2 px-4 flex items-center gap-2"><ArrowLeft size={16}/> Back</button>
-              </div>
-            </div>
-            
-            <div className="relative group/board">
-              {/* Left Scroll Paddle */}
-              {canScrollLeft && (
-                <button
-                  onClick={() => {
-                    boardContainerRef.current?.scrollBy({ left: -340, behavior: 'smooth' });
-                  }}
-                  className="absolute left-2 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-slate-900/60 hover:bg-slate-900/90 text-brand-400 hover:text-brand-300 border border-white/10 hover:border-brand-500/50 flex items-center justify-center backdrop-blur-md shadow-[0_0_15px_rgba(0,0,0,0.5)] transition-all z-20 hover:scale-110 active:scale-95"
-                  title="Scroll Left"
-                  aria-label="Scroll left"
-                >
-                  <ChevronLeft size={24} />
-                </button>
-              )}
 
-              {/* Right Scroll Paddle */}
-              {canScrollRight && (
-                <button
-                  onClick={() => {
-                    boardContainerRef.current?.scrollBy({ left: 340, behavior: 'smooth' });
-                  }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-slate-900/60 hover:bg-slate-900/90 text-brand-400 hover:text-brand-300 border border-white/10 hover:border-brand-500/50 flex items-center justify-center backdrop-blur-md shadow-[0_0_15px_rgba(0,0,0,0.5)] transition-all z-20 hover:scale-110 active:scale-95"
-                  title="Scroll Right"
-                  aria-label="Scroll right"
-                >
-                  <ChevronRight size={24} />
-                </button>
-              )}
-
-              <div 
-                ref={boardContainerRef}
-                className="flex gap-6 overflow-x-auto pb-6 scrollbar-hide items-stretch min-h-[500px]"
-              >
-                <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
-                  <SortableContext items={displayedEmployees.map(e => e.id)} strategy={horizontalListSortingStrategy}>
-                    {displayedEmployees.map(emp => (
-                      <SortableEmployeeCard
-                        key={emp.id}
-                        employee={emp}
-                        currentUser={currentUser}
-                        isAdmin={isAdmin}
-                        onDelete={(emp) => setEmployeeToDelete(emp)}
-                        onEdit={(emp) => { setEditingEmployee(emp); setShowAddEmpModal(true); }}
-                        updateTask={updateTask}
-                        deleteTask={(empId, taskOrId) => {
-                          if (typeof taskOrId === 'object' && taskOrId !== null) {
-                            setTaskToDelete({ empId, taskId: taskOrId.id, title: taskOrId.title });
-                          } else {
-                            const foundTask = emp.tasks?.find(t => t.id === taskOrId);
-                            setTaskToDelete({ empId, taskId: taskOrId, title: foundTask?.title || 'this task' });
-                          }
-                        }}
-                        addTask={addTask}
-                        onTaskClick={(empId, taskId) => setSelectedTaskDetails({ empId, taskId })}
-                        priorityFilter={priorityFilter}
-                        dueDateFilter={dueDateFilter}
-                        archivedTasks={archivedTasks}
-                        timerTick={timerTick}
-                      />
-                    ))}
-                  </SortableContext>
-                  {displayedEmployees.length === 0 && (
-                    <div className="w-[340px] flex-shrink-0 border-2 border-dashed border-white/10 rounded-2xl flex flex-col items-center justify-center text-slate-400 p-6 text-center gap-2">
-                      <Lock size={22} className="text-brand-400 mb-1" />
-                      <p className="text-sm font-medium">
-                        {boardViewFilter === 'MY'
-                          ? `You don't have an assigned column on "${currentBoard.name}".`
-                          : 'No agents on this board.'}
-                      </p>
-                      {boardViewFilter === 'MY' && (
+                  {/* Tasks Sub-Tab Specific Controls: View Switcher & Filters */}
+                  {tasksSubTab === 'tasks' && (
+                    <>
+                      {/* View Switcher: My Column vs All Columns */}
+                      <div className="flex items-center p-1 bg-white/5 border border-white/10 rounded-xl text-xs">
+                        <button
+                          onClick={() => setBoardViewFilter('MY')}
+                          className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                            boardViewFilter === 'MY'
+                              ? 'bg-brand-500 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)]'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                          title="Show expanded personal 4-column workflow"
+                        >
+                          My Column
+                        </button>
                         <button
                           onClick={() => setBoardViewFilter('ALL')}
-                          className="mt-2 text-xs font-semibold text-brand-300 hover:text-white underline cursor-pointer"
+                          className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                            boardViewFilter === 'ALL'
+                              ? 'bg-brand-500 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)]'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                          title="Show all team columns"
                         >
-                          Switch to All Columns
+                          All Columns
+                        </button>
+                      </div>
+
+                      {/* Priority Filter */}
+                      <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 shadow-md">
+                        <Filter size={14} className="text-slate-400" />
+                        <select 
+                          value={priorityFilter} 
+                          onChange={(e) => setPriorityFilter(e.target.value)}
+                          className="bg-transparent text-sm text-slate-300 focus:outline-none appearance-none cursor-pointer"
+                        >
+                          <option value="All" className="bg-[#1a0a2e]">All Priorities</option>
+                          <option value="High" className="bg-[#1a0a2e]">High</option>
+                          <option value="Medium" className="bg-[#1a0a2e]">Medium</option>
+                          <option value="Low" className="bg-[#1a0a2e]">Low</option>
+                        </select>
+                      </div>
+
+                      {/* Due Date Filter */}
+                      <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 shadow-md">
+                        <Calendar size={14} className="text-slate-400" />
+                        <select 
+                          value={dueDateFilter} 
+                          onChange={(e) => setDueDateFilter(e.target.value)}
+                          className="bg-transparent text-sm text-slate-300 focus:outline-none appearance-none cursor-pointer"
+                        >
+                          <option value="All" className="bg-[#1a0a2e]">Any Date</option>
+                          <option value="Today" className="bg-[#1a0a2e]">Due Today</option>
+                          <option value="Overdue" className="bg-[#1a0a2e]">Overdue</option>
+                        </select>
+                      </div>
+
+                      {/* 1-Click Today's Focus Button */}
+                      <button 
+                        onClick={() => setShowStandupDrawer(true)}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 rounded-lg text-sm text-amber-300 hover:text-white transition-all shadow-md active:scale-95 cursor-pointer font-medium"
+                        title="Open Today's Focus & Standup Drawer (Alt + D)"
+                      >
+                        <Sun size={15} className="text-amber-400" />
+                        <span>Today's Focus</span>
+                        <kbd className="hidden md:inline-block px-1.5 py-0.2 rounded bg-black/40 text-[9px] text-amber-200/80 font-mono border border-amber-500/30">Alt+D</kbd>
+                      </button>
+
+                      {/* History Button */}
+                      <button 
+                        onClick={() => setShowHistorySidebar(true)}
+                        className="flex items-center gap-2 px-3.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm text-slate-300 hover:text-white transition-all shadow-md active:scale-95 cursor-pointer"
+                      >
+                        <History size={16} className="text-slate-400" />
+                        <span>History</span>
+                        {completedTasks.length > 0 && (
+                          <span className="bg-brand-500/20 text-brand-300 border border-brand-500/30 text-[10px] px-2 py-0.5 rounded-full font-bold">
+                            {completedTasks.length}
+                          </span>
+                        )}
+                      </button>
+
+                      {/* Archive & Reports (Admin only) */}
+                      {isAdmin && (
+                        <button 
+                          onClick={() => setShowArchivePage(true)}
+                          className="flex items-center gap-2 px-3.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm text-slate-300 hover:text-white transition-all shadow-md active:scale-95 cursor-pointer"
+                        >
+                          <Building2 size={16} className="text-slate-400" />
+                          <span>Archive & Reports</span>
                         </button>
                       )}
-                    </div>
+                    </>
                   )}
-                  <DragOverlay dropAnimation={defaultDropAnimationSideEffects({ duration: 250 })}>
-                    {activeDragItem?.type === 'Task' && (
-                      <SortableTaskItem task={activeDragItem.task} employeeId={activeDragItem.employeeId} updateTask={()=>{}} deleteTask={()=>{}} onTaskClick={()=>{}} timerTick={timerTick} />
-                    )}
-                    {activeDragItem?.type === 'Employee' && (
-                      <SortableEmployeeCard 
-                        employee={activeDragItem.employee} 
-                        currentUser={currentUser}
-                        isAdmin={isAdmin} 
-                        onDelete={()=>{}} 
-                        onEdit={()=>{}} 
-                        updateTask={()=>{}} 
-                        deleteTask={()=>{}} 
-                        addTask={()=>{}} 
-                        onTaskClick={()=>{}} 
-                        priorityFilter={priorityFilter}
-                        dueDateFilter={dueDateFilter}
-                        archivedTasks={archivedTasks}
-                        timerTick={timerTick}
-                      />
-                    )}
-                  </DragOverlay>
-                </DndContext>
+                </div>
               </div>
+
+              {/* MAIN CONTENT AREA */}
+              {tasksSubTab === 'calendar' ? (
+                /* Sub-Tab 2: Shared Team Calendar */
+                <SharedTeamCalendarView
+                  departments={departments}
+                  allEmployees={allEmployees}
+                  onOpenSettings={() => setActiveTab('settings')}
+                  onTaskClick={(empId, taskId) => setSelectedTaskDetails({ empId, taskId })}
+                />
+              ) : boardViewFilter === 'MY' ? (
+                /* Sub-Tab 1 - Option A: Expanded 4-Column Workflow View for Member */
+                <MyExpandedMemberBoard
+                  employee={currentMemberEmp || displayedEmployees[0] || allEmployees[0]}
+                  isAdmin={isAdmin}
+                  currentUser={currentUser}
+                  updateTask={updateTask}
+                  deleteTask={(empId, taskOrId) => {
+                    if (typeof taskOrId === 'object' && taskOrId !== null) {
+                      setTaskToDelete({ empId, taskId: taskOrId.id, title: taskOrId.title });
+                    } else {
+                      const foundEmp = allEmployees.find(e => e.id === empId);
+                      const foundTask = foundEmp?.tasks?.find(t => t.id === taskOrId);
+                      setTaskToDelete({ empId, taskId: taskOrId, title: foundTask?.title || 'this task' });
+                    }
+                  }}
+                  addTask={addTask}
+                  onTaskClick={(empId, taskId) => setSelectedTaskDetails({ empId, taskId })}
+                  priorityFilter={priorityFilter}
+                  dueDateFilter={dueDateFilter}
+                  timerTick={timerTick}
+                  onPreviewPhoto={(url, title) => setPreviewPhoto({ url, title })}
+                  onOpenStandup={() => setShowStandupDrawer(true)}
+                />
+              ) : (
+                /* Sub-Tab 1 - Option B: All Team Agent Columns Side-by-Side */
+                <div className="relative group/board">
+                  {/* Left Scroll Paddle */}
+                  {canScrollLeft && (
+                    <button
+                      onClick={() => {
+                        boardContainerRef.current?.scrollBy({ left: -340, behavior: 'smooth' });
+                      }}
+                      className="absolute left-2 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-slate-900/60 hover:bg-slate-900/90 text-brand-400 hover:text-brand-300 border border-white/10 hover:border-brand-500/50 flex items-center justify-center backdrop-blur-md shadow-[0_0_15px_rgba(0,0,0,0.5)] transition-all z-20 hover:scale-110 active:scale-95"
+                      title="Scroll Left"
+                      aria-label="Scroll left"
+                    >
+                      <ChevronLeft size={24} />
+                    </button>
+                  )}
+
+                  {/* Right Scroll Paddle */}
+                  {canScrollRight && (
+                    <button
+                      onClick={() => {
+                        boardContainerRef.current?.scrollBy({ left: 340, behavior: 'smooth' });
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-slate-900/60 hover:bg-slate-900/90 text-brand-400 hover:text-brand-300 border border-white/10 hover:border-brand-500/50 flex items-center justify-center backdrop-blur-md shadow-[0_0_15px_rgba(0,0,0,0.5)] transition-all z-20 hover:scale-110 active:scale-95"
+                      title="Scroll Right"
+                      aria-label="Scroll right"
+                    >
+                      <ChevronRight size={24} />
+                    </button>
+                  )}
+
+                  <div 
+                    ref={boardContainerRef}
+                    className="flex gap-6 overflow-x-auto pb-6 scrollbar-hide items-stretch min-h-[500px]"
+                  >
+                    <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
+                      <SortableContext items={displayedEmployees.map(e => e.id)} strategy={horizontalListSortingStrategy}>
+                        {displayedEmployees.map(emp => (
+                          <SortableEmployeeCard
+                            key={emp.id}
+                            employee={emp}
+                            currentUser={currentUser}
+                            isAdmin={isAdmin}
+                            onDelete={(emp) => setEmployeeToDelete(emp)}
+                            onEdit={(emp) => { setEditingEmployee(emp); setShowAddEmpModal(true); }}
+                            updateTask={updateTask}
+                            deleteTask={(empId, taskOrId) => {
+                              if (typeof taskOrId === 'object' && taskOrId !== null) {
+                                setTaskToDelete({ empId, taskId: taskOrId.id, title: taskOrId.title });
+                              } else {
+                                const foundTask = emp.tasks?.find(t => t.id === taskOrId);
+                                setTaskToDelete({ empId, taskId: taskOrId, title: foundTask?.title || 'this task' });
+                              }
+                            }}
+                            addTask={addTask}
+                            onTaskClick={(empId, taskId) => setSelectedTaskDetails({ empId, taskId })}
+                            priorityFilter={priorityFilter}
+                            dueDateFilter={dueDateFilter}
+                            archivedTasks={archivedTasks}
+                            timerTick={timerTick}
+                            onPreviewPhoto={(url, title) => setPreviewPhoto({ url, title })}
+                          />
+                        ))}
+                      </SortableContext>
+                      {displayedEmployees.length === 0 && (
+                        <div className="w-[340px] flex-shrink-0 border-2 border-dashed border-white/10 rounded-2xl flex flex-col items-center justify-center text-slate-400 p-6 text-center gap-2">
+                          <Lock size={22} className="text-brand-400 mb-1" />
+                          <p className="text-sm font-medium">
+                            No agent columns found.
+                          </p>
+                          {isAdmin && (
+                            <button
+                              onClick={() => { setEditingEmployee(null); setShowAddEmpModal(true); }}
+                              className="mt-2 text-xs font-semibold text-brand-300 hover:text-white underline cursor-pointer"
+                            >
+                              Add First Agent
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      <DragOverlay dropAnimation={defaultDropAnimationSideEffects({ duration: 250 })}>
+                        {activeDragItem?.type === 'Task' && (
+                          <SortableTaskItem task={activeDragItem.task} employeeId={activeDragItem.employeeId} updateTask={()=>{}} deleteTask={()=>{}} onTaskClick={()=>{}} timerTick={timerTick} />
+                        )}
+                        {activeDragItem?.type === 'Employee' && (
+                          <SortableEmployeeCard 
+                            employee={activeDragItem.employee} 
+                            currentUser={currentUser}
+                            isAdmin={isAdmin} 
+                            onDelete={()=>{}} 
+                            onEdit={()=>{}} 
+                            updateTask={()=>{}} 
+                            deleteTask={()=>{}} 
+                            addTask={()=>{}} 
+                            onTaskClick={()=>{}} 
+                            priorityFilter={priorityFilter}
+                            dueDateFilter={dueDateFilter}
+                            archivedTasks={archivedTasks}
+                            timerTick={timerTick}
+                          />
+                        )}
+                      </DragOverlay>
+                    </DndContext>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        )}
-        </>
-        ))}
+          ))}
 
       </main>
         </div> {/* end right column */}
@@ -4474,16 +5800,11 @@ export default function App() {
       {activeTab === 'tasks' && isAdmin && (
         <button
           onClick={() => {
-            if (!selectedDeptId) {
-              setEditingDepartment(null); setShowAddDeptModal(true);
-            } else if (selectedDeptId && !selectedBoardId) {
-              setEditingBoard(null); setShowAddBoardModal(true);
-            } else if (selectedBoardId) {
-              setEditingEmployee(null); setShowAddEmpModal(true);
-            }
+            setEditingEmployee(null);
+            setShowAddEmpModal(true);
           }}
           className="fixed bottom-8 right-8 w-14 h-14 bg-brand-600 hover:bg-brand-500 rounded-full flex items-center justify-center text-white shadow-[0_0_20px_rgba(124,58,237,0.6)] hover:shadow-[0_0_30px_rgba(124,58,237,0.8)] transition-all z-30 hover:scale-110"
-          title={!selectedDeptId ? "Add Department" : !selectedBoardId ? "Add Board" : "Add Agent"}
+          title="Add Agent"
         >
           <Plus size={28} />
         </button>
@@ -5034,38 +6355,73 @@ export default function App() {
                       alt="Task Screenshot" 
                       className="max-w-full max-h-56 object-contain rounded-lg"
                     />
-                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                      <button 
+                        type="button" 
+                        onClick={() => setPreviewPhoto({ url: localScreenshotUrl, title: localTitle || 'Task Screenshot' })}
+                        className="bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer shadow-lg"
+                      >
+                        📷 View Full
+                      </button>
                       <button 
                         type="button" 
                         onClick={() => setLocalScreenshotUrl('')}
-                        className="bg-red-600 hover:bg-red-500 text-white font-semibold text-xs py-2.5 px-4 rounded-lg flex items-center gap-2 transition-all cursor-pointer shadow-lg"
+                        className="bg-red-600 hover:bg-red-500 text-white font-semibold text-xs py-2 px-3 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer shadow-lg"
                       >
-                        <Trash2 size={14} /> Remove Screenshot
+                        <Trash2 size={14} /> Remove
                       </button>
                     </div>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Upload Dropzone */}
-                    <label className="border border-dashed border-white/20 hover:border-brand-500/50 hover:bg-brand-500/5 transition-all rounded-xl p-5 flex flex-col items-center justify-center cursor-pointer text-center group min-h-[120px]">
+                    {/* Upload Dropzone to Zoho WorkDrive */}
+                    <label className={`border border-dashed border-white/20 hover:border-brand-500/50 hover:bg-brand-500/5 transition-all rounded-xl p-5 flex flex-col items-center justify-center cursor-pointer text-center group min-h-[120px] relative ${
+                      isUploadingScreenshot ? 'opacity-60 pointer-events-none' : ''
+                    }`}>
                       <input 
                         type="file" 
                         accept="image/*" 
                         className="hidden" 
-                        onChange={(e) => {
+                        disabled={isUploadingScreenshot}
+                        onChange={async (e) => {
                           const file = e.target.files[0];
                           if (file) {
-                            const reader = new FileReader();
-                            reader.onloadend = () => {
-                              setLocalScreenshotUrl(reader.result);
-                            };
-                            reader.readAsDataURL(file);
+                            setIsUploadingScreenshot(true);
+                            try {
+                              const uploaded = await uploadFileToZohoWorkDrive(file);
+                              if (uploaded && uploaded.url) {
+                                setLocalScreenshotUrl(uploaded.url);
+                              } else {
+                                const reader = new FileReader();
+                                reader.onloadend = () => {
+                                  setLocalScreenshotUrl(reader.result);
+                                };
+                                reader.readAsDataURL(file);
+                              }
+                            } catch {
+                              const reader = new FileReader();
+                              reader.onloadend = () => {
+                                setLocalScreenshotUrl(reader.result);
+                              };
+                              reader.readAsDataURL(file);
+                            } finally {
+                              setIsUploadingScreenshot(false);
+                            }
                           }
                         }}
                       />
-                      <UploadCloud size={24} className="text-slate-400 group-hover:text-brand-400 transition-colors mb-2" />
-                      <span className="text-xs text-slate-200 font-medium">Upload Local Image</span>
-                      <span className="text-[10px] text-slate-500 mt-1">PNG, JPG, GIF up to 5MB</span>
+                      {isUploadingScreenshot ? (
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <div className="w-6 h-6 border-2 border-brand-400 border-t-transparent rounded-full animate-spin" />
+                          <span className="text-xs text-brand-300 font-semibold">Uploading to Zoho WorkDrive...</span>
+                        </div>
+                      ) : (
+                        <>
+                          <UploadCloud size={24} className="text-slate-400 group-hover:text-brand-400 transition-colors mb-2" />
+                          <span className="text-xs text-slate-200 font-medium">Upload Photo to Zoho WorkDrive</span>
+                          <span className="text-[10px] text-slate-500 mt-1">Saved directly to Zoho WorkDrive folder</span>
+                        </>
+                      )}
                     </label>
 
                     {/* Paste URL */}
@@ -5961,6 +7317,28 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Photo / Document Lightbox Modal */}
+      <AttachmentLightboxModal 
+        previewPhoto={previewPhoto} 
+        onClose={() => setPreviewPhoto(null)} 
+      />
+
+      {/* Daily Standup Drawer (ClickUp-Style via Alt + D) */}
+      <DailyStandupDrawer
+        isOpen={showStandupDrawer}
+        onClose={() => setShowStandupDrawer(false)}
+        employee={currentMemberEmp || displayedEmployees[0] || allEmployees[0]}
+        onTaskClick={(empId, taskId) => setSelectedTaskDetails({ empId, taskId })}
+      />
+
+      {/* Quick Add Task Modal (Linear-Style via Alt + N) */}
+      <QuickTaskModal
+        isOpen={showQuickAddModal}
+        onClose={() => setShowQuickAddModal(false)}
+        employee={currentMemberEmp || displayedEmployees[0] || allEmployees[0]}
+        onAddTask={addTask}
+      />
     </div>
   );
 }

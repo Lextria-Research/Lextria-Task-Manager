@@ -17,6 +17,19 @@ import {
 
 const STORAGE_KEY = 'lextria_leader_ticktick_data';
 
+export const WhatsAppIcon = ({ size = 16, className = '' }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="currentColor"
+    className={className}
+    style={{ display: 'inline-block', verticalAlign: 'middle' }}
+  >
+    <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2ZM12.05 20.15C10.57 20.15 9.12 19.76 7.85 19.01L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 14.99 3.81 13.47 3.81 11.91C3.81 7.37 7.5 3.68 12.04 3.68C14.25 3.68 16.31 4.54 17.87 6.1C19.42 7.66 20.28 9.72 20.28 11.92C20.28 16.46 16.59 20.15 12.05 20.15ZM16.57 14.33C16.32 14.21 15.11 13.61 14.88 13.53C14.66 13.44 14.49 13.4 14.33 13.65C14.16 13.9 13.7 14.47 13.55 14.64C13.41 14.81 13.27 14.83 13.02 14.71C12.78 14.58 11.99 14.32 11.05 13.49C10.32 12.84 9.82 12.03 9.68 11.79C9.53 11.54 9.66 11.41 9.79 11.28C9.9 11.17 10.03 11 10.16 10.85C10.28 10.7 10.32 10.59 10.41 10.43C10.49 10.26 10.45 10.12 10.39 10C10.32 9.88 9.83 8.67 9.62 8.17C9.42 7.68 9.22 7.75 9.07 7.74C8.93 7.73 8.76 7.73 8.6 7.73C8.43 7.73 8.16 7.79 7.93 8.04C7.71 8.29 7.07 8.88 7.07 10.1C7.07 11.31 7.96 12.48 8.08 12.64C8.21 12.81 9.82 15.29 12.28 16.35C12.87 16.6 13.32 16.75 13.68 16.86C14.27 17.05 14.81 17.02 15.24 16.96C15.71 16.89 16.69 16.37 16.89 15.79C17.1 15.21 17.1 14.72 17.04 14.61C16.97 14.51 16.82 14.45 16.57 14.33Z" />
+  </svg>
+);
+
 // Initial seed data based exactly on Leader Pranav Bhat's TickTick workspace screenshots
 const DEFAULT_LEADER_DATA = {
   tasks: [
@@ -400,7 +413,9 @@ const DEFAULT_LEADER_DATA = {
     zohoWebhookUrl: '',
     autoSyncEnabled: true,
     lastSyncedAt: null,
-    syncHistory: []
+    syncHistory: [],
+    whatsappNumber: '+919999999999',
+    whatsappWebhookUrl: ''
   }
 };
 
@@ -417,8 +432,13 @@ export default function LeaderTaskboard({ currentUser }) {
             zohoWebhookUrl: '',
             autoSyncEnabled: true,
             lastSyncedAt: null,
-            syncHistory: []
+            syncHistory: [],
+            whatsappNumber: '+919999999999',
+            whatsappWebhookUrl: ''
           };
+        } else {
+          if (!parsed.calendarSync.whatsappNumber) parsed.calendarSync.whatsappNumber = '+919999999999';
+          if (!parsed.calendarSync.whatsappWebhookUrl) parsed.calendarSync.whatsappWebhookUrl = '';
         }
         return parsed;
       }
@@ -600,6 +620,81 @@ export default function LeaderTaskboard({ currentUser }) {
         }
       }));
     }
+  };
+
+  // -------------------------------------------------------------
+  // WHATSAPP DISPATCH HANDLERS
+  // -------------------------------------------------------------
+  const handleSendToWhatsApp = (task) => {
+    if (!task) return;
+    const phone = data.calendarSync?.whatsappNumber || '';
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    const title = task.title || 'Untitled Task';
+    const dueDate = task.dueDate || 'Immediate';
+    const quadrant = task.quadrant === 'do_now' ? 'PRANAV DO NOW (Quadrant I)' : (task.quadrant || 'Executive');
+    const tags = task.tags?.length ? task.tags.join(', ') : 'None';
+    const notes = task.notes ? `\n\n📝 *Details / Notes:*\n${task.notes}` : '';
+
+    const messageText = `🚨 *LEXTRIA TASK ALERT: ${quadrant.toUpperCase()}*\n\n📌 *Task:* ${title}\n📅 *Due Date / Deadline:* ${dueDate}\n🏷️ *Tags:* ${tags}${notes}\n\n_Sent from Lextria Task & Query Manager_`;
+
+    // Background webhook trigger if configured
+    if (data.calendarSync?.whatsappWebhookUrl) {
+      try {
+        fetch(data.calendarSync.whatsappWebhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            phone: cleanPhone,
+            message: messageText,
+            task
+          })
+        }).catch(err => console.warn('WhatsApp webhook error:', err));
+      } catch (e) {
+        console.warn('WhatsApp webhook call failed:', e);
+      }
+    }
+
+    const waUrl = cleanPhone 
+      ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(messageText)}`
+      : `https://wa.me/?text=${encodeURIComponent(messageText)}`;
+    
+    window.open(waUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleSendAllDoNowToWhatsApp = () => {
+    const doNowTasks = data.tasks.filter(t => !t.completed && (t.quadrant === 'do_now' || t.priority === 'High'));
+    if (doNowTasks.length === 0) {
+      alert('No active "Pranav Do Now" tasks to send.');
+      return;
+    }
+    const phone = data.calendarSync?.whatsappNumber || '';
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+
+    let text = `🚨 *LEXTRIA EXECUTIVE SUMMARY: ALL PRANAV DO NOW TASKS (${doNowTasks.length})*\n`;
+    text += `📅 *Generated:* ${new Date().toLocaleDateString('en-GB')} ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}\n\n`;
+    doNowTasks.forEach((t, i) => {
+      text += `*${i + 1}. ${t.title}*\n`;
+      text += `   • Deadline: ${t.dueDate || 'Immediate'}\n`;
+      if (t.tags?.length) text += `   • Tags: ${t.tags.join(', ')}\n`;
+      if (t.notes) text += `   • Notes: ${t.notes.substring(0, 100)}${t.notes.length > 100 ? '...' : ''}\n`;
+      text += `\n`;
+    });
+    text += `_Sent from Lextria Task & Query Manager_`;
+
+    if (data.calendarSync?.whatsappWebhookUrl) {
+      try {
+        fetch(data.calendarSync.whatsappWebhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: cleanPhone, message: text, count: doNowTasks.length })
+        }).catch(err => console.warn('WhatsApp batch webhook error:', err));
+      } catch (e) {}
+    }
+
+    const waUrl = cleanPhone 
+      ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`
+      : `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(waUrl, '_blank', 'noopener,noreferrer');
   };
 
   const handleDownloadIcs = () => {
@@ -1564,6 +1659,31 @@ export default function LeaderTaskboard({ currentUser }) {
                       </button>
                     )}
                   </div>
+
+                  {/* WhatsApp Dispatch */}
+                  <div className="bg-[#1b1b22] border border-white/5 rounded-xl p-3 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                        <WhatsAppIcon size={13} className="text-emerald-400" /> WhatsApp Dispatch
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => { setShowCalendarSyncModal(true); setCalendarSyncTab('whatsapp'); }}
+                        className="text-[10px] text-emerald-400 hover:underline cursor-pointer flex items-center gap-1"
+                      >
+                        <Settings size={10} /> Number Setup
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleSendToWhatsApp(selectedTask)}
+                      className="w-full py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 rounded-lg text-[11px] font-semibold text-emerald-300 hover:text-white transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                      title="Send this task directly to Pranav's WhatsApp"
+                    >
+                      <WhatsAppIcon size={13} /> Send Task to Pranav's WhatsApp
+                    </button>
+                  </div>
                 </div>
 
                 {/* Delete Button */}
@@ -1625,9 +1745,19 @@ export default function LeaderTaskboard({ currentUser }) {
                     <h3 className="text-sm font-bold text-red-400">Pranav Do Now</h3>
                     <span className="text-xs text-slate-500 font-semibold">(Urgent & Important)</span>
                   </div>
-                  <span className="text-xs font-semibold bg-red-500/20 text-red-300 px-2 py-0.5 rounded-full">
-                    {data.tasks.filter(t => !t.completed && (t.quadrant === 'do_now' || t.priority === 'High')).length}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      title="Send all active Do Now tasks to Pranav's WhatsApp"
+                      onClick={() => handleSendAllDoNowToWhatsApp()}
+                      className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1 cursor-pointer transition shadow-xs"
+                    >
+                      <WhatsAppIcon size={12} /> WhatsApp All
+                    </button>
+                    <span className="text-xs font-semibold bg-red-500/20 text-red-300 px-2 py-0.5 rounded-full">
+                      {data.tasks.filter(t => !t.completed && (t.quadrant === 'do_now' || t.priority === 'High')).length}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar max-h-[320px]">
@@ -1660,11 +1790,29 @@ export default function LeaderTaskboard({ currentUser }) {
                           </button>
                           <span className="text-xs font-medium text-slate-200 truncate">{task.title}</span>
                         </div>
-                        {task.dueDate && (
-                          <span className="text-[10px] text-red-300 bg-red-500/10 px-2 py-0.5 rounded shrink-0">
-                            {task.dueDate}
-                          </span>
-                        )}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {(task.tags?.includes('SOS Urgent') || task.title?.startsWith('[SOS')) && (
+                            <span className="text-[10px] font-extrabold bg-red-600 text-white px-2 py-0.5 rounded-full animate-pulse shadow-[0_0_8px_rgba(220,38,38,0.6)]">
+                              🚨 SOS
+                            </span>
+                          )}
+                          {task.dueDate && (
+                            <span className="text-[10px] text-red-300 bg-red-500/10 px-2 py-0.5 rounded shrink-0">
+                              {task.dueDate}
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            title="Send task to Pranav's WhatsApp"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSendToWhatsApp(task);
+                            }}
+                            className="p-1 rounded-md text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/20 transition cursor-pointer"
+                          >
+                            <WhatsAppIcon size={14} />
+                          </button>
+                        </div>
                       </div>
                     ))}
 
@@ -2613,6 +2761,15 @@ export default function LeaderTaskboard({ currentUser }) {
                     {data.calendarSync?.zohoWebhookUrl ? 'Webhook Active' : 'Direct Link Ready'}
                   </span>
                 </div>
+
+                {/* WhatsApp Dispatch Status */}
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${data.calendarSync?.whatsappNumber ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-slate-500'}`} />
+                  <span className="text-slate-300 font-medium">WhatsApp:</span>
+                  <span className={data.calendarSync?.whatsappNumber ? 'text-emerald-400 font-semibold' : 'text-slate-400'}>
+                    {data.calendarSync?.whatsappNumber ? 'Configured' : 'Ready'}
+                  </span>
+                </div>
               </div>
 
               {/* Real-time Auto-Sync Toggle */}
@@ -2633,17 +2790,18 @@ export default function LeaderTaskboard({ currentUser }) {
             </div>
 
             {/* Tabs Bar */}
-            <div className="flex items-center gap-2 px-5 py-2.5 bg-[#18181f] border-b border-white/5 text-xs">
+            <div className="flex items-center gap-2 px-5 py-2.5 bg-[#18181f] border-b border-white/5 text-xs overflow-x-auto">
               {[
                 { id: 'overview', label: 'Overview & Sync Feed' },
                 { id: 'google', label: 'Google Calendar Setup' },
                 { id: 'zoho', label: 'Zoho Calendar Setup' },
                 { id: 'ical', label: 'iCalendar (.ics) Feed' },
+                { id: 'whatsapp', label: 'WhatsApp Dispatch Setup' },
               ].map(tab => (
                 <button
                   key={tab.id}
                   onClick={() => { setCalendarSyncTab(tab.id); setTestResult(null); }}
-                  className={`px-3 py-1.5 rounded-lg transition font-medium cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-lg transition font-medium cursor-pointer shrink-0 ${
                     calendarSyncTab === tab.id
                       ? 'bg-blue-600 text-white shadow-sm'
                       : 'text-slate-400 hover:text-white hover:bg-white/5'
@@ -2934,6 +3092,98 @@ export default function LeaderTaskboard({ currentUser }) {
                         <li>Upload the file to populate all events and milestones.</li>
                       </ol>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 5: WHATSAPP DISPATCH SETUP */}
+              {calendarSyncTab === 'whatsapp' && (
+                <div className="space-y-4">
+                  <div className="bg-[#202028] border border-emerald-500/20 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
+                      <WhatsAppIcon size={18} /> WhatsApp Integration & Dispatch for Pranav
+                    </div>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      Send your <strong>"PRANAV DO NOW"</strong> tasks directly to Pranav's WhatsApp with one click, complete with deadlines, urgency tags, and detailed notes.
+                    </p>
+                  </div>
+
+                  <div className="bg-[#1b1b22] border border-white/5 rounded-xl p-4 space-y-4">
+                    <div>
+                      <label className="text-xs font-semibold text-slate-200 block mb-1.5 flex items-center justify-between">
+                        <span>Pranav's WhatsApp Phone Number (with Country Code)</span>
+                        <span className="text-[10px] text-slate-400">e.g. +91 99999 99999</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="+919876543210"
+                        value={data.calendarSync?.whatsappNumber || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setData(prev => ({
+                            ...prev,
+                            calendarSync: { ...prev.calendarSync, whatsappNumber: val }
+                          }));
+                        }}
+                        className="w-full bg-[#141418] border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
+                      />
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        When configured, clicking "Send to WhatsApp" on any task or using "WhatsApp All" opens a pre-filled chat with this number on WhatsApp Web / Desktop / Mobile.
+                      </p>
+                    </div>
+
+                    <div className="pt-2 border-t border-white/5">
+                      <label className="text-xs font-semibold text-slate-200 block mb-1.5 flex items-center justify-between">
+                        <span>Optional: WhatsApp Webhook / Gateway Endpoint</span>
+                        <span className="text-[10px] text-emerald-400">Automated Bot / Zapier / Twilio</span>
+                      </label>
+                      <input
+                        type="url"
+                        placeholder="https://hooks.zapier.com/hooks/catch/... or webhook endpoint"
+                        value={data.calendarSync?.whatsappWebhookUrl || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setData(prev => ({
+                            ...prev,
+                            calendarSync: { ...prev.calendarSync, whatsappWebhookUrl: val }
+                          }));
+                        }}
+                        className="w-full bg-[#141418] border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
+                      />
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Optional background POST payload sent whenever a task is dispatched or when SOS tasks are created.
+                      </p>
+                    </div>
+
+                    <div className="pt-3 flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleSendToWhatsApp({
+                            title: 'TEST TASK - Lextria WhatsApp Dispatch',
+                            dueDate: new Date().toISOString().split('T')[0],
+                            quadrant: 'do_now',
+                            tags: ['Test', 'SOS Urgent'],
+                            notes: 'This is a test notification confirming your WhatsApp connection is functioning properly.'
+                          });
+                        }}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-2 transition cursor-pointer shadow-sm"
+                      >
+                        <WhatsAppIcon size={14} /> Send Test Message to WhatsApp
+                      </button>
+                      <span className="text-[11px] text-slate-400">
+                        Opens in WhatsApp Web or WhatsApp Desktop
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#17171d] border border-white/5 rounded-xl p-4 space-y-2 text-xs">
+                    <h5 className="font-bold text-emerald-300">How WhatsApp Dispatch Works:</h5>
+                    <ul className="space-y-1.5 list-disc list-inside text-slate-400 text-[11px] leading-relaxed">
+                      <li><strong>Instant 1-Click:</strong> Click the green WhatsApp icon on any task in Quadrant I (Pranav Do Now) to open it in WhatsApp with the full title, deadline, and notes pre-filled.</li>
+                      <li><strong>Batch Dispatch:</strong> Click <em>"WhatsApp All"</em> at the top of Quadrant I to send an organized checklist of all urgent tasks directly to Pranav.</li>
+                      <li><strong>Zero Hassle:</strong> Uses WhatsApp's official universal direct link protocol (<code>wa.me</code>), so no paid Meta API tokens or Twilio verification required.</li>
+                    </ul>
                   </div>
                 </div>
               )}

@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import QueryTickets from './QueryTickets';
 import ExportPage from './ExportPage';
-import SettingsPage from './SettingsPage';
 import { isLeaderOrSharan } from './attachmentUtils';
 
 function HubLogo({ size = 32 }) {
@@ -259,18 +258,6 @@ export default function QueryManager({ agents = [], isAdmin = false, currentUser
                 </button>
               );
             })}
-            {isLeader && (
-              <button
-                onClick={() => setActiveSubTab('settings')}
-                className={`shrink-0 whitespace-nowrap rounded-lg px-3.5 py-1.5 text-sm font-semibold transition cursor-pointer ${
-                  activeSubTab === 'settings'
-                    ? 'bg-[#c9a227] text-[#16234f] shadow-sm'
-                    : 'text-slate-200 hover:bg-white/10'
-                }`}
-              >
-                Settings
-              </button>
-            )}
           </nav>
 
           {/* User badge & Logout */}
@@ -298,9 +285,6 @@ export default function QueryManager({ agents = [], isAdmin = false, currentUser
         )}
         {activeSubTab === 'export' && (
           <ExportPage />
-        )}
-        {activeSubTab === 'settings' && isLeader && (
-          <SettingsPage isAdmin={isLeader} currentUser={currentSession} />
         )}
       </div>
     </div>

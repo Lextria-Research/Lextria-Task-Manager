@@ -28,7 +28,7 @@ import {
   isSameMember
 } from './attachmentUtils';
 
-const URGENCIES = ['High', 'Medium', 'Low'];
+const URGENCIES = ['SOS Urgent', 'High', 'Medium', 'Low'];
 
 export const generateThumbnail = (dataUrl) => {
   return new Promise((resolve) => {
@@ -110,6 +110,7 @@ export default function QueryTickets({ session, agents = [] }) {
 
   // New ticket form
   const [urgency, setUrgency] = useState('Medium');
+  const [deadline, setDeadline] = useState('');
   const [queryText, setQueryText] = useState('');
   const [images, setImages] = useState([]);
   const [submitting, setSubmitting] = useState(false);
@@ -119,6 +120,7 @@ export default function QueryTickets({ session, agents = [] }) {
   // Edit ticket state
   const [editingTicket, setEditingTicket] = useState(null);
   const [editUrgency, setEditUrgency] = useState('Medium');
+  const [editDeadline, setEditDeadline] = useState('');
   const [editQueryText, setEditQueryText] = useState('');
   const [editImages, setEditImages] = useState([]);
   const [editSubmitting, setEditSubmitting] = useState(false);
@@ -426,6 +428,12 @@ export default function QueryTickets({ session, agents = [] }) {
   const handleCreateTicket = async (e) => {
     e.preventDefault();
     if (!queryText.trim()) return;
+
+    if (urgency === 'SOS Urgent' && !deadline) {
+      alert('A deadline is required for SOS Urgent queries as they are urgent and important.');
+      return;
+    }
+
     setSubmitting(true);
 
     const agentId = resolveAgentId(session?.name);
@@ -460,7 +468,8 @@ export default function QueryTickets({ session, agents = [] }) {
       }
     }
 
-    let fullPayloadText = `[AUTHOR]:${JSON.stringify(authorMeta)}\n\n[QUERY]:\n${queryText.trim()}`;
+    const deadlineHeader = deadline ? `[DEADLINE]:${deadline}\n` : '';
+    let fullPayloadText = `[AUTHOR]:${JSON.stringify(authorMeta)}\n${deadlineHeader}\n[QUERY]:\n${queryText.trim()}`;
     if (processedImages.length > 0) {
       const toSave = processedImages.map(a => {
         const { file, uploading, ...rest } = a;
@@ -489,9 +498,37 @@ export default function QueryTickets({ session, agents = [] }) {
       setShowNewModal(false);
       setQueryText('');
       setUrgency('Medium');
+      setDeadline('');
       setImages([]);
       const ticketData = data[0];
       setTickets(prev => [ticketData, ...prev]);
+
+      // Cross-board Sync: Route SOS Urgent query into PRANAV DO NOW in Eisenhower Matrix
+      if (urgency === 'SOS Urgent') {
+        try {
+          const STORAGE_KEY = 'lextria_leader_ticktick_data';
+          const saved = localStorage.getItem(STORAGE_KEY);
+          const leaderData = saved ? JSON.parse(saved) : null;
+          if (leaderData && Array.isArray(leaderData.tasks)) {
+            const sosTask = {
+              id: `sos-query-${ticketData.id || Date.now()}`,
+              title: `[SOS QUERY] ${currentBoard.label}: ${queryText.trim().substring(0, 70)}`,
+              list: 'Inbox',
+              quadrant: 'do_now',
+              dueDate: deadline,
+              priority: 'High',
+              completed: false,
+              tags: ['SOS Urgent', 'query', currentBoard.label],
+              notes: `🚨 SOS Urgent Query raised by ${session?.name || 'Member'}.\nBoard: ${currentBoard.label}\nDeadline: ${deadline}\n\nQuery:\n${queryText.trim()}`,
+              subtasks: []
+            };
+            leaderData.tasks.unshift(sosTask);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(leaderData));
+          }
+        } catch (e) {
+          console.error('Failed to sync SOS query into leader board:', e);
+        }
+      }
       
       const filesToUpload = processedImages.filter(a => a.uploading);
       if (filesToUpload.length > 0) {
@@ -738,9 +775,10 @@ export default function QueryTickets({ session, agents = [] }) {
   // --- Edit Ticket Handlers ---
   const startEditTicket = (ticket, e) => {
     if (e) e.stopPropagation();
-    const { text, attachments } = parseTicketData(ticket, allPersonnel);
+    const { text, attachments, deadline: parsedDeadline } = parseTicketData(ticket, allPersonnel);
     setEditingTicket(ticket);
     setEditUrgency(ticket.urgency || 'Medium');
+    setEditDeadline(parsedDeadline || ticket.deadline || '');
     setEditQueryText(text);
     setEditImages(attachments || []);
   };
@@ -748,6 +786,12 @@ export default function QueryTickets({ session, agents = [] }) {
   const handleSaveEdit = async (e) => {
     e.preventDefault();
     if (!editQueryText.trim() || !editingTicket) return;
+
+    if (editUrgency === 'SOS Urgent' && !editDeadline) {
+      alert('A deadline is required for SOS Urgent queries.');
+      return;
+    }
+
     setEditSubmitting(true);
 
     const { authorName, authorRole } = parseTicketData(editingTicket, allPersonnel);
@@ -779,7 +823,8 @@ export default function QueryTickets({ session, agents = [] }) {
       }
     }
 
-    let fullPayloadText = `[AUTHOR]:${JSON.stringify(authorMeta)}\n\n[QUERY]:\n${editQueryText.trim()}`;
+    const deadlineHeader = editDeadline ? `[DEADLINE]:${editDeadline}\n` : '';
+    let fullPayloadText = `[AUTHOR]:${JSON.stringify(authorMeta)}\n${deadlineHeader}\n[QUERY]:\n${editQueryText.trim()}`;
     if (processedImages.length > 0) {
       const toSave = processedImages.map(a => {
         const { file, uploading, ...rest } = a;
@@ -921,8 +966,8 @@ export default function QueryTickets({ session, agents = [] }) {
     });
   }, [searchedTickets, currentBoard]);
 
-  // Auto sort by urgency: High > Medium > Low, then newest first
-  const urgencyWeight = { 'high': 0, 'medium': 1, 'low': 2 };
+  // Auto sort by urgency: SOS Urgent > High > Medium > Low, then newest first
+  const urgencyWeight = { 'sos urgent': -1, 'sos': -1, 'high': 0, 'medium': 1, 'low': 2 };
   const sortTickets = (ticketList) => {
     return [...ticketList].sort((a, b) => {
       const uA = urgencyWeight[(a.urgency || '').toLowerCase()] ?? 1;
@@ -937,6 +982,7 @@ export default function QueryTickets({ session, agents = [] }) {
   const resolvedTickets = sortTickets(boardTickets.filter(t => (t.status || '').toLowerCase() === 'resolved'));
 
   const urgencyBadge = (u) => {
+    if (u === 'SOS Urgent') return 'bg-red-600 text-white font-extrabold border-red-700 animate-pulse shadow-[0_0_8px_rgba(220,38,38,0.5)]';
     if (u === 'High') return 'bg-red-100 text-red-700 border-red-200';
     if (u === 'Medium') return 'bg-amber-100 text-amber-700 border-amber-200';
     return 'bg-emerald-100 text-emerald-700 border-emerald-200';
@@ -1298,6 +1344,25 @@ export default function QueryTickets({ session, agents = [] }) {
                   ))}
                 </select>
               </div>
+
+              {urgency === 'SOS Urgent' && (
+                <div className="mb-4 p-3.5 rounded-xl bg-red-50 border border-red-200 animate-in fade-in">
+                  <label className="mb-1 block text-xs font-bold text-red-700 flex items-center gap-1.5 uppercase tracking-wider">
+                    <span>🚨 Compulsory Deadline (SOS Urgent)</span>
+                    <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={deadline}
+                    onChange={(e) => setDeadline(e.target.value)}
+                    className="w-full rounded-lg border border-red-300 bg-white text-slate-900 font-semibold px-3 py-2 text-sm outline-none focus:border-red-600 focus:ring-1 focus:ring-red-600"
+                  />
+                  <p className="text-[11px] text-red-600 mt-1 leading-relaxed">
+                    This query will be routed directly to Leader Pranav&apos;s <strong>PRANAV DO NOW</strong> in the Eisenhower Matrix. A deadline is compulsory.
+                  </p>
+                </div>
+              )}
 
               <div className="mb-4">
                 <label className="mb-1.5 block text-sm font-semibold text-slate-700">Query</label>
@@ -1955,11 +2020,27 @@ export default function QueryTickets({ session, agents = [] }) {
                   onChange={(e) => setEditUrgency(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:border-[#16234f] bg-white font-medium"
                 >
+                  <option value="SOS Urgent">🚨 SOS Urgent</option>
                   <option value="High">High Urgency</option>
                   <option value="Medium">Medium Urgency</option>
                   <option value="Low">Low Urgency</option>
                 </select>
               </div>
+
+              {editUrgency === 'SOS Urgent' && (
+                <div className="p-3 rounded-xl bg-red-50 border border-red-200">
+                  <label className="block text-xs font-bold text-red-700 uppercase tracking-wider mb-1">
+                    🚨 Compulsory Deadline (SOS Urgent) *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={editDeadline}
+                    onChange={(e) => setEditDeadline(e.target.value)}
+                    className="w-full rounded-lg border border-red-300 bg-white text-slate-900 font-semibold px-3 py-2 text-sm outline-none focus:border-red-600"
+                  />
+                </div>
+              )}
 
               {/* Description */}
               <div>
