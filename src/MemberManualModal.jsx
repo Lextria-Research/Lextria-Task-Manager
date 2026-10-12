@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   Sparkles, 
@@ -136,7 +136,7 @@ export default function MemberManualModal({ isOpen, onClose, currentUser }) {
                 <div>
                   <h3 className="text-sm font-bold text-white">3. Project Reporting Board</h3>
                   <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                    Under <strong>Queries &rarr; Project Reporting</strong>, view high-level client deliverables across 5 distinct phases: <em>Not Started, In Progress, Client Review, On Hold, and Completed</em>. Post threaded status updates to keep everyone aligned.
+                    Click <strong>Project Reporting</strong> in the left sidebar navigation to view high-level client deliverables across 5 distinct phases: <em>Not Started, In Progress, Client Review, On Hold, and Completed</em>. Post threaded status updates to keep everyone aligned.
                   </p>
                 </div>
               </div>

@@ -24,11 +24,26 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   Search, Shield, Plus, Trash2, Edit2, CheckCircle2, Circle,
   Bell, Calendar, X, Lock, Unlock, AlertCircle, GripVertical, GripHorizontal, Building2, Layout, Users, ChevronRight, ChevronLeft, ArrowLeft, History, RotateCcw, Tag, BarChart3, Filter, SlidersHorizontal, Image, UploadCloud, Link, Clock, Download, FileSpreadsheet, ArrowUpDown, ArrowUp, ArrowDown,
-  CheckSquare, Database, Wrench
+  CheckSquare, Database, Wrench, FolderKanban
 } from 'lucide-react';
 import QueryManager from './QueryManager';
+import ProjectReporting from './ProjectReporting';
 import LoginPage from './LoginPage';
 import MemberManualModal from './MemberManualModal';
+
+// Helper to reliably check if a board agent corresponds to the currently logged in member
+export function isSameMember(agentName, memberName) {
+  if (!agentName || !memberName) return false;
+  const a = agentName.trim().toLowerCase().replace(/\s+/g, '');
+  const m = memberName.trim().toLowerCase().replace(/\s+/g, '');
+  if (a === m) return true;
+  if ((m === 'kaushal' && a.startsWith('kaushal')) || (a === 'kaushal' && m.startsWith('kaushal'))) return true;
+  if ((m === 'akshay' && a === 'akshaya') || (m === 'akshaya' && a === 'akshay')) return true;
+  if ((m.includes('vinyas') || m.includes('vinay')) && (a.includes('vinyas') || a.includes('vinay'))) return true;
+  if (m.includes('pranav') && a.includes('pranav')) return true;
+  if (m.includes('sharan') && a.includes('sharan')) return true;
+  return false;
+}
 
 // --- SYSTEM UNDER MAINTENANCE MODE ---
 // Set to true to lock down the site and pause all user interactions during upgrades.
@@ -338,7 +353,7 @@ function SortableTaskItem({ task, employeeId, updateTask, deleteTask, onTaskClic
 }
 
 // --- SORTABLE EMPLOYEE CARD (KANBAN COLUMN) ---
-function SortableEmployeeCard({ employee, isAdmin, onDelete, onEdit, updateTask, deleteTask, addTask, onTaskClick, priorityFilter, dueDateFilter, archivedTasks = [], timerTick }) {
+function SortableEmployeeCard({ employee, isAdmin, currentUser, onDelete, onEdit, updateTask, deleteTask, addTask, onTaskClick, priorityFilter, dueDateFilter, archivedTasks = [], timerTick }) {
   const [isAdding, setIsAdding] = useState(false);
   const [titleInput, setTitleInput] = useState('');
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -351,6 +366,55 @@ function SortableEmployeeCard({ employee, isAdmin, onDelete, onEdit, updateTask,
     transition,
     opacity: isDragging ? 0.4 : 1,
   };
+
+  const isOwner = currentUser && isSameMember(employee.name, currentUser?.name);
+  const canViewTasks = isAdmin || isOwner;
+
+  if (!canViewTasks) {
+    return (
+      <div
+        ref={setNodeRef}
+        style={style}
+        className={`glass-card flex flex-col w-[320px] h-[580px] flex-shrink-0 transition-all duration-300 rounded-2xl overflow-hidden ${isDragging ? 'shadow-[0_0_30px_rgba(37,99,235,0.5)]' : ''}`}
+      >
+        <div className="p-4 bg-white/5 border-b border-white/10 relative group">
+          <div className="flex items-center space-x-3 mt-1">
+            <div className={`w-10 h-10 rounded-full ${employee.color} flex items-center justify-center text-sm font-bold shadow-lg flex-shrink-0`}>
+              {getInitials(employee.name)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 justify-between">
+                <h3 className="font-semibold text-base truncate text-white">{employee.name}</h3>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0">
+                  <Lock size={10} /> Confidential
+                </span>
+              </div>
+              <p className="text-slate-400 text-xs truncate">{employee.role}</p>
+            </div>
+          </div>
+          <div className="mt-3 py-2 px-3 rounded-xl bg-white/5 border border-white/5 text-xs text-slate-400 flex items-center gap-2">
+            <Lock size={12} className="text-amber-400/80 shrink-0" />
+            <span>Private tasks protected for confidentiality</span>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6 flex flex-col items-center justify-center text-center">
+          <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-amber-400 mb-3 shadow-[0_0_20px_rgba(245,158,11,0.08)]">
+            <Lock size={20} />
+          </div>
+          <p className="text-white text-sm font-semibold">Confidential Work</p>
+          <p className="text-xs text-slate-400 mt-1.5 max-w-[210px] leading-relaxed">
+            Tasks assigned to {employee.name} are private and only visible to them.
+          </p>
+        </div>
+
+        <div className="p-3 border-t border-white/10 bg-black/20 text-center text-[11px] text-slate-500 flex items-center justify-center gap-1.5">
+          <Lock size={11} className="text-slate-500" />
+          <span>Read-only confidential column</span>
+        </div>
+      </div>
+    );
+  }
 
   const tasksCompleted = employee.tasks.filter(t => t.completed).length;
   const totalTasks = employee.tasks.length;
@@ -415,13 +479,17 @@ function SortableEmployeeCard({ employee, isAdmin, onDelete, onEdit, updateTask,
       className={`glass-card flex flex-col w-[320px] h-[580px] flex-shrink-0 transition-all duration-300 rounded-2xl overflow-hidden ${isDragging ? 'shadow-[0_0_30px_rgba(37,99,235,0.5)]' : ''}`}
     >
       <div className="p-4 bg-white/5 border-b border-white/10 relative group">
-        <div {...attributes} {...listeners} className="absolute top-2 left-2 cursor-grab active:cursor-grabbing text-slate-500 hover:text-slate-300">
-           <GripHorizontal size={16} />
-        </div>
+        {isAdmin && (
+          <div {...attributes} {...listeners} className="absolute top-2 left-2 cursor-grab active:cursor-grabbing text-slate-500 hover:text-slate-300">
+             <GripHorizontal size={16} />
+          </div>
+        )}
         <div className="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button onClick={() => onEdit(employee)} className="p-1.5 rounded-md hover:bg-white/10 text-slate-300 hover:text-white transition-colors">
-            <Edit2 size={12} />
-          </button>
+          {isAdmin && (
+            <button onClick={() => onEdit(employee)} className="p-1.5 rounded-md hover:bg-white/10 text-slate-300 hover:text-white transition-colors">
+              <Edit2 size={12} />
+            </button>
+          )}
           {isAdmin && (
             <button 
               type="button"
@@ -2136,7 +2204,8 @@ export default function App() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showAnalytics, setShowAnalytics] = useState(false);
-  const [activeTab, setActiveTab] = useState('tasks'); // 'tasks' | 'queries'
+  const [activeTab, setActiveTab] = useState('tasks'); // 'tasks' | 'queries' | 'projects'
+  const [boardViewFilter, setBoardViewFilter] = useState('MY'); // 'MY' | 'ALL'
   const [priorityFilter, setPriorityFilter] = useState('All');
   const [dueDateFilter, setDueDateFilter] = useState('All');
   const [showAdminModal, setShowAdminModal] = useState(false);
@@ -2417,6 +2486,9 @@ export default function App() {
     departments.forEach(dept => {
       dept.boards?.forEach(board => {
         board.employees?.forEach(emp => {
+          if (!isAdmin && !isSameMember(emp.name, currentUser?.name)) {
+            return;
+          }
           emp.tasks?.forEach(task => {
             if (task.reminderTime) {
               const taskReminder = task.reminderTime.trim().substring(0, 5); // HH:MM
@@ -2926,6 +2998,13 @@ export default function App() {
   };
 
   const addTask = async (empId, title = 'New Task') => {
+    if (!isAdmin) {
+      const targetEmp = allEmployees.find(e => e.id === empId);
+      if (targetEmp && !isSameMember(targetEmp.name, currentUser?.name)) {
+        console.warn("Unauthorized: Members can only add tasks to their own column.");
+        return;
+      }
+    }
     const tempId = 'temp-task-' + Math.random().toString(36).substring(2, 11);
     const newTaskObj = {
       id: tempId,
@@ -3025,6 +3104,13 @@ export default function App() {
   };
 
   const updateTask = async (empId, taskId, updates) => {
+    if (!isAdmin) {
+      const targetEmp = allEmployees.find(e => e.id === empId);
+      if (targetEmp && !isSameMember(targetEmp.name, currentUser?.name)) {
+        console.warn("Unauthorized: Members can only update their own tasks.");
+        return;
+      }
+    }
     lastLocalActionTimeRef.current = Date.now();
     let localUpdates = { ...updates };
 
@@ -3296,6 +3382,13 @@ export default function App() {
   };
 
   const deleteTask = async (empId, taskId) => {
+    if (!isAdmin) {
+      const targetEmp = allEmployees.find(e => e.id === empId);
+      if (targetEmp && !isSameMember(targetEmp.name, currentUser?.name)) {
+        console.warn("Unauthorized: Members can only delete their own tasks.");
+        return;
+      }
+    }
     lastLocalActionTimeRef.current = Date.now();
     // Optimistic
     setDepartments(prev => prev.map(d => ({
@@ -3331,6 +3424,9 @@ export default function App() {
       const overEmpId = overData.type === 'Task' ? overData.employeeId : overData.type === 'Employee' ? overData.employee.id : null;
       
       if (!overEmpId || activeEmpId === overEmpId) return;
+
+      // Confidentiality guard: non-admin members cannot move tasks to another member's column
+      if (!isAdmin) return;
 
       lastLocalActionTimeRef.current = Date.now();
 
@@ -3431,6 +3527,7 @@ export default function App() {
     }
 
     if (activeData.type === 'Employee' && overData.type === 'Employee') {
+      if (!isAdmin) return;
       if (active.id !== over.id) {
         setDepartments(prev => {
           const next = JSON.parse(JSON.stringify(prev));
@@ -3501,6 +3598,14 @@ export default function App() {
   const currentDept = selectedDeptId ? departments.find(d => d.id === selectedDeptId) : null;
   const currentBoard = currentDept && selectedBoardId ? currentDept.boards.find(b => b.id === selectedBoardId) : null;
 
+  const displayedEmployees = useMemo(() => {
+    if (!currentBoard) return [];
+    if (isAdmin || boardViewFilter === 'ALL') {
+      return currentBoard.employees || [];
+    }
+    return (currentBoard.employees || []).filter(e => isSameMember(e.name, currentUser?.name));
+  }, [currentBoard, isAdmin, boardViewFilter, currentUser]);
+
   const allEmployees = useMemo(() => {
     const list = [];
     departments.forEach(dept => {
@@ -3525,13 +3630,17 @@ export default function App() {
         for (const emp of board.employees || []) {
           const task = emp.tasks?.find(t => t.id === taskId);
           if (task) {
+            // Confidentiality check: non-admins can only view their own tasks
+            if (!isAdmin && !isSameMember(emp.name, currentUser?.name)) {
+              return null;
+            }
             return { dept, board, emp, task };
           }
         }
       }
     }
     return null;
-  }, [selectedTaskDetails, departments]);
+  }, [selectedTaskDetails, departments, isAdmin, currentUser]);
 
   const completedTasks = useMemo(() => {
     const list = [];
@@ -3541,6 +3650,10 @@ export default function App() {
       dept.boards?.forEach(board => {
         board.employees?.forEach(emp => {
           empMap.set(emp.id, emp);
+          // Confidentiality check: non-admins only see their own completed tasks
+          if (!isAdmin && !isSameMember(emp.name, currentUser?.name)) {
+            return;
+          }
           emp.tasks?.forEach(task => {
             if (task.completed) {
               list.push({ task, emp, boardName: board.name, deptName: dept.name });
@@ -3552,6 +3665,9 @@ export default function App() {
 
     (archivedTasks || []).forEach(task => {
       const emp = empMap.get(task.agent_id) || { id: task.agent_id, name: 'Agent', color: 'bg-slate-500' };
+      if (!isAdmin && !isSameMember(emp.name, currentUser?.name)) {
+        return;
+      }
       const rawCustom = task.custom_completed_at || task.customCompletedAt || task.completed_at || task.completedAt || (task.completed_date ? `${task.completed_date}T00:00:00.000Z` : null);
       list.push({
         task: {
@@ -3586,7 +3702,7 @@ export default function App() {
       };
       return getTimestamp(b.task) - getTimestamp(a.task);
     });
-  }, [departments, archivedTasks]);
+  }, [departments, archivedTasks, isAdmin, currentUser]);
 
   const filteredCompletedTasks = useMemo(() => {
     const todayStrVal = new Date().toISOString().split('T')[0];
@@ -3838,6 +3954,7 @@ export default function App() {
                   departments.forEach(d => {
                     d.boards?.forEach(b => {
                       b.employees?.forEach(e => {
+                        if (!isAdmin && !isSameMember(e.name, currentUser?.name)) return;
                         e.tasks?.forEach(t => {
                           if (t.title.toLowerCase().includes(query) || 
                               t.description?.toLowerCase().includes(query) || 
@@ -3969,6 +4086,7 @@ export default function App() {
             {[
               { id: 'tasks', label: 'Tasks', icon: CheckSquare },
               { id: 'queries', label: 'Queries', icon: Database },
+              { id: 'projects', label: 'Project Reporting', icon: FolderKanban },
             ].map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
@@ -4026,7 +4144,7 @@ export default function App() {
           )}
 
           {/* Main Content */}
-          <main className={`flex-1 ${activeTab === 'queries' ? 'p-0 flex flex-col min-h-0 overflow-auto' : 'px-6 py-6'}`}>
+          <main className={`flex-1 ${activeTab === 'queries' || activeTab === 'projects' ? 'p-0 flex flex-col min-h-0 overflow-auto' : 'px-6 py-6'}`}>
 
           {/* Queries Page */}
           {activeTab === 'queries' && (
@@ -4035,6 +4153,15 @@ export default function App() {
               isAdmin={isAdmin} 
               currentUser={currentUser}
               onLogout={handleGlobalLogout}
+            />
+          )}
+
+          {/* Project Reporting Page */}
+          {activeTab === 'projects' && (
+            <ProjectReporting 
+              agents={allEmployees} 
+              isAdmin={isAdmin} 
+              session={currentUser}
             />
           )}
 
@@ -4115,6 +4242,32 @@ export default function App() {
             <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
               <h2 className="text-2xl font-bold text-white flex items-center gap-2"><Users className="text-brand-400"/> Agents: {currentBoard.name}</h2>
               <div className="flex items-center gap-3 flex-wrap">
+                {!isAdmin && (
+                  <div className="flex items-center p-1 bg-white/5 border border-white/10 rounded-xl text-xs">
+                    <button
+                      onClick={() => setBoardViewFilter('MY')}
+                      className={`px-3 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+                        boardViewFilter === 'MY'
+                          ? 'bg-brand-500 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)] font-semibold'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title="Show only my column"
+                    >
+                      My Column
+                    </button>
+                    <button
+                      onClick={() => setBoardViewFilter('ALL')}
+                      className={`px-3 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+                        boardViewFilter === 'ALL'
+                          ? 'bg-brand-500 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)] font-semibold'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title="Show all team columns"
+                    >
+                      All Columns
+                    </button>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 shadow-md">
                   <Filter size={14} className="text-slate-400" />
                   <select 
@@ -4199,11 +4352,12 @@ export default function App() {
                 className="flex gap-6 overflow-x-auto pb-6 scrollbar-hide items-stretch min-h-[500px]"
               >
                 <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
-                  <SortableContext items={currentBoard.employees.map(e => e.id)} strategy={horizontalListSortingStrategy}>
-                    {currentBoard.employees.map(emp => (
+                  <SortableContext items={displayedEmployees.map(e => e.id)} strategy={horizontalListSortingStrategy}>
+                    {displayedEmployees.map(emp => (
                       <SortableEmployeeCard
                         key={emp.id}
                         employee={emp}
+                        currentUser={currentUser}
                         isAdmin={isAdmin}
                         onDelete={(emp) => setEmployeeToDelete(emp)}
                         onEdit={(emp) => { setEditingEmployee(emp); setShowAddEmpModal(true); }}
@@ -4225,9 +4379,22 @@ export default function App() {
                       />
                     ))}
                   </SortableContext>
-                  {currentBoard.employees.length === 0 && (
-                    <div className="w-[320px] flex-shrink-0 border-2 border-dashed border-white/10 rounded-2xl flex items-center justify-center text-slate-500 p-6 text-center">
-                      No agents on this board. Add one to get started.
+                  {displayedEmployees.length === 0 && (
+                    <div className="w-[340px] flex-shrink-0 border-2 border-dashed border-white/10 rounded-2xl flex flex-col items-center justify-center text-slate-400 p-6 text-center gap-2">
+                      <Lock size={22} className="text-brand-400 mb-1" />
+                      <p className="text-sm font-medium">
+                        {boardViewFilter === 'MY'
+                          ? `You don't have an assigned column on "${currentBoard.name}".`
+                          : 'No agents on this board.'}
+                      </p>
+                      {boardViewFilter === 'MY' && (
+                        <button
+                          onClick={() => setBoardViewFilter('ALL')}
+                          className="mt-2 text-xs font-semibold text-brand-300 hover:text-white underline cursor-pointer"
+                        >
+                          Switch to All Columns
+                        </button>
+                      )}
                     </div>
                   )}
                   <DragOverlay dropAnimation={defaultDropAnimationSideEffects({ duration: 250 })}>
@@ -4237,13 +4404,14 @@ export default function App() {
                     {activeDragItem?.type === 'Employee' && (
                       <SortableEmployeeCard 
                         employee={activeDragItem.employee} 
+                        currentUser={currentUser}
                         isAdmin={isAdmin} 
                         onDelete={()=>{}} 
                         onEdit={()=>{}} 
                         updateTask={()=>{}} 
                         deleteTask={()=>{}} 
                         addTask={()=>{}} 
-                        onTaskClick={()=>{}}
+                        onTaskClick={()=>{}} 
                         priorityFilter={priorityFilter}
                         dueDateFilter={dueDateFilter}
                         archivedTasks={archivedTasks}
@@ -4263,8 +4431,8 @@ export default function App() {
         </div> {/* end right column */}
       </div> {/* end sidebar layout */}
 
-      {/* Contextual Floating Action Button — Tasks tab only */}
-      {activeTab === 'tasks' && (
+      {/* Contextual Floating Action Button — Tasks tab only for Admins */}
+      {activeTab === 'tasks' && isAdmin && (
         <button
           onClick={() => {
             if (!selectedDeptId) {
@@ -4583,8 +4751,9 @@ export default function App() {
                  <label className="text-xs text-slate-400 uppercase tracking-wider mb-2 block">Assigned To</label>
                  <button
                    type="button"
-                   onClick={() => setShowAssigneePopover(!showAssigneePopover)}
-                   className="w-full flex items-center justify-between bg-white/5 p-3 rounded-lg border border-white/10 hover:bg-white/10 transition-all text-left cursor-pointer"
+                   disabled={!isAdmin}
+                   onClick={() => isAdmin && setShowAssigneePopover(!showAssigneePopover)}
+                   className={`w-full flex items-center justify-between bg-white/5 p-3 rounded-lg border border-white/10 ${isAdmin ? 'hover:bg-white/10 cursor-pointer' : 'cursor-default opacity-90'} transition-all text-left`}
                  >
                    <div className="flex items-center space-x-3">
                       <div className={`w-8 h-8 rounded-full ${localEmp ? localEmp.color : 'bg-slate-500'} flex items-center justify-center text-xs font-bold flex-shrink-0`}>
@@ -4595,10 +4764,12 @@ export default function App() {
                         <p className="text-xs text-slate-400">{localBoard ? localBoard.name : ''} ({localDept ? localDept.name : ''})</p>
                       </div>
                    </div>
-                   <ChevronRight size={16} className={`text-slate-400 transition-transform ${showAssigneePopover ? 'rotate-95' : ''}`} />
+                   {isAdmin && (
+                     <ChevronRight size={16} className={`text-slate-400 transition-transform ${showAssigneePopover ? 'rotate-95' : ''}`} />
+                   )}
                  </button>
 
-                 {showAssigneePopover && (
+                 {isAdmin && showAssigneePopover && (
                    <div className="absolute left-0 right-0 mt-2 z-20 bg-[#0a1438]/98 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-xl p-3 w-full animate-in fade-in duration-200">
                      <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Assign to Employee</div>
                      
@@ -5641,16 +5812,22 @@ export default function App() {
                     </select>
 
                     {/* Agent Filter */}
-                    <select
-                      value={historyAgentFilter}
-                      onChange={(e) => setHistoryAgentFilter(e.target.value)}
-                      className="glass-input text-[11px] py-1.5 px-2 bg-[#0a1438] text-white cursor-pointer rounded-lg border border-white/15 focus:outline-none focus:ring-1 focus:ring-brand-400 font-medium"
-                    >
-                      <option value="ALL" className="bg-[#0a1438] text-white py-1">All Agents ({allEmployees.length})</option>
-                      {allEmployees.map(emp => (
-                        <option key={emp.id} value={emp.id} className="bg-[#0a1438] text-white py-1">{emp.name}</option>
-                      ))}
-                    </select>
+                    {isAdmin ? (
+                      <select
+                        value={historyAgentFilter}
+                        onChange={(e) => setHistoryAgentFilter(e.target.value)}
+                        className="glass-input text-[11px] py-1.5 px-2 bg-[#0a1438] text-white cursor-pointer rounded-lg border border-white/15 focus:outline-none focus:ring-1 focus:ring-brand-400 font-medium"
+                      >
+                        <option value="ALL" className="bg-[#0a1438] text-white py-1">All Agents ({allEmployees.length})</option>
+                        {allEmployees.map(emp => (
+                          <option key={emp.id} value={emp.id} className="bg-[#0a1438] text-white py-1">{emp.name}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="glass-input text-[11px] py-1.5 px-2 bg-[#0a1438] text-slate-300 rounded-lg border border-white/15 font-medium truncate flex items-center">
+                        👤 {currentUser?.name}
+                      </div>
+                    )}
 
                     {/* Date Filter */}
                     <select

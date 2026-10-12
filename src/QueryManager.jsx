@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import QueryTickets from './QueryTickets';
-import ProjectReporting from './ProjectReporting';
 import ExportPage from './ExportPage';
 import SettingsPage from './SettingsPage';
 
@@ -18,7 +17,6 @@ function HubLogo({ size = 32 }) {
 
 const TABS = [
   { id: 'tickets', label: 'Query Tickets' },
-  { id: 'projects', label: 'Project Reporting' },
   { id: 'export', label: 'Export' },
 ];
 
@@ -296,9 +294,6 @@ export default function QueryManager({ agents = [], isAdmin = false, currentUser
       <div className="flex-1 flex flex-col min-h-0 overflow-auto">
         {activeSubTab === 'tickets' && (
           <QueryTickets session={currentSession} agents={agents} />
-        )}
-        {activeSubTab === 'projects' && (
-          <ProjectReporting session={currentSession} isAdmin={isLeader} agents={agents} />
         )}
         {activeSubTab === 'export' && (
           <ExportPage />
