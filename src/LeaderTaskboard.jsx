@@ -470,6 +470,52 @@ export default function LeaderTaskboard({ currentUser }) {
   const [testingWebhook, setTestingWebhook] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
+  // Drag and Drop States (Eisenhower Matrix & Calendar)
+  const [draggedTaskId, setDraggedTaskId] = useState(null);
+  const [dragOverTarget, setDragOverTarget] = useState(null);
+
+  const handleDragStart = (e, taskId) => {
+    e.dataTransfer.setData('text/plain', taskId);
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggedTaskId(taskId);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedTaskId(null);
+    setDragOverTarget(null);
+  };
+
+  const handleDropOnQuadrant = (e, targetQuadrant, quadrantLabel) => {
+    e.preventDefault();
+    const taskId = e.dataTransfer.getData('text/plain') || draggedTaskId;
+    if (taskId) {
+      handleUpdateTask(taskId, { quadrant: targetQuadrant });
+      setSyncToast({
+        message: `Moved to ${quadrantLabel}!`,
+        type: 'info'
+      });
+      setTimeout(() => setSyncToast(null), 3000);
+    }
+    setDraggedTaskId(null);
+    setDragOverTarget(null);
+  };
+
+  const handleDropOnDate = (e, targetDate) => {
+    e.preventDefault();
+    if (!targetDate) return;
+    const taskId = e.dataTransfer.getData('text/plain') || draggedTaskId;
+    if (taskId) {
+      handleUpdateTask(taskId, { dueDate: targetDate });
+      setSyncToast({
+        message: `Task rescheduled to ${targetDate} & synced!`,
+        type: 'success'
+      });
+      setTimeout(() => setSyncToast(null), 3500);
+    }
+    setDraggedTaskId(null);
+    setDragOverTarget(null);
+  };
+
   // -------------------------------------------------------------
   // AUTOMATED CALENDAR SYNCHRONIZATION DISPATCHER
   // -------------------------------------------------------------
@@ -984,68 +1030,65 @@ export default function LeaderTaskboard({ currentUser }) {
       {/* ========================================================= */}
       {/* 1. TICKTICK LEFT ICON RAIL */}
       {/* ========================================================= */}
-      <aside className="w-14 shrink-0 bg-[#0c0c0e] border-r border-white/5 flex flex-col items-center py-4 justify-between z-20 shadow-xl">
-        {/* Top: Avatar with Crown */}
-        <div className="flex flex-col items-center gap-6">
-          <div className="relative group cursor-pointer" title="Leader Profile: Pranav Bhat">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-amber-500 to-amber-300 p-0.5 shadow-[0_0_15px_rgba(245,158,11,0.4)]">
-              <div className="w-full h-full rounded-full bg-[#18181b] flex items-center justify-center font-bold text-xs text-amber-300">
-                PB
-              </div>
-            </div>
-            <span className="absolute -top-1 -right-1 text-xs" title="Leader Mode Active">👑</span>
-          </div>
+      <aside className="w-14 shrink-0 bg-[#0c0c0e] border-r border-white/5 flex flex-col items-center py-3.5 z-20 shadow-xl overflow-y-auto custom-scrollbar">
+        {/* Unified Tool & Settings Rail at the Top */}
+        <nav className="flex flex-col items-center gap-1.5 w-full">
+          {[
+            { id: 'tasks', label: 'Tasks', icon: CheckSquare },
+            { id: 'matrix', label: 'Eisenhower Matrix', icon: LayoutGrid },
+            { id: 'calendar', label: 'Calendar', icon: CalendarIcon },
+            { id: 'pomo', label: 'Pomodoro Focus', icon: Timer },
+            { id: 'habit', label: 'Habit Tracker', icon: Flame },
+            { id: 'countdown', label: 'Countdown', icon: Hourglass },
+          ].map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              onClick={() => setActiveModule(id)}
+              className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer relative group ${
+                activeModule === id
+                  ? 'bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)]'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+              title={label}
+            >
+              <Icon size={19} />
+              {activeModule === id && (
+                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-blue-400 rounded-r-full" />
+              )}
+              {/* Floating tooltip */}
+              <span className="absolute left-14 bg-[#1f1f23] text-white text-xs px-2.5 py-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap shadow-lg border border-white/10 z-50">
+                {label}
+              </span>
+            </button>
+          ))}
 
-          {/* Module Icons Strip */}
-          <nav className="flex flex-col items-center gap-2">
-            {[
-              { id: 'tasks', label: 'Tasks', icon: CheckSquare },
-              { id: 'matrix', label: 'Eisenhower Matrix', icon: LayoutGrid },
-              { id: 'calendar', label: 'Calendar', icon: CalendarIcon },
-              { id: 'pomo', label: 'Pomodoro Focus', icon: Timer },
-              { id: 'habit', label: 'Habit Tracker', icon: Flame },
-              { id: 'countdown', label: 'Countdown', icon: Hourglass },
-            ].map(({ id, label, icon: Icon }) => (
-              <button
-                key={id}
-                onClick={() => setActiveModule(id)}
-                className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer relative group ${
-                  activeModule === id
-                    ? 'bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)]'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
-                }`}
-                title={label}
-              >
-                <Icon size={19} />
-                {activeModule === id && (
-                  <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-blue-400 rounded-r-full" />
-                )}
-                {/* Floating tooltip */}
-                <span className="absolute left-14 bg-[#1f1f23] text-white text-xs px-2.5 py-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap shadow-lg border border-white/10 z-50">
-                  {label}
-                </span>
-              </button>
-            ))}
-          </nav>
-        </div>
+          {/* Divider line separating modules and quick utility tools */}
+          <div className="w-6 h-px bg-white/10 my-1" />
 
-        {/* Bottom Utility Icons */}
-        <div className="flex flex-col items-center gap-2">
+          {/* Quick Utility Tools & Settings (Brought to Top) */}
           <button
             onClick={() => setSearchOpen(true)}
-            className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer relative group"
             title="Quick Search"
           >
             <Search size={18} />
+            <span className="absolute left-14 bg-[#1f1f23] text-white text-xs px-2.5 py-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap shadow-lg border border-white/10 z-50">
+              Quick Search
+            </span>
           </button>
+
           <button
             onClick={() => setNotificationsOpen(!notificationsOpen)}
-            className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer relative"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer relative group"
             title="Notifications"
           >
             <Bell size={18} />
             <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full bg-blue-500" />
+            <span className="absolute left-14 bg-[#1f1f23] text-white text-xs px-2.5 py-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap shadow-lg border border-white/10 z-50">
+              Notifications & Activities
+            </span>
           </button>
+
           <button
             onClick={() => setShowCalendarSyncModal(true)}
             className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:text-blue-400 hover:bg-blue-500/10 transition-colors cursor-pointer relative group"
@@ -1059,14 +1102,18 @@ export default function LeaderTaskboard({ currentUser }) {
               Calendar Sync (Google & Zoho)
             </span>
           </button>
+
           <button
             onClick={handleExportBackup}
-            className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer relative group"
             title="Download Workspace Backup (JSON)"
           >
             <Download size={17} />
+            <span className="absolute left-14 bg-[#1f1f23] text-white text-xs px-2.5 py-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap shadow-lg border border-white/10 z-50">
+              Export Backup
+            </span>
           </button>
-        </div>
+        </nav>
       </aside>
 
       {/* ========================================================= */}
@@ -1242,8 +1289,13 @@ export default function LeaderTaskboard({ currentUser }) {
                 {activeFilteredTasks.map(task => (
                   <div
                     key={task.id}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, task.id)}
+                    onDragEnd={handleDragEnd}
                     onClick={() => setSelectedTaskId(task.id)}
-                    className={`group flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer ${
+                    className={`group flex items-start gap-3 p-3 rounded-xl border transition-all cursor-grab active:cursor-grabbing ${
+                      draggedTaskId === task.id ? 'opacity-40 scale-95' : 'hover:scale-[1.005]'
+                    } ${
                       selectedTaskId === task.id
                         ? 'bg-[#25252c] border-blue-500/40 shadow-md'
                         : 'bg-[#1e1e23] border-white/5 hover:border-white/15 hover:bg-[#222228]'
@@ -1548,7 +1600,23 @@ export default function LeaderTaskboard({ currentUser }) {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 flex-1 min-h-[600px]">
               
               {/* Quadrant I: Pranav Do Now */}
-              <div className="bg-[#1b1b20] border border-red-500/30 rounded-2xl p-4 flex flex-col shadow-lg shadow-red-950/20">
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dragOverTarget !== 'quadrant:do_now') setDragOverTarget('quadrant:do_now');
+                }}
+                onDragLeave={(e) => {
+                  if (e.currentTarget.contains(e.relatedTarget)) return;
+                  setDragOverTarget(null);
+                }}
+                onDrop={(e) => handleDropOnQuadrant(e, 'do_now', 'Quadrant I: Pranav Do Now')}
+                className={`bg-[#1b1b20] border rounded-2xl p-4 flex flex-col shadow-lg transition-all ${
+                  dragOverTarget === 'quadrant:do_now'
+                    ? 'border-red-400 bg-red-500/10 shadow-[0_0_20px_rgba(239,68,68,0.3)] ring-2 ring-red-400/50'
+                    : 'border-red-500/30 shadow-red-950/20'
+                }`}
+              >
                 <div className="flex items-center justify-between pb-3 border-b border-white/5 mb-3">
                   <div className="flex items-center gap-2">
                     <span className="w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center text-[10px] font-bold">
@@ -1563,19 +1631,30 @@ export default function LeaderTaskboard({ currentUser }) {
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar max-h-[320px]">
+                  {dragOverTarget === 'quadrant:do_now' && (
+                    <div className="border border-dashed border-red-400/80 bg-red-500/15 rounded-xl p-3 text-center text-xs font-semibold text-red-300 animate-pulse">
+                      ⬇ Drop here for Pranav Do Now
+                    </div>
+                  )}
+
                   {data.tasks
                     .filter(t => !t.completed && (t.quadrant === 'do_now' || t.priority === 'High'))
                     .map(task => (
                       <div
                         key={task.id}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, task.id)}
+                        onDragEnd={handleDragEnd}
                         onClick={() => { setActiveModule('tasks'); setSelectedTaskId(task.id); }}
-                        className="p-2.5 rounded-xl bg-[#23232a] border border-white/5 hover:border-red-500/40 flex items-center justify-between cursor-pointer transition"
+                        className={`p-2.5 rounded-xl bg-[#23232a] border border-white/5 hover:border-red-500/40 flex items-center justify-between cursor-grab active:cursor-grabbing transition ${
+                          draggedTaskId === task.id ? 'opacity-40 scale-95' : 'hover:scale-[1.01]'
+                        }`}
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); handleToggleTask(task.id); }}
-                            className="w-4 h-4 rounded-full border border-slate-500 hover:border-red-400 flex items-center justify-center shrink-0"
+                            className="w-4 h-4 rounded-full border border-slate-500 hover:border-red-400 flex items-center justify-center shrink-0 cursor-pointer"
                           >
                             {task.completed && <Check size={10} className="text-red-400" />}
                           </button>
@@ -1588,11 +1667,33 @@ export default function LeaderTaskboard({ currentUser }) {
                         )}
                       </div>
                     ))}
+
+                  {data.tasks.filter(t => !t.completed && (t.quadrant === 'do_now' || t.priority === 'High')).length === 0 && dragOverTarget !== 'quadrant:do_now' && (
+                    <div className="py-10 text-center text-slate-600 text-xs italic border border-dashed border-white/5 rounded-xl">
+                      Drag and drop tasks here to prioritize
+                    </div>
+                  )}
                 </div>
               </div>
 
               {/* Quadrant II: Pranav Park */}
-              <div className="bg-[#1b1b20] border border-amber-500/30 rounded-2xl p-4 flex flex-col shadow-lg shadow-amber-950/20">
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dragOverTarget !== 'quadrant:park') setDragOverTarget('quadrant:park');
+                }}
+                onDragLeave={(e) => {
+                  if (e.currentTarget.contains(e.relatedTarget)) return;
+                  setDragOverTarget(null);
+                }}
+                onDrop={(e) => handleDropOnQuadrant(e, 'park', 'Quadrant II: Pranav Park')}
+                className={`bg-[#1b1b20] border rounded-2xl p-4 flex flex-col shadow-lg transition-all ${
+                  dragOverTarget === 'quadrant:park'
+                    ? 'border-amber-400 bg-amber-500/10 shadow-[0_0_20px_rgba(245,158,11,0.3)] ring-2 ring-amber-400/50'
+                    : 'border-amber-500/30 shadow-amber-950/20'
+                }`}
+              >
                 <div className="flex items-center justify-between pb-3 border-b border-white/5 mb-3">
                   <div className="flex items-center gap-2">
                     <span className="w-5 h-5 rounded-full bg-amber-500 text-white flex items-center justify-center text-[10px] font-bold">
@@ -1607,19 +1708,30 @@ export default function LeaderTaskboard({ currentUser }) {
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar max-h-[320px]">
+                  {dragOverTarget === 'quadrant:park' && (
+                    <div className="border border-dashed border-amber-400/80 bg-amber-500/15 rounded-xl p-3 text-center text-xs font-semibold text-amber-300 animate-pulse">
+                      ⬇ Drop here for Pranav Park
+                    </div>
+                  )}
+
                   {data.tasks
                     .filter(t => !t.completed && t.quadrant === 'park')
                     .map(task => (
                       <div
                         key={task.id}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, task.id)}
+                        onDragEnd={handleDragEnd}
                         onClick={() => { setActiveModule('tasks'); setSelectedTaskId(task.id); }}
-                        className="p-2.5 rounded-xl bg-[#23232a] border border-white/5 hover:border-amber-500/40 flex items-center justify-between cursor-pointer transition"
+                        className={`p-2.5 rounded-xl bg-[#23232a] border border-white/5 hover:border-amber-500/40 flex items-center justify-between cursor-grab active:cursor-grabbing transition ${
+                          draggedTaskId === task.id ? 'opacity-40 scale-95' : 'hover:scale-[1.01]'
+                        }`}
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); handleToggleTask(task.id); }}
-                            className="w-4 h-4 rounded-full border border-slate-500 hover:border-amber-400 flex items-center justify-center shrink-0"
+                            className="w-4 h-4 rounded-full border border-slate-500 hover:border-amber-400 flex items-center justify-center shrink-0 cursor-pointer"
                           >
                             {task.completed && <Check size={10} className="text-amber-400" />}
                           </button>
@@ -1632,11 +1744,33 @@ export default function LeaderTaskboard({ currentUser }) {
                         )}
                       </div>
                     ))}
+
+                  {data.tasks.filter(t => !t.completed && t.quadrant === 'park').length === 0 && dragOverTarget !== 'quadrant:park' && (
+                    <div className="py-10 text-center text-slate-600 text-xs italic border border-dashed border-white/5 rounded-xl">
+                      Drag and drop tasks here to park for strategic focus
+                    </div>
+                  )}
                 </div>
               </div>
 
               {/* Quadrant III: Delegate */}
-              <div className="bg-[#1b1b20] border border-blue-500/30 rounded-2xl p-4 flex flex-col shadow-lg shadow-blue-950/20">
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dragOverTarget !== 'quadrant:delegate') setDragOverTarget('quadrant:delegate');
+                }}
+                onDragLeave={(e) => {
+                  if (e.currentTarget.contains(e.relatedTarget)) return;
+                  setDragOverTarget(null);
+                }}
+                onDrop={(e) => handleDropOnQuadrant(e, 'delegate', 'Quadrant III: Delegate')}
+                className={`bg-[#1b1b20] border rounded-2xl p-4 flex flex-col shadow-lg transition-all ${
+                  dragOverTarget === 'quadrant:delegate'
+                    ? 'border-blue-400 bg-blue-500/10 shadow-[0_0_20px_rgba(59,130,246,0.3)] ring-2 ring-blue-400/50'
+                    : 'border-blue-500/30 shadow-blue-950/20'
+                }`}
+              >
                 <div className="flex items-center justify-between pb-3 border-b border-white/5 mb-3">
                   <div className="flex items-center gap-2">
                     <span className="w-5 h-5 rounded-full bg-blue-500 text-white flex items-center justify-center text-[10px] font-bold">
@@ -1651,19 +1785,30 @@ export default function LeaderTaskboard({ currentUser }) {
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar max-h-[320px]">
+                  {dragOverTarget === 'quadrant:delegate' && (
+                    <div className="border border-dashed border-blue-400/80 bg-blue-500/15 rounded-xl p-3 text-center text-xs font-semibold text-blue-300 animate-pulse">
+                      ⬇ Drop here to Delegate
+                    </div>
+                  )}
+
                   {data.tasks
                     .filter(t => !t.completed && t.quadrant === 'delegate')
                     .map(task => (
                       <div
                         key={task.id}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, task.id)}
+                        onDragEnd={handleDragEnd}
                         onClick={() => { setActiveModule('tasks'); setSelectedTaskId(task.id); }}
-                        className="p-2.5 rounded-xl bg-[#23232a] border border-white/5 hover:border-blue-500/40 flex items-center justify-between cursor-pointer transition"
+                        className={`p-2.5 rounded-xl bg-[#23232a] border border-white/5 hover:border-blue-500/40 flex items-center justify-between cursor-grab active:cursor-grabbing transition ${
+                          draggedTaskId === task.id ? 'opacity-40 scale-95' : 'hover:scale-[1.01]'
+                        }`}
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); handleToggleTask(task.id); }}
-                            className="w-4 h-4 rounded-full border border-slate-500 hover:border-blue-400 flex items-center justify-center shrink-0"
+                            className="w-4 h-4 rounded-full border border-slate-500 hover:border-blue-400 flex items-center justify-center shrink-0 cursor-pointer"
                           >
                             {task.completed && <Check size={10} className="text-blue-400" />}
                           </button>
@@ -1676,11 +1821,33 @@ export default function LeaderTaskboard({ currentUser }) {
                         )}
                       </div>
                     ))}
+
+                  {data.tasks.filter(t => !t.completed && t.quadrant === 'delegate').length === 0 && dragOverTarget !== 'quadrant:delegate' && (
+                    <div className="py-10 text-center text-slate-600 text-xs italic border border-dashed border-white/5 rounded-xl">
+                      Drag and drop tasks here to delegate
+                    </div>
+                  )}
                 </div>
               </div>
 
               {/* Quadrant IV: Pranav Bill and Quotes */}
-              <div className="bg-[#1b1b20] border border-emerald-500/30 rounded-2xl p-4 flex flex-col shadow-lg shadow-emerald-950/20">
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dragOverTarget !== 'quadrant:bills_quotes') setDragOverTarget('quadrant:bills_quotes');
+                }}
+                onDragLeave={(e) => {
+                  if (e.currentTarget.contains(e.relatedTarget)) return;
+                  setDragOverTarget(null);
+                }}
+                onDrop={(e) => handleDropOnQuadrant(e, 'bills_quotes', 'Quadrant IV: Bill & Quotes')}
+                className={`bg-[#1b1b20] border rounded-2xl p-4 flex flex-col shadow-lg transition-all ${
+                  dragOverTarget === 'quadrant:bills_quotes'
+                    ? 'border-emerald-400 bg-emerald-500/10 shadow-[0_0_20px_rgba(16,185,129,0.3)] ring-2 ring-emerald-400/50'
+                    : 'border-emerald-500/30 shadow-emerald-950/20'
+                }`}
+              >
                 <div className="flex items-center justify-between pb-3 border-b border-white/5 mb-3">
                   <div className="flex items-center gap-2">
                     <span className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[10px] font-bold">
@@ -1695,19 +1862,30 @@ export default function LeaderTaskboard({ currentUser }) {
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar max-h-[320px]">
+                  {dragOverTarget === 'quadrant:bills_quotes' && (
+                    <div className="border border-dashed border-emerald-400/80 bg-emerald-500/15 rounded-xl p-3 text-center text-xs font-semibold text-emerald-300 animate-pulse">
+                      ⬇ Drop here for Bill & Quotes
+                    </div>
+                  )}
+
                   {data.tasks
                     .filter(t => !t.completed && t.quadrant === 'bills_quotes')
                     .map(task => (
                       <div
                         key={task.id}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, task.id)}
+                        onDragEnd={handleDragEnd}
                         onClick={() => { setActiveModule('tasks'); setSelectedTaskId(task.id); }}
-                        className="p-2.5 rounded-xl bg-[#23232a] border border-white/5 hover:border-emerald-500/40 flex items-center justify-between cursor-pointer transition"
+                        className={`p-2.5 rounded-xl bg-[#23232a] border border-white/5 hover:border-emerald-500/40 flex items-center justify-between cursor-grab active:cursor-grabbing transition ${
+                          draggedTaskId === task.id ? 'opacity-40 scale-95' : 'hover:scale-[1.01]'
+                        }`}
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); handleToggleTask(task.id); }}
-                            className="w-4 h-4 rounded-full border border-slate-500 hover:border-emerald-400 flex items-center justify-center shrink-0"
+                            className="w-4 h-4 rounded-full border border-slate-500 hover:border-emerald-400 flex items-center justify-center shrink-0 cursor-pointer"
                           >
                             {task.completed && <Check size={10} className="text-emerald-400" />}
                           </button>
@@ -1720,6 +1898,12 @@ export default function LeaderTaskboard({ currentUser }) {
                         )}
                       </div>
                     ))}
+
+                  {data.tasks.filter(t => !t.completed && t.quadrant === 'bills_quotes').length === 0 && dragOverTarget !== 'quadrant:bills_quotes' && (
+                    <div className="py-10 text-center text-slate-600 text-xs italic border border-dashed border-white/5 rounded-xl">
+                      Drag and drop tasks here for administrative tracking
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1813,37 +1997,75 @@ export default function LeaderTaskboard({ currentUser }) {
               {calendarDays.map((cd, idx) => {
                 const dayTasks = cd.dateStr ? (tasksByDate[cd.dateStr] || []) : [];
                 const isToday = cd.dateStr === todayStr;
+                const isDragOver = Boolean(cd.dateStr && dragOverTarget === `date:${cd.dateStr}`);
 
                 return (
                   <div
                     key={idx}
-                    className={`min-h-[90px] p-2 bg-[#17171a] flex flex-col transition ${
-                      !cd.currentMonth ? 'opacity-25' : 'hover:bg-[#1c1c20]'
+                    onDragOver={(e) => {
+                      if (!cd.dateStr) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                      if (dragOverTarget !== `date:${cd.dateStr}`) {
+                        setDragOverTarget(`date:${cd.dateStr}`);
+                      }
+                    }}
+                    onDragLeave={(e) => {
+                      if (e.currentTarget.contains(e.relatedTarget)) return;
+                      setDragOverTarget(null);
+                    }}
+                    onDrop={(e) => {
+                      if (!cd.dateStr) return;
+                      handleDropOnDate(e, cd.dateStr);
+                    }}
+                    className={`min-h-[90px] p-2 flex flex-col transition relative ${
+                      isDragOver
+                        ? 'bg-blue-500/20 ring-2 ring-blue-400 shadow-[inset_0_0_15px_rgba(59,130,246,0.3)] z-10'
+                        : !cd.currentMonth
+                          ? 'bg-[#17171a] opacity-25'
+                          : 'bg-[#17171a] hover:bg-[#1c1c20]'
                     }`}
                   >
                     <div className="flex justify-between items-center mb-1">
                       <span className={`text-xs font-bold ${
                         isToday
-                          ? 'w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center'
-                          : 'text-slate-400'
+                          ? 'w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-[0_0_8px_rgba(37,99,235,0.6)]'
+                          : isDragOver
+                            ? 'text-blue-300 font-extrabold'
+                            : 'text-slate-400'
                       }`}>
                         {cd.day || ''}
                       </span>
+                      {isDragOver && (
+                        <span className="text-[9px] bg-blue-500 text-white px-1.5 py-0.5 rounded font-semibold animate-pulse">
+                          Drop
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex-1 space-y-1 overflow-y-auto custom-scrollbar max-h-[70px]">
+                      {isDragOver && (
+                        <div className="border border-dashed border-blue-400/70 bg-blue-500/20 rounded py-1 text-center text-[9px] font-semibold text-blue-200 animate-pulse">
+                          ⬇ Reschedule here
+                        </div>
+                      )}
                       {dayTasks.map(t => (
                         <div
                           key={t.id}
+                          draggable
+                          onDragStart={(e) => handleDragStart(e, t.id)}
+                          onDragEnd={handleDragEnd}
                           onClick={() => { setActiveModule('tasks'); setSelectedTaskId(t.id); }}
-                          className={`text-[10px] px-1.5 py-0.5 rounded truncate cursor-pointer font-medium ${
+                          className={`text-[10px] px-1.5 py-0.5 rounded truncate font-medium cursor-grab active:cursor-grabbing transition-all ${
+                            draggedTaskId === t.id ? 'opacity-30 scale-95' : 'hover:scale-[1.02]'
+                          } ${
                             t.completed
                               ? 'bg-slate-800 text-slate-500 line-through'
                               : t.priority === 'High'
                                 ? 'bg-red-500/20 text-red-300 border border-red-500/30'
                                 : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
                           }`}
-                          title={t.title}
+                          title={`Drag to reschedule or click to view: ${t.title}`}
                         >
                           {t.title}
                         </div>
@@ -2297,38 +2519,45 @@ export default function LeaderTaskboard({ currentUser }) {
       {/* NOTIFICATIONS & ACTIVITIES POPOVER (Image 7) */}
       {/* ========================================================= */}
       {notificationsOpen && (
-        <div className="fixed top-20 left-16 z-50 w-72 bg-[#1f1f25] border border-white/10 rounded-2xl shadow-2xl p-4 animate-in fade-in duration-150">
-          <div className="flex items-center p-1 bg-[#26262e] rounded-lg text-xs mb-4">
-            <button
-              onClick={() => setNotifTab('Notifications')}
-              className={`flex-1 py-1 rounded font-medium transition ${
-                notifTab === 'Notifications' ? 'bg-blue-600 text-white' : 'text-slate-400'
-              }`}
-            >
-              Notifications
-            </button>
-            <button
-              onClick={() => setNotifTab('Activities')}
-              className={`flex-1 py-1 rounded font-medium transition ${
-                notifTab === 'Activities' ? 'bg-blue-600 text-white' : 'text-slate-400'
-              }`}
-            >
-              Activities
-            </button>
-          </div>
+        <>
+          {/* Transparent Backdrop to dismiss popover on outside click */}
+          <div
+            className="fixed inset-0 z-40 bg-transparent"
+            onClick={() => setNotificationsOpen(false)}
+          />
+          <div className="fixed top-24 left-16 z-50 w-72 bg-[#1f1f25] border border-white/10 rounded-2xl shadow-2xl p-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center p-1 bg-[#26262e] rounded-lg text-xs mb-4">
+              <button
+                onClick={() => setNotifTab('Notifications')}
+                className={`flex-1 py-1 rounded font-medium transition ${
+                  notifTab === 'Notifications' ? 'bg-blue-600 text-white' : 'text-slate-400'
+                }`}
+              >
+                Notifications
+              </button>
+              <button
+                onClick={() => setNotifTab('Activities')}
+                className={`flex-1 py-1 rounded font-medium transition ${
+                  notifTab === 'Activities' ? 'bg-blue-600 text-white' : 'text-slate-400'
+                }`}
+              >
+                Activities
+              </button>
+            </div>
 
-          <div className="text-center py-6 text-slate-500 text-xs">
-            {notifTab === 'Notifications' ? (
-              <p>No new notifications.<br />All executive tasks on schedule.</p>
-            ) : (
-              <div className="space-y-2 text-left">
-                <p className="text-slate-300">✓ Checked in 3 habits today</p>
-                <p className="text-slate-300">✓ Completed 2 pomodoros (50m)</p>
-                <p className="text-slate-300">✓ 21 active tasks queued</p>
-              </div>
-            )}
+            <div className="text-center py-6 text-slate-500 text-xs">
+              {notifTab === 'Notifications' ? (
+                <p>No new notifications.<br />All executive tasks on schedule.</p>
+              ) : (
+                <div className="space-y-2 text-left">
+                  <p className="text-slate-300">✓ Checked in 3 habits today</p>
+                  <p className="text-slate-300">✓ Completed 2 pomodoros (50m)</p>
+                  <p className="text-slate-300">✓ 21 active tasks queued</p>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* ========================================================= */}
