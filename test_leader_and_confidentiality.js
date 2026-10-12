@@ -1,5 +1,11 @@
 // test_leader_and_confidentiality.js
 import { isLeaderOrSharan, isSameMember, parseTicketData } from './src/attachmentUtils.js';
+import {
+  getGoogleCalendarUrl,
+  getZohoCalendarUrl,
+  generateICalendar,
+  formatCalendarPayload
+} from './src/calendarSyncUtils.js';
 
 let totalTests = 0;
 let passedTests = 0;
@@ -190,6 +196,71 @@ const mahekTabs = getNavigationTabs({ name: 'Mahek', role: 'member' });
 assert(mahekTabs.length === 3, 'Member Mahek only has 3 tabs');
 assert(!mahekTabs.some(t => t.id === 'leader-board'), 'Leader tab is completely absent for Mahek');
 assert(mahekTabs[0].id === 'tasks', 'Member first tab is tasks');
+
+// ----------------------------------------------------
+// Test Group 5: Google & Zoho Calendar Integration
+// ----------------------------------------------------
+console.log('\n--- TEST GROUP 5: Google & Zoho Calendar Sync Utilities ---');
+
+const sampleTask = {
+  id: 'task-test-101',
+  title: 'Trademark Hearing Representation',
+  dueDate: '2026-10-18',
+  priority: 'High',
+  quadrant: 'do_now',
+  list: 'Inbox',
+  notes: 'Appear before registrar for hearing on opposition matter.'
+};
+
+// 1. Google Calendar URL
+const gCalUrl = getGoogleCalendarUrl(sampleTask);
+assert(gCalUrl.startsWith('https://calendar.google.com/calendar/render?action=TEMPLATE'), 'Google Calendar URL starts with template action');
+assert(gCalUrl.includes(encodeURIComponent('[Lextria] Trademark Hearing Representation')), 'Google Calendar URL contains prefilled title');
+assert(gCalUrl.includes('20261018'), 'Google Calendar URL contains compact start date');
+assert(gCalUrl.includes('20261019'), 'Google Calendar URL contains next-day end date');
+
+// 2. Zoho Calendar URL
+const zohoCalUrl = getZohoCalendarUrl(sampleTask);
+assert(zohoCalUrl.startsWith('https://calendar.zoho.com/eventreq/add?title='), 'Zoho Calendar URL starts with eventreq action');
+assert(zohoCalUrl.includes(encodeURIComponent('[Lextria] Trademark Hearing Representation')), 'Zoho Calendar URL contains prefilled title');
+assert(zohoCalUrl.includes('date=20261018'), 'Zoho Calendar URL contains date parameter');
+
+// 3. RFC 5545 iCalendar (.ics) Generation
+const sampleTasks = [
+  sampleTask,
+  {
+    id: 'task-test-102',
+    title: 'Review Lease Agreement',
+    dueDate: '2026-10-20',
+    priority: 'Medium',
+    completed: true,
+    notes: 'Draft clauses'
+  },
+  {
+    id: 'task-unscheduled',
+    title: 'Unscheduled Someday Task',
+    dueDate: null
+  }
+];
+
+const icsOutput = generateICalendar(sampleTasks);
+assert(icsOutput.includes('BEGIN:VCALENDAR'), 'iCalendar contains BEGIN:VCALENDAR');
+assert(icsOutput.includes('VERSION:2.0'), 'iCalendar conforms to VERSION:2.0');
+assert(icsOutput.includes('X-WR-CALNAME:Lextria Leader Taskboard (Pranav Bhat)'), 'iCalendar contains custom calendar name');
+assert(icsOutput.includes('BEGIN:VEVENT'), 'iCalendar contains VEVENT block');
+assert(icsOutput.includes('SUMMARY:Trademark Hearing Representation'), 'iCalendar contains task title');
+assert(icsOutput.includes('DTSTART;VALUE=DATE:20261018'), 'iCalendar contains DTSTART');
+assert(icsOutput.includes('STATUS:NEEDS-ACTION'), 'iCalendar marks open task as NEEDS-ACTION');
+assert(icsOutput.includes('STATUS:COMPLETED'), 'iCalendar marks completed task as COMPLETED');
+assert(!icsOutput.includes('SUMMARY:Unscheduled Someday Task'), 'iCalendar omits unscheduled tasks without due date');
+assert(icsOutput.includes('END:VCALENDAR'), 'iCalendar closes with END:VCALENDAR');
+
+// 4. Webhook Payload Formatting
+const webhookPayload = formatCalendarPayload(sampleTask, 'create');
+assert(webhookPayload.action === 'create', 'Webhook payload has action');
+assert(webhookPayload.task.title === 'Trademark Hearing Representation', 'Webhook payload preserves task title');
+assert(webhookPayload.task.dueDate === '2026-10-18', 'Webhook payload preserves due date');
+assert(typeof webhookPayload.timestamp === 'string', 'Webhook payload includes ISO timestamp');
 
 console.log(`\n=====================================================`);
 console.log(`TEST RESULTS: ${passedTests}/${totalTests} PASSED`);

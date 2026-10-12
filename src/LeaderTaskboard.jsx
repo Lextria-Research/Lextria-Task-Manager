@@ -4,8 +4,16 @@ import {
   Hourglass, Search, Bell, RefreshCw, Plus, X, ChevronRight, ChevronDown,
   ChevronLeft, Trash2, Tag, Flag, Clock, Play, Pause, RotateCcw, Check,
   Circle, CheckCircle2, List, Filter, Award, Sparkles, Smile, ArrowRight,
-  MoreHorizontal, Download, Upload, ExternalLink
+  MoreHorizontal, Download, Upload, ExternalLink, Link2, Globe, Copy,
+  CheckCheck, Settings, Send, CalendarCheck
 } from 'lucide-react';
+import {
+  getGoogleCalendarUrl,
+  getZohoCalendarUrl,
+  generateICalendar,
+  formatCalendarPayload,
+  GOOGLE_APPS_SCRIPT_TEMPLATE
+} from './calendarSyncUtils.js';
 
 const STORAGE_KEY = 'lextria_leader_ticktick_data';
 
@@ -386,6 +394,13 @@ const DEFAULT_LEADER_DATA = {
       { id: 'p-1', taskTitle: 'Reconstitution Deed Lextria', duration: 25, date: '2026-10-12 11:30' },
       { id: 'p-2', taskTitle: 'CALL - Bombay Aditya', duration: 25, date: '2026-10-12 12:15' }
     ]
+  },
+  calendarSync: {
+    googleWebhookUrl: '',
+    zohoWebhookUrl: '',
+    autoSyncEnabled: true,
+    lastSyncedAt: null,
+    syncHistory: []
   }
 };
 
@@ -394,7 +409,19 @@ export default function LeaderTaskboard({ currentUser }) {
   const [data, setData] = useState(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (!parsed.calendarSync) {
+          parsed.calendarSync = {
+            googleWebhookUrl: '',
+            zohoWebhookUrl: '',
+            autoSyncEnabled: true,
+            lastSyncedAt: null,
+            syncHistory: []
+          };
+        }
+        return parsed;
+      }
     } catch (e) {
       console.error('Failed to load leader workspace data:', e);
     }
@@ -435,6 +462,171 @@ export default function LeaderTaskboard({ currentUser }) {
   // Helper date calculations
   const todayStr = '2026-10-12'; // Live anchored date
 
+  // Calendar Synchronization States
+  const [showCalendarSyncModal, setShowCalendarSyncModal] = useState(false);
+  const [calendarSyncTab, setCalendarSyncTab] = useState('overview'); // 'overview' | 'google' | 'zoho' | 'ical'
+  const [syncToast, setSyncToast] = useState(null); // { message, type }
+  const [copiedScript, setCopiedScript] = useState(false);
+  const [testingWebhook, setTestingWebhook] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+
+  // -------------------------------------------------------------
+  // AUTOMATED CALENDAR SYNCHRONIZATION DISPATCHER
+  // -------------------------------------------------------------
+  const triggerCalendarSync = async (task, action = 'update') => {
+    if (!task || !task.dueDate) return;
+    const syncConfig = data.calendarSync || {};
+    if (!syncConfig.autoSyncEnabled) return;
+
+    const googleUrl = syncConfig.googleWebhookUrl;
+    const zohoUrl = syncConfig.zohoWebhookUrl;
+
+    if (!googleUrl && !zohoUrl) return;
+
+    const payload = {
+      action,
+      timestamp: new Date().toISOString(),
+      task: {
+        id: task.id,
+        title: task.title,
+        dueDate: task.dueDate,
+        priority: task.priority || 'Normal',
+        notes: task.notes || '',
+        quadrant: task.quadrant || 'Executive',
+        list: task.list || 'Inbox',
+        completed: !!task.completed
+      }
+    };
+
+    const newTargets = [];
+
+    // Google Apps Script Webhook
+    if (googleUrl) {
+      try {
+        fetch(googleUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }).catch(err => console.warn('Google Calendar webhook background dispatch:', err));
+        newTargets.push('Google Calendar');
+      } catch (err) {
+        console.warn('Google Calendar dispatch error:', err);
+      }
+    }
+
+    // Zoho Flow / Webhook
+    if (zohoUrl) {
+      try {
+        fetch(zohoUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }).catch(err => console.warn('Zoho Calendar webhook background dispatch:', err));
+        newTargets.push('Zoho Calendar');
+      } catch (err) {
+        console.warn('Zoho Calendar dispatch error:', err);
+      }
+    }
+
+    if (newTargets.length > 0) {
+      const historyEntry = {
+        id: `sync-${Date.now()}`,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        taskTitle: task.title,
+        dueDate: task.dueDate,
+        targets: newTargets
+      };
+
+      setSyncToast({
+        message: `Task "${task.title.slice(0, 24)}${task.title.length > 24 ? '...' : ''}" synced to ${newTargets.join(' & ')}!`,
+        type: 'success'
+      });
+      setTimeout(() => setSyncToast(null), 4000);
+
+      setData(prev => ({
+        ...prev,
+        calendarSync: {
+          ...prev.calendarSync,
+          lastSyncedAt: new Date().toISOString(),
+          syncHistory: [historyEntry, ...(prev.calendarSync?.syncHistory || []).slice(0, 19)]
+        }
+      }));
+    }
+  };
+
+  const handleDownloadIcs = () => {
+    const icsContent = generateICalendar(data.tasks);
+    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `lextria_leader_tasks_${todayStr}.ics`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setSyncToast({
+      message: 'RFC 5545 iCalendar (.ics) downloaded! Ready to import into Google or Zoho Calendar.',
+      type: 'info'
+    });
+    setTimeout(() => setSyncToast(null), 4000);
+  };
+
+  const handleTestWebhook = async (targetType) => {
+    const url = targetType === 'google' 
+      ? data.calendarSync?.googleWebhookUrl 
+      : data.calendarSync?.zohoWebhookUrl;
+      
+    if (!url) {
+      setTestResult({ type: 'error', message: `Please enter a valid ${targetType === 'google' ? 'Google Apps Script' : 'Zoho Flow'} Webhook URL first.` });
+      return;
+    }
+
+    setTestingWebhook(true);
+    setTestResult(null);
+
+    const testPayload = {
+      action: 'test_connection',
+      timestamp: new Date().toISOString(),
+      task: {
+        id: 'test-ping',
+        title: 'Lextria Leader Test Event',
+        dueDate: todayStr,
+        priority: 'High',
+        notes: 'Verification test from Lextria Leader Taskboard',
+        quadrant: 'do_now',
+        list: 'Inbox'
+      }
+    };
+
+    try {
+      await fetch(url, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(testPayload)
+      });
+      setTestResult({
+        type: 'success',
+        message: `Webhook test dispatched to ${targetType === 'google' ? 'Google Calendar' : 'Zoho Calendar'}! Check your calendar for the test event.`
+      });
+    } catch (err) {
+      setTestResult({
+        type: 'error',
+        message: `Failed to dispatch test payload: ${err.message}`
+      });
+    } finally {
+      setTestingWebhook(false);
+    }
+  };
+
+  const copyScriptToClipboard = () => {
+    navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_TEMPLATE).then(() => {
+      setCopiedScript(true);
+      setTimeout(() => setCopiedScript(false), 2500);
+    });
+  };
+
   // -------------------------------------------------------------
   // TASK ACTIONS
   // -------------------------------------------------------------
@@ -473,13 +665,32 @@ export default function LeaderTaskboard({ currentUser }) {
     setNewTaskInput('');
     setNewTaskDueDate('');
     setSelectedTaskId(newTask.id);
+
+    if (newTask.dueDate) {
+      triggerCalendarSync(newTask, 'create');
+    }
   };
 
   const handleUpdateTask = (taskId, fields) => {
-    setData(prev => ({
-      ...prev,
-      tasks: prev.tasks.map(t => t.id === taskId ? { ...t, ...fields } : t)
-    }));
+    setData(prev => {
+      let targetTask = null;
+      const updatedTasks = prev.tasks.map(t => {
+        if (t.id === taskId) {
+          const updated = { ...t, ...fields };
+          targetTask = updated;
+          return updated;
+        }
+        return t;
+      });
+
+      if (targetTask && (fields.dueDate !== undefined || fields.title !== undefined || fields.priority !== undefined || fields.notes !== undefined || fields.completed !== undefined)) {
+        if (targetTask.dueDate) {
+          triggerCalendarSync(targetTask, 'update');
+        }
+      }
+
+      return { ...prev, tasks: updatedTasks };
+    });
   };
 
   const handleDeleteTask = (taskId) => {
@@ -834,6 +1045,19 @@ export default function LeaderTaskboard({ currentUser }) {
           >
             <Bell size={18} />
             <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full bg-blue-500" />
+          </button>
+          <button
+            onClick={() => setShowCalendarSyncModal(true)}
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:text-blue-400 hover:bg-blue-500/10 transition-colors cursor-pointer relative group"
+            title="Google & Zoho Calendar Integration"
+          >
+            <CalendarCheck size={18} />
+            {(data.calendarSync?.googleWebhookUrl || data.calendarSync?.zohoWebhookUrl) && (
+              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.8)]" />
+            )}
+            <span className="absolute left-14 bg-[#1f1f23] text-white text-xs px-2.5 py-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap shadow-lg border border-white/10 z-50">
+              Calendar Sync (Google & Zoho)
+            </span>
           </button>
           <button
             onClick={handleExportBackup}
@@ -1240,6 +1464,54 @@ export default function LeaderTaskboard({ currentUser }) {
                       className="w-full bg-[#202026] border border-white/10 rounded-lg p-2.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none resize-none"
                     />
                   </div>
+
+                  {/* Calendar Sync & Integration Links */}
+                  <div className="bg-[#1b1b22] border border-white/5 rounded-xl p-3 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                        <CalendarCheck size={13} className="text-blue-400" /> Reflect in Calendar
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowCalendarSyncModal(true)}
+                        className="text-[10px] text-blue-400 hover:underline cursor-pointer flex items-center gap-1"
+                      >
+                        <Settings size={10} /> Setup
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <a
+                        href={getGoogleCalendarUrl(selectedTask)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-center gap-1.5 py-1.5 px-2 bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 rounded-lg text-[11px] font-medium text-blue-300 hover:text-white transition cursor-pointer"
+                        title="Add/Reflect in Google Calendar"
+                      >
+                        <ExternalLink size={11} /> Google Cal
+                      </a>
+
+                      <a
+                        href={getZohoCalendarUrl(selectedTask)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-center gap-1.5 py-1.5 px-2 bg-amber-600/15 hover:bg-amber-600/25 border border-amber-500/30 rounded-lg text-[11px] font-medium text-amber-300 hover:text-white transition cursor-pointer"
+                        title="Add/Reflect in Zoho Calendar"
+                      >
+                        <ExternalLink size={11} /> Zoho Cal
+                      </a>
+                    </div>
+
+                    {(data.calendarSync?.googleWebhookUrl || data.calendarSync?.zohoWebhookUrl) && (
+                      <button
+                        type="button"
+                        onClick={() => triggerCalendarSync(selectedTask, 'manual_sync')}
+                        className="w-full py-1.5 bg-emerald-600/15 hover:bg-emerald-600/25 border border-emerald-500/30 rounded-lg text-[11px] font-medium text-emerald-300 hover:text-white transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Send size={11} /> Sync Now to Connected Calendars
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Delete Button */}
@@ -1465,24 +1737,62 @@ export default function LeaderTaskboard({ currentUser }) {
               <div className="flex items-center gap-3">
                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
                   <CalendarIcon className="text-blue-400" size={20} />
-                  October, 2026
+                  {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][calendarMonth]}, {calendarYear}
                 </h2>
                 <div className="flex items-center gap-1 bg-[#222228] border border-white/10 rounded-lg p-1 text-xs">
                   <button
-                    onClick={() => {}}
-                    className="px-2.5 py-1 rounded bg-blue-600 text-white font-medium shadow"
+                    onClick={() => {
+                      if (calendarMonth === 0) {
+                        setCalendarMonth(11);
+                        setCalendarYear(y => y - 1);
+                      } else {
+                        setCalendarMonth(m => m - 1);
+                      }
+                    }}
+                    className="p-1 rounded hover:bg-white/10 text-slate-300 transition cursor-pointer"
+                    title="Previous Month"
                   >
-                    Month
+                    <ChevronLeft size={14} />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setCalendarMonth(9);
+                      setCalendarYear(2026);
+                    }}
+                    className="px-2.5 py-1 rounded bg-blue-600 text-white font-medium shadow cursor-pointer"
+                  >
+                    Today
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (calendarMonth === 11) {
+                        setCalendarMonth(0);
+                        setCalendarYear(y => y + 1);
+                      } else {
+                        setCalendarMonth(m => m + 1);
+                      }
+                    }}
+                    className="p-1 rounded hover:bg-white/10 text-slate-300 transition cursor-pointer"
+                    title="Next Month"
+                  >
+                    <ChevronRight size={14} />
                   </button>
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => {}}
-                  className="px-3 py-1.5 rounded-lg bg-[#222228] hover:bg-[#2c2c34] text-xs font-medium text-slate-300 transition"
+                  onClick={handleDownloadIcs}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#222228] hover:bg-[#2c2c34] text-xs font-medium text-slate-300 transition cursor-pointer border border-white/5"
+                  title="Download standard RFC 5545 iCalendar feed"
                 >
-                  Today
+                  <Download size={13} /> Export .ics
+                </button>
+                <button
+                  onClick={() => setShowCalendarSyncModal(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-semibold shadow-[0_0_15px_rgba(37,99,235,0.4)] transition cursor-pointer"
+                >
+                  <CalendarCheck size={14} /> Sync Google & Zoho Calendar
                 </button>
               </div>
             </div>
@@ -2018,6 +2328,414 @@ export default function LeaderTaskboard({ currentUser }) {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* GOOGLE & ZOHO CALENDAR INTEGRATION MODAL */}
+      {/* ========================================================= */}
+      {showCalendarSyncModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-[#1b1b22] border border-white/10 rounded-2xl w-full max-w-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150">
+            
+            {/* Modal Header */}
+            <div className="p-5 border-b border-white/10 flex items-center justify-between bg-[#15151b]">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]">
+                  <CalendarCheck size={20} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    Google & Zoho Calendar Integration
+                    <span className="text-[10px] font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded-full">
+                      Leader Exclusive
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Keep your external Google and Zoho calendars automatically in sync with Lextria tasks & dates.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => { setShowCalendarSyncModal(false); setTestResult(null); }}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Global Sync Status Bar */}
+            <div className="px-5 py-3 bg-[#131317] border-b border-white/5 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-4">
+                {/* Google Calendar Status */}
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${data.calendarSync?.googleWebhookUrl ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-slate-500'}`} />
+                  <span className="text-slate-300 font-medium">Google Calendar:</span>
+                  <span className={data.calendarSync?.googleWebhookUrl ? 'text-emerald-400 font-semibold' : 'text-slate-400'}>
+                    {data.calendarSync?.googleWebhookUrl ? 'Webhook Active' : 'Direct Link Ready'}
+                  </span>
+                </div>
+
+                {/* Zoho Calendar Status */}
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${data.calendarSync?.zohoWebhookUrl ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]' : 'bg-slate-500'}`} />
+                  <span className="text-slate-300 font-medium">Zoho Calendar:</span>
+                  <span className={data.calendarSync?.zohoWebhookUrl ? 'text-amber-400 font-semibold' : 'text-slate-400'}>
+                    {data.calendarSync?.zohoWebhookUrl ? 'Webhook Active' : 'Direct Link Ready'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Real-time Auto-Sync Toggle */}
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={data.calendarSync?.autoSyncEnabled ?? true}
+                  onChange={(e) => {
+                    setData(prev => ({
+                      ...prev,
+                      calendarSync: { ...prev.calendarSync, autoSyncEnabled: e.target.checked }
+                    }));
+                  }}
+                  className="rounded border-slate-600 text-blue-600 focus:ring-0 w-3.5 h-3.5 bg-[#202026]"
+                />
+                <span className="text-slate-300 text-xs">Auto-sync when task dates change</span>
+              </label>
+            </div>
+
+            {/* Tabs Bar */}
+            <div className="flex items-center gap-2 px-5 py-2.5 bg-[#18181f] border-b border-white/5 text-xs">
+              {[
+                { id: 'overview', label: 'Overview & Sync Feed' },
+                { id: 'google', label: 'Google Calendar Setup' },
+                { id: 'zoho', label: 'Zoho Calendar Setup' },
+                { id: 'ical', label: 'iCalendar (.ics) Feed' },
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => { setCalendarSyncTab(tab.id); setTestResult(null); }}
+                  className={`px-3 py-1.5 rounded-lg transition font-medium cursor-pointer ${
+                    calendarSyncTab === tab.id
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Tab Body */}
+            <div className="p-5 overflow-y-auto custom-scrollbar flex-1 space-y-4">
+              
+              {/* TAB 1: OVERVIEW & SYNC FEED */}
+              {calendarSyncTab === 'overview' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {/* Card 1: 1-Click Direct Links */}
+                    <div className="bg-[#202028] border border-white/5 rounded-xl p-3.5 space-y-2">
+                      <div className="flex items-center gap-2 text-blue-400 font-semibold text-xs">
+                        <ExternalLink size={14} /> 1-Click Task Reflect
+                      </div>
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        Every task with a due date has direct Google and Zoho calendar buttons to reflect into your calendar with title, notes, and quadrant.
+                      </p>
+                      <div className="pt-1 flex gap-2">
+                        <a
+                          href="https://calendar.google.com"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] bg-blue-600/20 text-blue-300 px-2 py-1 rounded hover:bg-blue-600/30 transition flex items-center gap-1"
+                        >
+                          <ExternalLink size={9} /> Google Cal
+                        </a>
+                        <a
+                          href="https://calendar.zoho.com"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] bg-amber-600/20 text-amber-300 px-2 py-1 rounded hover:bg-amber-600/30 transition flex items-center gap-1"
+                        >
+                          <ExternalLink size={9} /> Zoho Cal
+                        </a>
+                      </div>
+                    </div>
+
+                    {/* Card 2: Real-Time Webhook Sync */}
+                    <div className="bg-[#202028] border border-white/5 rounded-xl p-3.5 space-y-2">
+                      <div className="flex items-center gap-2 text-emerald-400 font-semibold text-xs">
+                        <Send size={14} /> Automated Real-Time Sync
+                      </div>
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        Attach a Google Apps Script Web App or Zoho Flow webhook. Tasks auto-sync whenever titles, dates, or priorities are modified.
+                      </p>
+                      <button
+                        onClick={() => setCalendarSyncTab('google')}
+                        className="text-[10px] text-emerald-300 hover:underline pt-1 block cursor-pointer"
+                      >
+                        Configure Webhooks →
+                      </button>
+                    </div>
+
+                    {/* Card 3: Standard .ics Feed */}
+                    <div className="bg-[#202028] border border-white/5 rounded-xl p-3.5 space-y-2">
+                      <div className="flex items-center gap-2 text-purple-400 font-semibold text-xs">
+                        <Download size={14} /> RFC 5545 iCalendar Feed
+                      </div>
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        Export all scheduled tasks into standard <code>.ics</code> format. Compatible with Google, Zoho, Outlook, and Apple Calendar.
+                      </p>
+                      <button
+                        onClick={handleDownloadIcs}
+                        className="text-[10px] bg-purple-600/20 text-purple-300 px-2 py-1 rounded hover:bg-purple-600/30 transition flex items-center gap-1 cursor-pointer"
+                      >
+                        <Download size={9} /> Download .ics
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Recent Sync History */}
+                  <div className="bg-[#17171d] border border-white/5 rounded-xl p-4">
+                    <h4 className="text-xs font-bold text-white mb-2 flex items-center justify-between">
+                      <span>Recent Calendar Sync Activity</span>
+                      <span className="text-[11px] text-slate-500 font-normal">
+                        Last synced: {data.calendarSync?.lastSyncedAt ? new Date(data.calendarSync.lastSyncedAt).toLocaleString() : 'Never'}
+                      </span>
+                    </h4>
+                    
+                    {(!data.calendarSync?.syncHistory || data.calendarSync.syncHistory.length === 0) ? (
+                      <div className="text-center py-6 text-slate-500 text-xs">
+                        No calendar synchronization events recorded yet. Connect a webhook or update a task with a date to initiate sync.
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar">
+                        {data.calendarSync.syncHistory.map((item) => (
+                          <div key={item.id} className="flex items-center justify-between p-2 rounded-lg bg-[#202026] text-xs">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <CheckCheck size={13} className="text-emerald-400 shrink-0" />
+                              <span className="text-slate-200 truncate">{item.taskTitle}</span>
+                              <span className="text-[10px] text-blue-300 bg-blue-500/10 px-1.5 py-0.5 rounded shrink-0">{item.dueDate}</span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-[10px] text-slate-400">{item.targets.join(', ')}</span>
+                              <span className="text-[10px] text-slate-500">{item.time}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: GOOGLE CALENDAR SETUP */}
+              {calendarSyncTab === 'google' && (
+                <div className="space-y-4">
+                  <div className="bg-[#202028] border border-blue-500/20 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-white flex items-center gap-2">
+                        Google Calendar Webhook URL (Google Apps Script Web App)
+                      </label>
+                      <button
+                        onClick={copyScriptToClipboard}
+                        className="text-xs bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        {copiedScript ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                        {copiedScript ? 'Copied Script!' : 'Copy Apps Script Code'}
+                      </button>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <input
+                        type="url"
+                        value={data.calendarSync?.googleWebhookUrl || ''}
+                        onChange={(e) => {
+                          const val = e.target.value.trim();
+                          setData(prev => ({
+                            ...prev,
+                            calendarSync: { ...prev.calendarSync, googleWebhookUrl: val }
+                          }));
+                        }}
+                        placeholder="https://script.google.com/macros/s/AKfycbx.../exec"
+                        className="flex-1 bg-[#17171d] border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder:text-slate-600 focus:outline-none focus:border-blue-500 font-mono"
+                      />
+                      <button
+                        onClick={() => handleTestWebhook('google')}
+                        disabled={testingWebhook || !data.calendarSync?.googleWebhookUrl}
+                        className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                      >
+                        {testingWebhook ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />}
+                        Test
+                      </button>
+                    </div>
+
+                    {testResult && (
+                      <div className={`p-2.5 rounded-lg text-xs flex items-center gap-2 ${
+                        testResult.type === 'success' ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30' : 'bg-red-500/10 text-red-300 border border-red-500/30'
+                      }`}>
+                        {testResult.type === 'success' ? <Check size={14} /> : <X size={14} />}
+                        <span>{testResult.message}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 3 Step Deployment Guide */}
+                  <div className="bg-[#17171d] border border-white/5 rounded-xl p-4 space-y-3 text-xs">
+                    <h4 className="font-bold text-white flex items-center gap-1.5">
+                      <Sparkles size={14} className="text-amber-400" /> 1-Minute Automated Setup Guide:
+                    </h4>
+                    <ol className="space-y-2 list-decimal list-inside text-slate-300 leading-relaxed">
+                      <li>
+                        Open <a href="https://script.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline font-medium">script.google.com</a> under Pranav's Google account and click <strong>New project</strong>.
+                      </li>
+                      <li>
+                        Click the <strong>Copy Apps Script Code</strong> button above, paste it into the editor, and press <kbd className="bg-[#24242e] px-1 py-0.5 rounded text-[10px]">Ctrl+S</kbd>.
+                      </li>
+                      <li>
+                        Click <strong>Deploy</strong> (top right) → <strong>New deployment</strong> → Select type <strong>Web app</strong>.
+                      </li>
+                      <li>
+                        Set <em>Execute as:</em> <strong>Me</strong> and <em>Who has access:</em> <strong>Anyone</strong>, then click <strong>Deploy</strong>.
+                      </li>
+                      <li>
+                        Copy the resulting <strong>Web app URL</strong>, paste it into the input field above, and click <strong>Test</strong>. All task updates with dates will now automatically reflect in Google Calendar in real-time!
+                      </li>
+                    </ol>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: ZOHO CALENDAR SETUP */}
+              {calendarSyncTab === 'zoho' && (
+                <div className="space-y-4">
+                  <div className="bg-[#202028] border border-amber-500/20 rounded-xl p-4 space-y-3">
+                    <label className="text-xs font-bold text-white flex items-center gap-2">
+                      Zoho Calendar Webhook URL (Zoho Flow / Zoho Webhook)
+                    </label>
+
+                    <div className="flex gap-2">
+                      <input
+                        type="url"
+                        value={data.calendarSync?.zohoWebhookUrl || ''}
+                        onChange={(e) => {
+                          const val = e.target.value.trim();
+                          setData(prev => ({
+                            ...prev,
+                            calendarSync: { ...prev.calendarSync, zohoWebhookUrl: val }
+                          }));
+                        }}
+                        placeholder="https://flow.zoho.com/api/v1/webhook/... or Zoho webhook URL"
+                        className="flex-1 bg-[#17171d] border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder:text-slate-600 focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                      <button
+                        onClick={() => handleTestWebhook('zoho')}
+                        disabled={testingWebhook || !data.calendarSync?.zohoWebhookUrl}
+                        className="px-3.5 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                      >
+                        {testingWebhook ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />}
+                        Test
+                      </button>
+                    </div>
+
+                    {testResult && (
+                      <div className={`p-2.5 rounded-lg text-xs flex items-center gap-2 ${
+                        testResult.type === 'success' ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30' : 'bg-red-500/10 text-red-300 border border-red-500/30'
+                      }`}>
+                        {testResult.type === 'success' ? <Check size={14} /> : <X size={14} />}
+                        <span>{testResult.message}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-[#17171d] border border-white/5 rounded-xl p-4 space-y-3 text-xs text-slate-300 leading-relaxed">
+                    <h4 className="font-bold text-white flex items-center gap-1.5">
+                      <Globe size={14} className="text-amber-400" /> Zoho Calendar Integration Options:
+                    </h4>
+                    <ul className="space-y-2 list-disc list-inside">
+                      <li>
+                        <strong>Direct 1-Click Link:</strong> Click <em>Zoho Cal</em> on any task in the task detail drawer to immediately open Zoho Calendar with title, date, and description prefilled.
+                      </li>
+                      <li>
+                        <strong>Automated Zoho Flow:</strong> In Zoho Flow (<a href="https://flow.zoho.com" target="_blank" rel="noopener noreferrer" className="text-amber-400 underline">flow.zoho.com</a>), create a Flow with trigger <em>Webhook</em> and action <em>Zoho Calendar → Create Event</em>. Paste the generated webhook endpoint above.
+                      </li>
+                      <li>
+                        <strong>Zoho Calendar ICS Import:</strong> In <a href="https://calendar.zoho.com" target="_blank" rel="noopener noreferrer" className="text-amber-400 underline">calendar.zoho.com</a>, go to <em>Settings → Import</em> and upload your exported <code>.ics</code> file.
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 4: ICALENDAR (.ICS) FEED */}
+              {calendarSyncTab === 'ical' && (
+                <div className="space-y-4">
+                  <div className="bg-[#202028] border border-purple-500/20 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="text-xs font-bold text-white">RFC 5545 iCalendar Calendar File</h4>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          Download a standard calendar file containing all scheduled executive tasks from Pranav's workspace.
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleDownloadIcs}
+                        className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <Download size={13} /> Download .ics File
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                    <div className="bg-[#17171d] border border-white/5 rounded-xl p-4 space-y-2">
+                      <h5 className="font-bold text-blue-300">Google Calendar Import:</h5>
+                      <ol className="space-y-1 list-decimal list-inside text-slate-400 text-[11px] leading-relaxed">
+                        <li>Download the <code>.ics</code> file using the button above.</li>
+                        <li>Open <a href="https://calendar.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline">Google Calendar</a>.</li>
+                        <li>Click the gear icon (Settings) → <strong>Import & export</strong>.</li>
+                        <li>Select the downloaded file and choose the destination calendar.</li>
+                      </ol>
+                    </div>
+
+                    <div className="bg-[#17171d] border border-white/5 rounded-xl p-4 space-y-2">
+                      <h5 className="font-bold text-amber-300">Zoho Calendar Import:</h5>
+                      <ol className="space-y-1 list-decimal list-inside text-slate-400 text-[11px] leading-relaxed">
+                        <li>Download the <code>.ics</code> file using the button above.</li>
+                        <li>Open <a href="https://calendar.zoho.com" target="_blank" rel="noopener noreferrer" className="text-amber-400 underline">Zoho Calendar</a>.</li>
+                        <li>Go to <strong>Settings</strong> (gear icon) → <strong>Import</strong>.</li>
+                        <li>Upload the file to populate all events and milestones.</li>
+                      </ol>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-white/5 bg-[#15151b] flex items-center justify-between">
+              <span className="text-[11px] text-slate-500">
+                Lextria Executive Workspace • Pranav Bhat & Sharan
+              </span>
+              <button
+                onClick={() => { setShowCalendarSyncModal(false); setTestResult(null); }}
+                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* Floating Sync Toast */}
+      {syncToast && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-3 bg-[#1e293b] border border-blue-500/40 text-white rounded-xl shadow-2xl animate-in slide-in-from-bottom-5 duration-200">
+          <CalendarCheck size={18} className="text-blue-400 shrink-0" />
+          <span className="text-xs font-medium">{syncToast.message}</span>
+          <button onClick={() => setSyncToast(null)} className="text-slate-400 hover:text-white ml-1 cursor-pointer">
+            <X size={14} />
+          </button>
         </div>
       )}
 
