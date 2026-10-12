@@ -30,6 +30,8 @@ import QueryManager from './QueryManager';
 import ProjectReporting from './ProjectReporting';
 import LoginPage from './LoginPage';
 import MemberManualModal from './MemberManualModal';
+import LeaderTaskboard from './LeaderTaskboard';
+import { isLeaderOrSharan } from './attachmentUtils';
 
 // Helper to reliably check if a board agent corresponds to the currently logged in member
 export function isSameMember(agentName, memberName) {
@@ -2187,6 +2189,12 @@ export default function App() {
     setCurrentUser(sessionData);
     setIsAdmin(sessionData.role?.toLowerCase() === 'leader');
 
+    if (isLeaderOrSharan(sessionData)) {
+      setActiveTab('leader-board');
+    } else {
+      setActiveTab('tasks');
+    }
+
     // Trigger manual on login if not permanently dismissed
     const storageKey = 'lextria_guide_seen_' + (userData.id || userData.name || 'user');
     const alreadySeen = localStorage.getItem(storageKey) === 'true';
@@ -2204,7 +2212,23 @@ export default function App() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showAnalytics, setShowAnalytics] = useState(false);
-  const [activeTab, setActiveTab] = useState('tasks'); // 'tasks' | 'queries' | 'projects'
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const saved = localStorage.getItem('lextria_user_session');
+      const user = saved ? JSON.parse(saved) : null;
+      if (isLeaderOrSharan(user)) {
+        return 'leader-board';
+      }
+    } catch {}
+    return 'tasks';
+  });
+
+  // Confidentiality guard: non-leaders (anyone except Pranav Bhat & Sharan) cannot access leader-board
+  useEffect(() => {
+    if (activeTab === 'leader-board' && !isLeaderOrSharan(currentUser)) {
+      setActiveTab('tasks');
+    }
+  }, [currentUser, activeTab]);
   const [boardViewFilter, setBoardViewFilter] = useState('MY'); // 'MY' | 'ALL'
   const [priorityFilter, setPriorityFilter] = useState('All');
   const [dueDateFilter, setDueDateFilter] = useState('All');
@@ -4084,22 +4108,32 @@ export default function App() {
         <aside className="w-16 md:w-56 flex-shrink-0 sticky top-[73px] h-[calc(100vh-73px)] bg-[#07091a]/80 backdrop-blur-xl border-r border-white/8 flex flex-col pt-4 z-30">
           <nav className="flex flex-col gap-1 px-2">
             {[
-              { id: 'tasks', label: 'Tasks', icon: CheckSquare },
+              ...(isLeaderOrSharan(currentUser) ? [
+                { id: 'leader-board', label: 'Leader Workspace', icon: CheckSquare, badge: 'Leader' }
+              ] : []),
+              { id: 'tasks', label: 'Tasks', icon: Layout },
               { id: 'queries', label: 'Queries', icon: Database },
               { id: 'projects', label: 'Project Reporting', icon: FolderKanban },
-            ].map(({ id, label, icon: Icon }) => (
+            ].map(({ id, label, icon: Icon, badge }) => (
               <button
                 key={id}
                 onClick={() => setActiveTab(id)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer ${
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer ${
                   activeTab === id
                     ? 'bg-brand-500/20 text-brand-300 shadow-[0_0_12px_rgba(37,99,235,0.2)] border border-brand-500/30'
                     : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
                 }`}
                 title={label}
               >
-                <Icon size={18} className="flex-shrink-0" />
-                <span className="hidden md:inline truncate">{label}</span>
+                <div className="flex items-center gap-3 min-w-0">
+                  <Icon size={18} className="flex-shrink-0" />
+                  <span className="hidden md:inline truncate">{label}</span>
+                </div>
+                {badge && (
+                  <span className="hidden md:inline-flex text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
+                    {badge}
+                  </span>
+                )}
               </button>
             ))}
           </nav>
@@ -4144,7 +4178,12 @@ export default function App() {
           )}
 
           {/* Main Content */}
-          <main className={`flex-1 ${activeTab === 'queries' || activeTab === 'projects' ? 'p-0 flex flex-col min-h-0 overflow-auto' : 'px-6 py-6'}`}>
+          <main className={`flex-1 ${activeTab === 'queries' || activeTab === 'projects' || activeTab === 'leader-board' ? 'p-0 flex flex-col min-h-0 overflow-auto' : 'px-6 py-6'}`}>
+
+          {/* Leader Taskboard Page (Exclusive to Pranav Bhat and Sharan) */}
+          {activeTab === 'leader-board' && isLeaderOrSharan(currentUser) && (
+            <LeaderTaskboard currentUser={currentUser} />
+          )}
 
           {/* Queries Page */}
           {activeTab === 'queries' && (

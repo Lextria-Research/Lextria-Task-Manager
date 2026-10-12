@@ -164,3 +164,25 @@ export function getBoardKey(boardName) {
   return match ? match.key : 'litigation';
 }
 
+/**
+ * Checks if a user is an executive leader (Pranav Bhat, Sharan, or admin/leader role).
+ */
+export function isLeaderOrSharan(user) {
+  if (!user) return false;
+  const name = (typeof user === 'string' ? user : user.name || '').trim().toLowerCase().replace(/\s+/g, '');
+  const role = (typeof user === 'object' ? user.role || '' : '').toLowerCase();
+  if (role === 'leader' || role === 'admin') return true;
+  return name.includes('pranav') || name.includes('sharan');
+}
+
+/**
+ * Compares two member names with tolerance for whitespace, casing, and partial names.
+ */
+export function isSameMember(a, b) {
+  if (!a || !b) return false;
+  const cleanA = String(typeof a === 'object' ? a.name || '' : a).trim().toLowerCase().replace(/\s+/g, '');
+  const cleanB = String(typeof b === 'object' ? b.name || '' : b).trim().toLowerCase().replace(/\s+/g, '');
+  if (!cleanA || !cleanB) return false;
+  return cleanA === cleanB || cleanA.includes(cleanB) || cleanB.includes(cleanA);
+}
+

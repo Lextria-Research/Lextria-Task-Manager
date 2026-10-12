@@ -2,30 +2,50 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { 
   Plus, Clock, MessageSquare, X, Send, 
-  User, Calendar, Search, Filter,
+  User, Calendar, Search, Filter, Lock,
   Image as ImageIcon, Paperclip, FileText, Loader2, AlertCircle, Eye, Download, ExternalLink
 } from 'lucide-react';
-import { isImageAttachment, getImageSrc } from './attachmentUtils';
+import { isImageAttachment, getImageSrc, isLeaderOrSharan, isSameMember } from './attachmentUtils';
 import { generateThumbnail } from './QueryTickets';
 
 // Option A storage: attachments are appended to the project's description text
 // as "[ATTACHMENTS]: [...]" (same format as Query tickets) — no database change needed.
 const ATTACHMENTS_MARKER = '[ATTACHMENTS]:';
+const AUTHOR_MARKER = '[AUTHOR]:';
 
 const splitDescription = (description) => {
-  if (!description || !description.includes(ATTACHMENTS_MARKER)) {
-    return { text: description || '', attachments: [] };
+  if (!description) {
+    return { text: '', attachments: [], authorName: '', authorRole: '' };
   }
-  const idx = description.indexOf(ATTACHMENTS_MARKER);
-  const text = description.substring(0, idx).trim();
+  let authorName = '';
+  let authorRole = '';
+  let clean = description;
+
+  if (clean.includes(AUTHOR_MARKER)) {
+    const startIdx = clean.indexOf(AUTHOR_MARKER) + AUTHOR_MARKER.length;
+    const endIdx = clean.indexOf('\n', startIdx);
+    const jsonStr = endIdx === -1 ? clean.substring(startIdx).trim() : clean.substring(startIdx, endIdx).trim();
+    try {
+      const parsed = JSON.parse(jsonStr);
+      if (parsed.name) authorName = parsed.name;
+      if (parsed.role) authorRole = parsed.role;
+    } catch {}
+    clean = endIdx === -1 ? '' : clean.substring(endIdx).trim();
+  }
+
+  if (!clean.includes(ATTACHMENTS_MARKER)) {
+    return { text: clean || '', attachments: [], authorName, authorRole };
+  }
+  const idx = clean.indexOf(ATTACHMENTS_MARKER);
+  const text = clean.substring(0, idx).trim();
   let attachments = [];
   try {
-    const parsed = JSON.parse(description.substring(idx + ATTACHMENTS_MARKER.length).trim());
+    const parsed = JSON.parse(clean.substring(idx + ATTACHMENTS_MARKER.length).trim());
     if (Array.isArray(parsed)) attachments = parsed;
   } catch (e) {
     console.error('Failed to parse project attachments', e);
   }
-  return { text, attachments };
+  return { text, attachments, authorName, authorRole };
 };
 
 const buildDescription = (text, attachments) => {
@@ -192,7 +212,8 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
         }
       }
       const toSave = pendingList.map(({ file, ...rest }) => rest);
-      const descriptionText = newProject.description;
+      const authorHeader = session?.name ? `[AUTHOR]:${JSON.stringify({ name: session.name, role: session.role || 'member', id: session.id })}\n` : '';
+      const descriptionText = authorHeader + (newProject.description || '');
 
       const { data, error } = await supabase.from('projects').insert([{
         title: newProject.title,
@@ -299,12 +320,38 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
     }
   };
 
+  const isLeader = Boolean(isAdmin || isLeaderOrSharan(session));
+
+  const isProjectVisibleToUser = (p) => {
+    if (isLeader) return true;
+    if (!p) return false;
+    const { authorName } = splitDescription(p.description);
+    if (authorName && isSameMember(authorName, session?.name)) return true;
+    if (p.created_by) {
+      const agent = (agentsList || []).find(a => a.id === p.created_by);
+      if (agent && isSameMember(agent.name, session?.name)) return true;
+      if (session?.id && String(p.created_by) === String(session?.id)) return true;
+    }
+    if (p.created_by_name && isSameMember(p.created_by_name, session?.name)) return true;
+    return false;
+  };
+
+  const visibleProjects = projects.filter(isProjectVisibleToUser);
+
+  const displayedClients = [
+    ...new Set(visibleProjects.map(p => p.client).filter(Boolean))
+  ];
+
   const openProjectDetails = (project) => {
+    if (!isProjectVisibleToUser(project)) {
+      alert("This project report is confidential and only accessible to its creator and the leadership team.");
+      return;
+    }
     setSelectedProject(project);
     fetchUpdates(project.id);
   };
 
-  const filteredProjects = projects.filter(p => {
+  const filteredProjects = visibleProjects.filter(p => {
     const matchesClient = activeClient === 'All Clients' || p.client === activeClient;
     const matchesUrgency = urgencyFilter === 'All' || p.urgency === urgencyFilter;
     const matchesSearch = p.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -329,8 +376,20 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
       {/* Header */}
       <div className="flex justify-between items-start mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Project Reporting Board</h1>
-          <p className="text-gray-500 mt-1">Keep the leader up to date on every client project so nothing gets missed.</p>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <h1 className="text-2xl font-bold text-gray-900">Project Reporting Board</h1>
+            {!isLeader && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-800 border border-amber-500/30">
+                <Lock size={12} className="text-amber-700" /> Confidential View
+              </span>
+            )}
+          </div>
+          <p className="text-gray-500 mt-1">
+            {!isLeader 
+              ? `Showing projects reported by you (${session?.name || 'Member'}). Private & confidential.`
+              : 'Keep the leader up to date on every client project so nothing gets missed.'
+            }
+          </p>
         </div>
         <button 
           onClick={() => setIsNewModalOpen(true)}
@@ -351,7 +410,7 @@ export default function ProjectReporting({ agents = [], isAdmin = false, session
         >
           All Clients
         </button>
-        {clients.map(client => (
+        {displayedClients.map(client => (
           <button
             key={client}
             onClick={() => setActiveClient(client)}

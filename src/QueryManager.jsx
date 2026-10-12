@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import QueryTickets from './QueryTickets';
 import ExportPage from './ExportPage';
 import SettingsPage from './SettingsPage';
+import { isLeaderOrSharan } from './attachmentUtils';
 
 function HubLogo({ size = 32 }) {
   return (
@@ -154,7 +155,7 @@ export default function QueryManager({ agents = [], isAdmin = false, currentUser
   };
 
   const currentSession = session || currentUser;
-  const isLeader = currentSession?.role === 'leader' || isAdmin;
+  const isLeader = Boolean(isAdmin || isLeaderOrSharan(currentSession));
 
   // --- 1. FALLBACK LOGIN SCREEN (only if no session anywhere) ---
   if (!currentSession) {
@@ -242,7 +243,7 @@ export default function QueryManager({ agents = [], isAdmin = false, currentUser
         <div className="px-4 sm:px-6 py-2.5 flex items-center justify-between gap-4 flex-wrap">
           {/* Sub-Navigation Tabs */}
           <nav className="flex gap-1 overflow-x-auto pb-0.5">
-            {TABS.map((tab) => {
+            {TABS.filter(tab => isLeader || tab.id === 'tickets').map((tab) => {
               const active = activeSubTab === tab.id;
               return (
                 <button

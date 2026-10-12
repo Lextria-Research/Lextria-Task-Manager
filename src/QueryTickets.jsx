@@ -4,7 +4,7 @@ import {
   Plus, Clock, MessageSquare, X, Send, User, Calendar,
   Download, Eye, Image as ImageIcon, ChevronDown,
   Pencil, Trash2, AlertTriangle, Paperclip, FileText,
-  Search, ArrowDown
+  Search, ArrowDown, Lock
 } from 'lucide-react';
 
 export {
@@ -13,7 +13,9 @@ export {
   getBoardKey,
   parseTicketData,
   isImageAttachment,
-  getImageSrc
+  getImageSrc,
+  isLeaderOrSharan,
+  isSameMember
 } from './attachmentUtils';
 import {
   BOARDS,
@@ -21,7 +23,9 @@ import {
   getBoardKey,
   parseTicketData,
   isImageAttachment,
-  getImageSrc
+  getImageSrc,
+  isLeaderOrSharan,
+  isSameMember
 } from './attachmentUtils';
 
 const URGENCIES = ['High', 'Medium', 'Low'];
@@ -674,7 +678,25 @@ export default function QueryTickets({ session, agents = [] }) {
     }
   };
 
+  const isLeader = useMemo(() => isLeaderOrSharan(session), [session]);
+
+  const canAccessTicket = (t) => {
+    if (isLeader) return true;
+    if (!t) return false;
+    const parsed = parseTicketData(t, allPersonnel);
+    const isAuthor = isSameMember(parsed.authorName, session?.name) ||
+                     isSameMember(t.author || t.author_name || t.created_by_name, session?.name) ||
+                     (t.created_by && session?.id && String(t.created_by) === String(session?.id));
+    if (isAuthor) return true;
+    if (mentionedTicketIds.has(t.id)) return true;
+    return false;
+  };
+
   const openTicket = (ticket) => {
+    if (!canAccessTicket(ticket)) {
+      alert("This query is confidential and only accessible to its author and the leadership team.");
+      return;
+    }
     setSelectedTicket(ticket);
     setMessages([]);
     fetchMessages(ticket.id);
@@ -866,11 +888,16 @@ export default function QueryTickets({ session, agents = [] }) {
     }
   };
 
+  const visibleTickets = useMemo(() => {
+    if (isLeader) return tickets;
+    return tickets.filter(canAccessTicket);
+  }, [tickets, isLeader, session, allPersonnel, mentionedTicketIds]);
+
   // Filter tickets by search query across query text, ticket code, author name, and urgency
   const searchedTickets = useMemo(() => {
     const q = (searchQuery || '').trim().toLowerCase();
-    if (!q) return tickets;
-    return tickets.filter(t => {
+    if (!q) return visibleTickets;
+    return visibleTickets.filter(t => {
       const code = String(t.code || '').toLowerCase();
       const urgency = String(t.urgency || '').toLowerCase();
       const parsed = parseTicketData(t, allPersonnel);
@@ -880,7 +907,7 @@ export default function QueryTickets({ session, agents = [] }) {
       const rawQuery = String(t.query || '').toLowerCase();
       return code.includes(q) || urgency.includes(q) || text.includes(q) || author.includes(q) || directAuthor.includes(q) || rawQuery.includes(q);
     });
-  }, [tickets, searchQuery, allPersonnel]);
+  }, [visibleTickets, searchQuery, allPersonnel]);
 
   // Filter tickets by selected board
   const boardTickets = useMemo(() => {
@@ -918,7 +945,7 @@ export default function QueryTickets({ session, agents = [] }) {
   const getBoardCounts = (boardKey, boardLabel) => {
     const boardObj = BOARDS.find(b => b.key === boardKey);
     const prefix = (boardObj?.prefix || '').toLowerCase();
-    const matchingTickets = tickets.filter(t => {
+    const matchingTickets = visibleTickets.filter(t => {
       if (!t.board) return false;
       const b = t.board.toLowerCase().trim();
       const curr = boardLabel.toLowerCase();
@@ -985,28 +1012,36 @@ export default function QueryTickets({ session, agents = [] }) {
 
       {/* Toolbar: Board / History Tabs + Search Bar + Mentions Inbox + New Query Button */}
       <div className="px-4 sm:px-6 pt-3 pb-3 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3">
-        {/* Left: Board / History Tabs */}
-        <div className="flex items-center gap-1 shrink-0">
-          <button
-            onClick={() => setActiveView('board')}
-            className={`px-3.5 py-1.5 text-sm font-semibold rounded transition-colors ${
-              activeView === 'board'
-                ? 'text-slate-900 bg-white shadow-sm border border-slate-200'
-                : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            Board
-          </button>
-          <button
-            onClick={() => setActiveView('history')}
-            className={`px-3.5 py-1.5 text-sm font-semibold rounded transition-colors ${
-              activeView === 'history'
-                ? 'text-slate-900 bg-white shadow-sm border border-slate-200'
-                : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            History
-          </button>
+        {/* Left: Board / History Tabs & Confidential Badge */}
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1 p-0.5 bg-slate-200/60 rounded-lg">
+            <button
+              onClick={() => setActiveView('board')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                activeView === 'board'
+                  ? 'text-slate-900 bg-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Board
+            </button>
+            <button
+              onClick={() => setActiveView('history')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                activeView === 'history'
+                  ? 'text-slate-900 bg-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              History
+            </button>
+          </div>
+          {!isLeader && (
+            <span className="hidden md:inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-amber-500/10 text-amber-800 border border-amber-500/20" title="Only showing queries created by you or where you are mentioned">
+              <Lock size={11} className="text-amber-600" />
+              Confidential View
+            </span>
+          )}
         </div>
 
         {/* Center: Search Input */}
