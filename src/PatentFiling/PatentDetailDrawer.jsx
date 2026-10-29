@@ -2,22 +2,16 @@
 // Slide-over detail drawer for Patent Filings with role-authorized action buttons,
 // audit event timeline, and historical correction rounds with image lightbox.
 
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   X,
-  Clock,
-  Calendar,
   AlertCircle,
   CheckCircle2,
   RotateCcw,
-  UserCheck,
   CreditCard,
   MailCheck,
-  Flame,
   ArrowRight,
-  ShieldAlert,
-  ChevronRight,
-  ExternalLink
+  ShieldAlert
 } from 'lucide-react';
 import {
   PATENT_ROLES,
@@ -51,12 +45,11 @@ export default function PatentDetailDrawer({
   const [actionError, setActionError] = useState('');
   const [isActing, setIsActing] = useState(false);
 
-  const [historyData, setHistoryData] = useState({ events: [], rounds: [] });
+  const [historyData, setHistoryData] = useState(null);
 
   useEffect(() => {
     let isMounted = true;
     if (filing?.id) {
-      setHistoryData(getFilingEventsAndRounds(filing.id));
       fetchFilingEventsAndRoundsFromDb(filing.id, allMembers).then(res => {
         if (isMounted && res) {
           setHistoryData(res);
@@ -75,7 +68,9 @@ export default function PatentDetailDrawer({
     (currentUser?.name && filing.auditor_name && filing.auditor_name.toLowerCase().includes(currentUser.name.toLowerCase()));
   const isAckChecker = hasPatentRole(userRoles, PATENT_ROLES.ACK_CHECKER);
 
-  const { events, rounds } = historyData;
+  const fallbackData = getFilingEventsAndRounds(filing.id);
+  const events = historyData?.events || fallbackData.events;
+  const rounds = historyData?.rounds || fallbackData.rounds;
 
   const handleAction = async (toStatus, payload = {}, note = '') => {
     setActionError('');
