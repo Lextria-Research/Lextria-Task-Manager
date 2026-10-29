@@ -32,6 +32,8 @@ import LoginPage from './LoginPage';
 import MemberManualModal from './MemberManualModal';
 import LeaderTaskboard from './LeaderTaskboard';
 import SettingsPage, { getStoredProfiles } from './SettingsPage';
+import PatentFilingDashboard from './PatentFiling/PatentFilingDashboard';
+import { fetchUserPatentRoles, getInitialPatentRoles } from './patent/patentRoles';
 import {
   isLeaderOrSharan,
   uploadFileToZohoWorkDrive,
@@ -3418,6 +3420,44 @@ export default function App() {
     return 'tasks';
   });
 
+  // Patent Module Roles & Deep Link Routing
+  const [patentRoles, setPatentRoles] = useState(() => getInitialPatentRoles(currentUser));
+  useEffect(() => {
+    if (currentUser) {
+      fetchUserPatentRoles(currentUser).then(roles => {
+        setPatentRoles(roles);
+      });
+    }
+  }, [currentUser]);
+  const hasPatentAccess = patentRoles && patentRoles.length > 0;
+
+  // Sync route /departments/patent/filing with activeTab
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.pathname === '/departments/patent/filing') {
+      setActiveTab('patent-filing');
+    }
+    const onPop = () => {
+      if (window.location.pathname === '/departments/patent/filing') {
+        setActiveTab('patent-filing');
+      }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  const handleTabSelect = (tabId) => {
+    setActiveTab(tabId);
+    if (typeof window !== 'undefined') {
+      if (tabId === 'patent-filing') {
+        if (window.location.pathname !== '/departments/patent/filing') {
+          window.history.pushState({}, '', '/departments/patent/filing');
+        }
+      } else if (window.location.pathname === '/departments/patent/filing') {
+        window.history.pushState({}, '', '/');
+      }
+    }
+  };
+
   // Confidentiality guard: non-leaders (anyone except Pranav Bhat & Sharan) cannot access leader-board
   useEffect(() => {
     if (activeTab === 'leader-board' && !isLeaderOrSharan(currentUser)) {
@@ -5399,13 +5439,16 @@ export default function App() {
                 { id: 'leader-board', label: 'Leader Workspace', icon: CheckSquare, badge: 'Leader' }
               ] : []),
               { id: 'tasks', label: 'Tasks', icon: Layout },
+              ...(hasPatentAccess ? [
+                { id: 'patent-filing', label: 'Patent Filing', icon: FileSpreadsheet, badge: 'Patent' }
+              ] : []),
               { id: 'queries', label: 'Queries', icon: Database },
               { id: 'projects', label: 'Project Reporting', icon: FolderKanban },
               { id: 'settings', label: 'Settings', icon: Settings },
             ].map(({ id, label, icon: Icon, badge }) => (
               <button
                 key={id}
-                onClick={() => setActiveTab(id)}
+                onClick={() => handleTabSelect(id)}
                 className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer ${
                   activeTab === id
                     ? 'bg-brand-500/20 text-brand-300 shadow-[0_0_12px_rgba(37,99,235,0.2)] border border-brand-500/30'
@@ -5431,6 +5474,20 @@ export default function App() {
         <div className="flex-1 min-w-0 flex flex-col">
 
           {/* Breadcrumbs Navigation — only shown on Tasks tab */}
+          {activeTab === 'patent-filing' && (
+            <div className="px-6 pt-6">
+              <div className="flex items-center space-x-2 text-sm text-slate-400">
+                <span className="text-slate-400">Departments</span>
+                <ChevronRight size={14} className="text-slate-600" />
+                <span className="text-slate-400">Patent</span>
+                <ChevronRight size={14} className="text-slate-600" />
+                <span className="text-brand-400 font-semibold flex items-center gap-1.5">
+                  <FileSpreadsheet size={13} /> Patent Filing
+                </span>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'tasks' && (
             <div className="px-6 pt-6">
               <div className="flex items-center space-x-2 text-sm text-slate-400">
@@ -5466,7 +5523,16 @@ export default function App() {
           )}
 
           {/* Main Content */}
-          <main className={`flex-1 ${activeTab === 'queries' || activeTab === 'projects' || activeTab === 'leader-board' || activeTab === 'settings' ? 'p-0 flex flex-col min-h-0 overflow-auto' : 'px-6 py-6'}`}>
+          <main className={`flex-1 ${activeTab === 'queries' || activeTab === 'projects' || activeTab === 'leader-board' || activeTab === 'settings' || activeTab === 'patent-filing' ? 'p-0 flex flex-col min-h-0 overflow-auto' : 'px-6 py-6'}`}>
+
+          {/* Patent Filing Workflow Page */}
+          {activeTab === 'patent-filing' && hasPatentAccess && (
+            <PatentFilingDashboard
+              currentUser={currentUser}
+              allEmployees={allEmployees}
+              userRoles={patentRoles}
+            />
+          )}
 
           {/* Leader Taskboard Page (Exclusive to Pranav Bhat and Sharan) */}
           {activeTab === 'leader-board' && isLeaderOrSharan(currentUser) && (
