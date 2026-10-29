@@ -3,7 +3,13 @@
 
 import { supabase } from '../supabaseClient.js';
 import { PATENT_ROLES } from './patentStateMachine.js';
-import { SEED_ROLE_ASSIGNMENTS } from '../../scripts/seed_patent_roles.js';
+
+export const SEED_ROLE_ASSIGNMENTS = {
+  SUPER_ADMIN: ['Mounisha'],
+  ASSIGNEE: ['Prashanth', 'Akshay', 'Karthik', 'Chaitra', 'Kaushal', 'Prathvi'],
+  AUDITOR: ['Prathvi', 'Chaitra', 'Kaushal', 'Karthik'],
+  ACK_CHECKER: ['Prashanth']
+};
 
 /**
  * Resolves patent module roles for a given member.

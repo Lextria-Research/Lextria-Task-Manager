@@ -12,7 +12,7 @@ import {
   executeTransition,
   executeReassign
 } from './src/patent/patentStateMachine.js';
-import { SEED_ROLE_ASSIGNMENTS } from './scripts/seed_patent_roles.js';
+import { SEED_ROLE_ASSIGNMENTS } from './src/patent/patentRoles.js';
 
 let totalTests = 0;
 let passedTests = 0;

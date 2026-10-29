@@ -2,13 +2,9 @@
 // Seeds the default patent workflow roles for team members in Supabase
 
 import { supabase } from '../src/supabaseClient.js';
+import { SEED_ROLE_ASSIGNMENTS } from '../src/patent/patentRoles.js';
 
-export const SEED_ROLE_ASSIGNMENTS = {
-  SUPER_ADMIN: ['Mounisha'],
-  ASSIGNEE: ['Prashanth', 'Akshay', 'Karthik', 'Chaitra', 'Kaushal', 'Prathvi'],
-  AUDITOR: ['Prathvi', 'Chaitra', 'Kaushal', 'Karthik'],
-  ACK_CHECKER: ['Prashanth']
-};
+export { SEED_ROLE_ASSIGNMENTS };
 
 export async function seedPatentRoles(client = supabase) {
   console.log('Seeding Patent Workflow user roles...');
@@ -68,7 +64,7 @@ export async function seedPatentRoles(client = supabase) {
 }
 
 // Direct execution guard
-if (process.argv[1] && process.argv[1].endsWith('seed_patent_roles.js')) {
+if (typeof process !== 'undefined' && process.argv && process.argv[1] && process.argv[1].endsWith('seed_patent_roles.js')) {
   seedPatentRoles().then(res => {
     console.log('Seed result:', res);
     process.exit(0);
