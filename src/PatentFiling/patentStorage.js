@@ -8,20 +8,20 @@ import {
   executeReassign,
   PATENT_STATUSES
 } from '../patent/patentStateMachine.js';
+import { KNOWN_MEMBER_UUIDS } from '../patent/patentRoles.js';
 
 const LOCAL_STORAGE_KEY = 'lextria_patent_filings_cache';
 const LOCAL_EVENTS_KEY = 'lextria_patent_events_cache';
 const LOCAL_ROUNDS_KEY = 'lextria_patent_rounds_cache';
 
-// Seed demo filings so board is immediately populated
+// Seed demo filings with exact member UUIDs so board is immediately populated & authorized
 const DEFAULT_DEMO_FILINGS = [
   {
     id: 'demo-f1',
     code: 'PAT-2026-001',
     filing_type: 'Provisional',
-    title: 'Autonomous Drone Navigation System',
-    assignee_id: 'user_karthik',
-    auditor_id: 'user_prathvi',
+    assignee_id: 'a6ecc962-3946-41ea-9946-1ff6dcc08133', // Karthik
+    auditor_id: '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8',  // Prathvi
     assignee_name: 'Karthik',
     auditor_name: 'Prathvi',
     est_filing_minutes: 240, // 4 hours
@@ -38,9 +38,8 @@ const DEFAULT_DEMO_FILINGS = [
     id: 'demo-f2',
     code: 'PAT-2026-002',
     filing_type: 'PCT International',
-    title: 'Solid State Battery Electrolyte',
-    assignee_id: 'user_akshay',
-    auditor_id: 'user_chaitra',
+    assignee_id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc', // Akshay
+    auditor_id: 'b89a8fa8-4b89-4f11-bd54-787aeb0fa80d',  // Chaitra
     assignee_name: 'Akshay',
     auditor_name: 'Chaitra',
     est_filing_minutes: 360,
@@ -57,9 +56,8 @@ const DEFAULT_DEMO_FILINGS = [
     id: 'demo-f3',
     code: 'PAT-2026-003',
     filing_type: 'Non-Provisional',
-    title: 'Secure Enclave Biometric Encryption',
-    assignee_id: 'user_kaushal',
-    auditor_id: 'user_prathvi',
+    assignee_id: '0a11ce02-42df-4007-b8a7-afcb4b9efe2c', // Kaushal
+    auditor_id: '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8',  // Prathvi
     assignee_name: 'Kaushal',
     auditor_name: 'Prathvi',
     est_filing_minutes: 300,
@@ -76,9 +74,8 @@ const DEFAULT_DEMO_FILINGS = [
     id: 'demo-f4',
     code: 'PAT-2026-004',
     filing_type: 'Design Patent',
-    title: 'Foldable Smart Device Hinge Mechanism',
-    assignee_id: 'user_prashanth',
-    auditor_id: 'user_karthik',
+    assignee_id: 'f7fe55e4-7c00-4030-86ed-0ccf39737074', // Prashanth
+    auditor_id: 'a6ecc962-3946-41ea-9946-1ff6dcc08133',  // Karthik
     assignee_name: 'Prashanth',
     auditor_name: 'Karthik',
     est_filing_minutes: 180,
@@ -95,9 +92,8 @@ const DEFAULT_DEMO_FILINGS = [
     id: 'demo-f5',
     code: 'PAT-2026-005',
     filing_type: 'Convention Application',
-    title: 'Semiconductor Heat Dissipation Lattice',
-    assignee_id: 'user_chaitra',
-    auditor_id: 'user_kaushal',
+    assignee_id: 'b89a8fa8-4b89-4f11-bd54-787aeb0fa80d', // Chaitra
+    auditor_id: '0a11ce02-42df-4007-b8a7-afcb4b9efe2c',  // Kaushal
     assignee_name: 'Chaitra',
     auditor_name: 'Kaushal',
     est_filing_minutes: 240,
@@ -114,9 +110,8 @@ const DEFAULT_DEMO_FILINGS = [
     id: 'demo-f6',
     code: 'PAT-2026-006',
     filing_type: 'National Phase',
-    title: 'Targeted Drug Delivery Nanocapsule',
-    assignee_id: 'user_prathvi',
-    auditor_id: 'user_chaitra',
+    assignee_id: '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8', // Prathvi
+    auditor_id: 'b89a8fa8-4b89-4f11-bd54-787aeb0fa80d',  // Chaitra
     assignee_name: 'Prathvi',
     auditor_name: 'Chaitra',
     est_filing_minutes: 400,
@@ -174,23 +169,55 @@ export async function loadFilingsFromStorage(allMembers = []) {
     }
   } catch (err) {}
 
-  // Fallback to local cache or defaults
+  // Helper to normalize filings and resolve real member UUIDs
+  const normalizeFilings = (list) => {
+    return list.map(f => {
+      let aId = f.assignee_id;
+      let uId = f.auditor_id;
+      let aName = f.assignee_name;
+      let uName = f.auditor_name;
+
+      const matchAssignee = allMembers.find(m => String(m.id) === String(aId) || (aName && m.name && m.name.toLowerCase().includes(aName.toLowerCase())));
+      if (matchAssignee) {
+        aId = matchAssignee.id;
+        aName = matchAssignee.name;
+      } else if (aName) {
+        const key = aName.trim().toLowerCase();
+        for (const [nameKey, uuid] of Object.entries(KNOWN_MEMBER_UUIDS)) {
+          if (key.includes(nameKey)) { aId = uuid; break; }
+        }
+      }
+
+      const matchAuditor = allMembers.find(m => String(m.id) === String(uId) || (uName && m.name && m.name.toLowerCase().includes(uName.toLowerCase())));
+      if (matchAuditor) {
+        uId = matchAuditor.id;
+        uName = matchAuditor.name;
+      } else if (uName) {
+        const key = uName.trim().toLowerCase();
+        for (const [nameKey, uuid] of Object.entries(KNOWN_MEMBER_UUIDS)) {
+          if (key.includes(nameKey)) { uId = uuid; break; }
+        }
+      }
+
+      return {
+        ...f,
+        assignee_id: aId,
+        auditor_id: uId,
+        assignee_name: aName,
+        auditor_name: uName
+      };
+    });
+  };
+
+  // Fallback to local cache or defaults (always normalized)
   const cached = getLocalCache(LOCAL_STORAGE_KEY, null);
   if (cached && cached.length > 0) {
-    return cached;
+    const normalized = normalizeFilings(cached);
+    saveLocalCache(LOCAL_STORAGE_KEY, normalized);
+    return normalized;
   }
 
-  // Map member IDs from real members list if available
-  const mappedDemo = DEFAULT_DEMO_FILINGS.map(f => {
-    const matchAssignee = allMembers.find(m => m.name && m.name.toLowerCase().includes(f.assignee_name.toLowerCase()));
-    const matchAuditor = allMembers.find(m => m.name && m.name.toLowerCase().includes(f.auditor_name.toLowerCase()));
-    return {
-      ...f,
-      assignee_id: matchAssignee ? matchAssignee.id : f.assignee_id,
-      auditor_id: matchAuditor ? matchAuditor.id : f.auditor_id
-    };
-  });
-
+  const mappedDemo = normalizeFilings(DEFAULT_DEMO_FILINGS);
   saveLocalCache(LOCAL_STORAGE_KEY, mappedDemo);
   return mappedDemo;
 }
@@ -288,7 +315,9 @@ export async function executeTransitionInStorage({
     filing,
     expectedVersion: filing.version,
     toStatus,
-    actorId: actor.id,
+    actorId: actor?.id,
+    actorName: actor?.name,
+    actor,
     actorRoles,
     note,
     payload

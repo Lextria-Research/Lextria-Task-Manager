@@ -2,12 +2,8 @@
 // Dedicated, role-based state machine for Patent Filing Workflow
 // Enforces server-side authorization guards, optimistic locking, and audit trails.
 
-export const PATENT_ROLES = {
-  SUPER_ADMIN: 'SUPER_ADMIN',
-  ASSIGNEE: 'ASSIGNEE',
-  AUDITOR: 'AUDITOR',
-  ACK_CHECKER: 'ACK_CHECKER'
-};
+import { PATENT_ROLES, isMemberMatch } from './patentRoles.js';
+export { PATENT_ROLES };
 
 export const PATENT_STATUSES = {
   ASSIGNED: 'ASSIGNED',
@@ -48,6 +44,8 @@ export function validateStateTransition({
   filing,
   toStatus,
   actorId,
+  actorName,
+  actor,
   actorRoles = [],
   payload = {}
 }) {
@@ -55,7 +53,10 @@ export function validateStateTransition({
     return { valid: false, status: 404, error: 'Filing not found.' };
   }
 
-  if (!actorId) {
+  const effectiveActorId = String(actorId || actor?.id || '');
+  const effectiveActorName = actorName || actor?.name || '';
+
+  if (!effectiveActorId && !effectiveActorName) {
     return { valid: false, status: 401, error: 'Unauthenticated actor.' };
   }
 
@@ -90,8 +91,8 @@ export function validateStateTransition({
     return { valid: false, status: 403, error: 'Actor does not hold any Patent Workflow module role.' };
   }
 
-  const isAssignee = String(filing.assignee_id) === String(actorId);
-  const isAuditor = String(filing.auditor_id) === String(actorId);
+  const isAssignee = isMemberMatch(effectiveActorId, effectiveActorName, filing.assignee_id, filing.assignee_name);
+  const isAuditor = isMemberMatch(effectiveActorId, effectiveActorName, filing.auditor_id, filing.auditor_name);
   const isAckChecker = hasPatentRole(actorRoles, PATENT_ROLES.ACK_CHECKER);
 
   // Strict Matrix Enforcement:
@@ -237,6 +238,8 @@ export async function executeTransition({
   expectedVersion,
   toStatus,
   actorId,
+  actorName,
+  actor,
   actorRoles = [],
   note = '',
   payload = {},
@@ -245,6 +248,9 @@ export async function executeTransition({
   if (!filing) {
     return { success: false, status: 404, error: 'Filing not found.' };
   }
+
+  const effectiveActorId = actorId || actor?.id;
+  const effectiveActorName = actorName || actor?.name;
 
   // 1. Optimistic Concurrency Lock Verification
   if (expectedVersion !== undefined && expectedVersion !== null) {
@@ -261,7 +267,9 @@ export async function executeTransition({
   const validation = validateStateTransition({
     filing,
     toStatus,
-    actorId,
+    actorId: effectiveActorId,
+    actorName: effectiveActorName,
+    actor,
     actorRoles,
     payload
   });

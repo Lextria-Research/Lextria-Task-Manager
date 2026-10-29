@@ -3,7 +3,13 @@
 // Data-driven with fallback to exact UUID & name-based seed data.
 
 import { supabase } from '../supabaseClient.js';
-import { PATENT_ROLES } from './patentStateMachine.js';
+
+export const PATENT_ROLES = {
+  SUPER_ADMIN: 'SUPER_ADMIN',
+  ASSIGNEE: 'ASSIGNEE',
+  AUDITOR: 'AUDITOR',
+  ACK_CHECKER: 'ACK_CHECKER'
+};
 
 // Exact 1:1 UUID mapping from members table
 export const SEED_MEMBER_ROLES = {
@@ -22,6 +28,55 @@ export const SEED_ROLE_ASSIGNMENTS = {
   AUDITOR: ['Prathvi', 'Chaitra', 'Kaushal', 'Karthik'],
   ACK_CHECKER: ['Prashanth']
 };
+
+export const KNOWN_MEMBER_UUIDS = {
+  mounisha: '42a71f9a-7119-457c-8092-0d5b75ce3060',
+  prashanth: 'f7fe55e4-7c00-4030-86ed-0ccf39737074',
+  akshay: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc',
+  karthik: 'a6ecc962-3946-41ea-9946-1ff6dcc08133',
+  chaitra: 'b89a8fa8-4b89-4f11-bd54-787aeb0fa80d',
+  kaushal: '0a11ce02-42df-4007-b8a7-afcb4b9efe2c',
+  prathvi: '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8'
+};
+
+/**
+ * Checks if two member name strings represent the same person.
+ */
+export function isSameMemberName(nameA = '', nameB = '') {
+  if (!nameA || !nameB) return false;
+  const a = nameA.trim().toLowerCase().replace(/\s+/g, '');
+  const b = nameB.trim().toLowerCase().replace(/\s+/g, '');
+  if (a === b) return true;
+  if (a.includes(b) || b.includes(a)) return true;
+  if ((a === 'akshay' && b === 'akshaya') || (a === 'akshaya' && b === 'akshay')) return true;
+  return false;
+}
+
+/**
+ * Robust identity matcher: checks matching by UUID, name, or legacy alias
+ */
+export function isMemberMatch(actorId, actorName, targetMemberId, targetMemberName) {
+  const cleanActorId = String(actorId || '');
+  const cleanTargetId = String(targetMemberId || '');
+
+  // 1. Exact ID match
+  if (cleanActorId && cleanTargetId && cleanActorId === cleanTargetId) return true;
+
+  // 2. Exact or fuzzy name match
+  if (actorName && targetMemberName && isSameMemberName(actorName, targetMemberName)) return true;
+
+  // 3. Known UUID / Legacy ID alias cross-match
+  const aName = (actorName || '').trim().toLowerCase();
+  const tName = (targetMemberName || '').trim().toLowerCase();
+
+  for (const [key, uuid] of Object.entries(KNOWN_MEMBER_UUIDS)) {
+    const isActorThisPerson = cleanActorId === uuid || cleanActorId === `user_${key}` || aName.includes(key);
+    const isTargetThisPerson = cleanTargetId === uuid || cleanTargetId === `user_${key}` || tName.includes(key);
+    if (isActorThisPerson && isTargetThisPerson) return true;
+  }
+
+  return false;
+}
 
 /**
  * Resolves patent module roles for a member using live DB records or fallback seeds.

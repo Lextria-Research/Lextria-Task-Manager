@@ -106,13 +106,22 @@ export default async function handler(req, res) {
       });
     }
 
+    // Fetch actor details
+    const { data: actorMember } = await supabase
+      .from('members')
+      .select('id, name')
+      .eq('id', actorId)
+      .maybeSingle();
+
     // Default: State Machine Transition
     const result = await executeTransition({
       filing,
       expectedVersion,
       toStatus,
       actorId,
-      actorRoles,
+      actorName: actorMember?.name,
+      actor: actorMember,
+      actorRoles: effectiveActorRoles,
       note,
       payload,
       dbClient: supabase

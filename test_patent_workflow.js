@@ -475,6 +475,53 @@ const dynamicSettingsRecords = [
 const dynamicAuditors = filterMembersByPatentRole(mockTeam, PATENT_ROLES.AUDITOR, dynamicSettingsRecords);
 assert(dynamicAuditors.some(m => m.name === 'John Doe'), 'Acceptance Test 5: Granting AUDITOR to John Doe in settings makes him appear in dropdown without code change');
 
+// Acceptance Test 6: Prathvi as auditor sending PAT-2026-003 for correction succeeds under both legacy alias and UUID
+const pat003Legacy = {
+  id: 'demo-f3',
+  code: 'PAT-2026-003',
+  status: PATENT_STATUSES.AUDIT,
+  assignee_id: 'user_kaushal',
+  auditor_id: 'user_prathvi',
+  assignee_name: 'Kaushal',
+  auditor_name: 'Prathvi',
+  version: 3,
+  correction_count: 0
+};
+
+const prathviCorrectionLegacy = await executeTransition({
+  filing: pat003Legacy,
+  expectedVersion: 3,
+  toStatus: PATENT_STATUSES.CORRECTION,
+  actorId: '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8', // Prathvi real UUID
+  actorName: 'Prathvi',
+  actorRoles: [PATENT_ROLES.AUDITOR],
+  payload: { description: 'REFILE' }
+});
+assert(prathviCorrectionLegacy.success === true, 'Acceptance Test 6: Prathvi logged in with real UUID successfully sends PAT-2026-003 with legacy ID for correction');
+
+const pat003Normalized = {
+  id: 'demo-f3',
+  code: 'PAT-2026-003',
+  status: PATENT_STATUSES.AUDIT,
+  assignee_id: '0a11ce02-42df-4007-b8a7-afcb4b9efe2c', // Kaushal
+  auditor_id: '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8',  // Prathvi
+  assignee_name: 'Kaushal',
+  auditor_name: 'Prathvi',
+  version: 3,
+  correction_count: 0
+};
+
+const prathviCorrectionNormalized = await executeTransition({
+  filing: pat003Normalized,
+  expectedVersion: 3,
+  toStatus: PATENT_STATUSES.CORRECTION,
+  actorId: '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8',
+  actorName: 'Prathvi',
+  actorRoles: [PATENT_ROLES.AUDITOR],
+  payload: { description: 'REFILE' }
+});
+assert(prathviCorrectionNormalized.success === true, 'Acceptance Test 6: Prathvi sending normalized PAT-2026-003 for correction succeeds without authorization error');
+
 console.log('\n=====================================================');
 console.log(`TEST RESULTS: ${passedTests}/${totalTests} PASSED`);
 console.log('=====================================================');
