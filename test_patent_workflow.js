@@ -12,7 +12,12 @@ import {
   executeTransition,
   executeReassign
 } from './src/patent/patentStateMachine.js';
-import { SEED_ROLE_ASSIGNMENTS } from './src/patent/patentRoles.js';
+import {
+  SEED_ROLE_ASSIGNMENTS,
+  SEED_MEMBER_ROLES,
+  getMemberPatentRoles,
+  filterMembersByPatentRole
+} from './src/patent/patentRoles.js';
 
 let totalTests = 0;
 let passedTests = 0;
@@ -399,6 +404,76 @@ const nonModuleUser = validateStateTransition({
 });
 assert(nonModuleUser.valid === false, 'User with no module roles is blocked from all transitions');
 assert(nonModuleUser.status === 403, 'Non-module user returns HTTP 403');
+
+// ----------------------------------------------------
+// Test Group 9: Fix 1 & Fix 2 Acceptance Tests
+// ----------------------------------------------------
+console.log('\n--- TEST GROUP 9: FIX 1 & FIX 2 Acceptance Tests ---');
+
+// Acceptance Test 1: Filing creation and transitions without Title
+const noTitleCreate = validateFilingCreation({
+  code: 'PAT-2026-NOTITLE',
+  filing_type: 'Provisional',
+  assignee_id: 'a6ecc962-3946-41ea-9946-1ff6dcc08133', // Karthik
+  auditor_id: '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8',  // Prathvi
+  actorRoles: [PATENT_ROLES.SUPER_ADMIN],
+  assigneeRoles: [PATENT_ROLES.ASSIGNEE],
+  auditorRoles: [PATENT_ROLES.AUDITOR]
+});
+assert(noTitleCreate.valid === true, 'Acceptance Test 1: Create filing works without title (title is completely optional/nullable)');
+
+// Acceptance Test 2: Role-driven dropdown candidate lists
+const mockTeam = [
+  { id: 'f7fe55e4-7c00-4030-86ed-0ccf39737074', name: 'Prashanth' },
+  { id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc', name: 'Akshay' },
+  { id: 'a6ecc962-3946-41ea-9946-1ff6dcc08133', name: 'Karthik' },
+  { id: 'b89a8fa8-4b89-4f11-bd54-787aeb0fa80d', name: 'Chaitra' },
+  { id: '0a11ce02-42df-4007-b8a7-afcb4b9efe2c', name: 'Kaushal' },
+  { id: '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8', name: 'Prathvi' },
+  { id: '42a71f9a-7119-457c-8092-0d5b75ce3060', name: 'Mounisha' },
+  { id: 'user_other_1', name: 'John Doe' },
+  { id: 'user_other_2', name: 'Alice Smith' }
+];
+
+const assignees = filterMembersByPatentRole(mockTeam, PATENT_ROLES.ASSIGNEE);
+const auditors = filterMembersByPatentRole(mockTeam, PATENT_ROLES.AUDITOR);
+
+assert(assignees.length === 6, 'Acceptance Test 2: Assignee list contains exactly 6 members');
+const assigneeNames = assignees.map(m => m.name).sort();
+const expectedAssigneeList = ['Akshay', 'Chaitra', 'Karthik', 'Kaushal', 'Prashanth', 'Prathvi'].sort();
+assert(JSON.stringify(assigneeNames) === JSON.stringify(expectedAssigneeList), 'Acceptance Test 2: Assignees match exactly Prashanth, Akshay, Karthik, Chaitra, Kaushal, Prathvi');
+
+assert(auditors.length === 4, 'Acceptance Test 2: Auditor list contains exactly 4 members');
+const auditorNames = auditors.map(m => m.name).sort();
+const expectedAuditorList = ['Chaitra', 'Karthik', 'Kaushal', 'Prathvi'].sort();
+assert(JSON.stringify(auditorNames) === JSON.stringify(expectedAuditorList), 'Acceptance Test 2: Auditors match exactly Prathvi, Chaitra, Kaushal, Karthik');
+
+// Acceptance Test 3: Mutual exclusion - Selecting Karthik as assignee excludes Karthik from auditor options
+const karthikId = 'a6ecc962-3946-41ea-9946-1ff6dcc08133';
+const auditorsExcludingKarthik = auditors.filter(m => m.id !== karthikId);
+assert(!auditorsExcludingKarthik.some(m => m.name === 'Karthik'), 'Acceptance Test 3: Selecting Karthik as assignee excludes Karthik from auditor options');
+assert(auditorsExcludingKarthik.length === 3, 'Acceptance Test 3: Remaining auditor options count is 3');
+
+// Acceptance Test 4: Direct assignment of an actor lacking the role is rejected server-side
+const invalidAssigneeRoleCall = validateFilingCreation({
+  code: 'PAT-2026-INVALID-ASSIGNEE',
+  filing_type: 'Provisional',
+  assignee_id: '42a71f9a-7119-457c-8092-0d5b75ce3060', // Mounisha (SUPER_ADMIN, not ASSIGNEE)
+  auditor_id: '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8',  // Prathvi (AUDITOR)
+  actorRoles: [PATENT_ROLES.SUPER_ADMIN],
+  assigneeRoles: [PATENT_ROLES.SUPER_ADMIN],
+  auditorRoles: [PATENT_ROLES.AUDITOR]
+});
+assert(invalidAssigneeRoleCall.valid === false, 'Acceptance Test 4: Creating filing with assignee lacking ASSIGNEE role is rejected');
+assert(invalidAssigneeRoleCall.status === 400, 'Acceptance Test 4: Rejection returns HTTP 400');
+assert(invalidAssigneeRoleCall.error.includes('must hold the ASSIGNEE role'), 'Acceptance Test 4: Rejection message clearly specifies missing role');
+
+// Acceptance Test 5: Dynamic role updates from settings propagate without code changes
+const dynamicSettingsRecords = [
+  ...mockTeam.map(m => ({ member_id: m.id, role: 'AUDITOR' })) // Now John Doe is granted AUDITOR role in settings
+];
+const dynamicAuditors = filterMembersByPatentRole(mockTeam, PATENT_ROLES.AUDITOR, dynamicSettingsRecords);
+assert(dynamicAuditors.some(m => m.name === 'John Doe'), 'Acceptance Test 5: Granting AUDITOR to John Doe in settings makes him appear in dropdown without code change');
 
 console.log('\n=====================================================');
 console.log(`TEST RESULTS: ${passedTests}/${totalTests} PASSED`);

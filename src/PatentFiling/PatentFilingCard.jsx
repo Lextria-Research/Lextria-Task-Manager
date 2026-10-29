@@ -85,12 +85,6 @@ export default function PatentFilingCard({ filing, onClick, currentUser, userRol
         </span>
       </div>
 
-      {/* Title / Client Description */}
-      {filing.title && (
-        <p className="text-xs font-medium text-slate-200 line-clamp-2 leading-relaxed">
-          {filing.title}
-        </p>
-      )}
 
       {/* Middle Row: Assignee & Auditor Avatars */}
       <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[11px]">

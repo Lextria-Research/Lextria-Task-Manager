@@ -209,7 +209,7 @@ export async function saveNewFilingToStorage(filingData, actor, allMembers = [])
     id: `filing-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     code: cleanCode,
     filing_type: filingData.filing_type,
-    title: filingData.title || '',
+    title: filingData.title || null,
     assignee_id: filingData.assignee_id,
     auditor_id: filingData.auditor_id,
     assignee_name: assigneeMember ? assigneeMember.name : 'Assignee',

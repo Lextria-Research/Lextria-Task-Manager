@@ -7,6 +7,7 @@ import {
   PATENT_ROLES,
   PATENT_STATUSES
 } from '../../src/patent/patentStateMachine.js';
+import { getMemberPatentRoles } from '../../src/patent/patentRoles.js';
 
 export default async function handler(req, res) {
   const method = req.method;
@@ -76,13 +77,31 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: 'Actor ID is required.' });
       }
 
-      // Verify SUPER_ADMIN role
-      const { data: roleRecords } = await supabase
+      // Fetch all role records to verify actor, assignee, and auditor roles
+      const { data: allRoleRecords } = await supabase
         .from('patent_user_roles')
-        .select('role')
-        .eq('member_id', actorId);
+        .select('member_id, role');
 
-      const actorRoles = (roleRecords || []).map(r => r.role);
+      const actorRoles = (allRoleRecords || [])
+        .filter(r => String(r.member_id) === String(actorId))
+        .map(r => r.role);
+      const effectiveActorRoles = actorRoles.length > 0
+        ? actorRoles
+        : getMemberPatentRoles({ id: actorId });
+
+      const assigneeRoles = (allRoleRecords || [])
+        .filter(r => String(r.member_id) === String(assignee_id))
+        .map(r => r.role);
+      const effectiveAssigneeRoles = assigneeRoles.length > 0
+        ? assigneeRoles
+        : getMemberPatentRoles({ id: assignee_id });
+
+      const auditorRoles = (allRoleRecords || [])
+        .filter(r => String(r.member_id) === String(auditor_id))
+        .map(r => r.role);
+      const effectiveAuditorRoles = auditorRoles.length > 0
+        ? auditorRoles
+        : getMemberPatentRoles({ id: auditor_id });
 
       const validation = validateFilingCreation({
         code,
@@ -91,7 +110,9 @@ export default async function handler(req, res) {
         auditor_id,
         est_filing_minutes: Number(est_filing_minutes),
         est_audit_minutes: Number(est_audit_minutes),
-        actorRoles
+        actorRoles: effectiveActorRoles,
+        assigneeRoles: effectiveAssigneeRoles,
+        auditorRoles: effectiveAuditorRoles
       });
 
       if (!validation.valid) {

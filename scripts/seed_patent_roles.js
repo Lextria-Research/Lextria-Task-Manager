@@ -2,44 +2,21 @@
 // Seeds the default patent workflow roles for team members in Supabase
 
 import { supabase } from '../src/supabaseClient.js';
-import { SEED_ROLE_ASSIGNMENTS } from '../src/patent/patentRoles.js';
+import { SEED_ROLE_ASSIGNMENTS, SEED_MEMBER_ROLES } from '../src/patent/patentRoles.js';
 
-export { SEED_ROLE_ASSIGNMENTS };
+export { SEED_ROLE_ASSIGNMENTS, SEED_MEMBER_ROLES };
 
 export async function seedPatentRoles(client = supabase) {
-  console.log('Seeding Patent Workflow user roles...');
-
-  // 1. Fetch all members
-  const { data: members, error: memberErr } = await client
-    .from('members')
-    .select('id, name');
-
-  if (memberErr || !members) {
-    console.warn('⚠️ Could not fetch members from Supabase:', memberErr?.message);
-    return { success: false, error: memberErr?.message };
-  }
-
-  const memberMap = new Map();
-  members.forEach(m => {
-    if (m.name) {
-      memberMap.set(m.name.trim().toLowerCase(), m);
-      memberMap.set(m.name.replace(/\s+/g, '').toLowerCase(), m);
-    }
-  });
+  console.log('Seeding Patent Workflow user roles with verified UUIDs...');
 
   const rolesToInsert = [];
-  for (const [role, names] of Object.entries(SEED_ROLE_ASSIGNMENTS)) {
-    for (const name of names) {
-      const cleanName = name.trim().toLowerCase();
-      const matched = memberMap.get(cleanName) || memberMap.get(cleanName.replace(/\s+/g, ''));
-      if (matched) {
-        rolesToInsert.push({
-          member_id: matched.id,
-          role
-        });
-      } else {
-        console.warn(`⚠️ Warning: Seed member "${name}" not found in members table.`);
-      }
+  // 1. Seed by exact verified UUIDs
+  for (const [memberId, roles] of Object.entries(SEED_MEMBER_ROLES)) {
+    for (const role of roles) {
+      rolesToInsert.push({
+        member_id: memberId,
+        role
+      });
     }
   }
 

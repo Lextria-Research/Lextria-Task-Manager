@@ -1,15 +1,18 @@
 // src/PatentFiling/ReassignModal.jsx
 // Modal for SUPER_ADMIN to reassign assignee or auditor mid-flow with mandatory reason
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { X, UserCheck, AlertCircle } from 'lucide-react';
+import { PATENT_ROLES } from '../patent/patentStateMachine.js';
+import { filterMembersByPatentRole } from '../patent/patentRoles.js';
 
 export default function ReassignModal({
   isOpen,
   onClose,
   onSubmit,
   filing,
-  allMembers = []
+  allMembers = [],
+  patentRoleRecords = null
 }) {
   const [newAssigneeId, setNewAssigneeId] = useState(filing?.assignee_id || '');
   const [newAuditorId, setNewAuditorId] = useState(filing?.auditor_id || '');
@@ -17,7 +20,36 @@ export default function ReassignModal({
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Filter members strictly by role membership
+  const assigneeCandidates = useMemo(() => {
+    return filterMembersByPatentRole(allMembers, PATENT_ROLES.ASSIGNEE, patentRoleRecords);
+  }, [allMembers, patentRoleRecords]);
+
+  const auditorCandidates = useMemo(() => {
+    return filterMembersByPatentRole(allMembers, PATENT_ROLES.AUDITOR, patentRoleRecords);
+  }, [allMembers, patentRoleRecords]);
+
   if (!isOpen || !filing) return null;
+
+  const handleAssigneeChange = (assigneeId) => {
+    if (newAuditorId && String(newAuditorId) === String(assigneeId)) {
+      setNewAuditorId('');
+      setError('Assignee and auditor must be different.');
+    } else if (error === 'Assignee and auditor must be different.') {
+      setError('');
+    }
+    setNewAssigneeId(assigneeId);
+  };
+
+  const handleAuditorChange = (auditorId) => {
+    if (newAssigneeId && String(newAssigneeId) === String(auditorId)) {
+      setNewAssigneeId('');
+      setError('Assignee and auditor must be different.');
+    } else if (error === 'Assignee and auditor must be different.') {
+      setError('');
+    }
+    setNewAuditorId(auditorId);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -30,7 +62,7 @@ export default function ReassignModal({
     }
 
     if (String(newAssigneeId) === String(newAuditorId)) {
-      setError('Assignee and Auditor cannot be the same person.');
+      setError('Assignee and auditor must be different.');
       return;
     }
 
@@ -41,7 +73,6 @@ export default function ReassignModal({
         newAuditorId,
         reason: cleanReason
       });
-
       if (res && res.error) {
         setError(res.error);
       } else {
@@ -70,7 +101,7 @@ export default function ReassignModal({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
           >
             <X size={18} />
           </button>
@@ -90,14 +121,18 @@ export default function ReassignModal({
             </label>
             <select
               value={newAssigneeId}
-              onChange={e => setNewAssigneeId(e.target.value)}
+              onChange={e => handleAssigneeChange(e.target.value)}
               className="w-full glass-input text-xs bg-[#0a153a] cursor-pointer"
+              required
             >
-              {allMembers.map(m => (
-                <option key={m.id} value={m.id} className="bg-[#0a153a] text-white">
-                  {m.name}
-                </option>
-              ))}
+              <option value="">Select Assignee...</option>
+              {assigneeCandidates
+                .filter(m => String(m.id) !== String(newAuditorId))
+                .map(m => (
+                  <option key={m.id} value={m.id} className="bg-[#0a153a] text-white">
+                    {m.name}
+                  </option>
+                ))}
             </select>
           </div>
 
@@ -107,10 +142,12 @@ export default function ReassignModal({
             </label>
             <select
               value={newAuditorId}
-              onChange={e => setNewAuditorId(e.target.value)}
+              onChange={e => handleAuditorChange(e.target.value)}
               className="w-full glass-input text-xs bg-[#0a153a] cursor-pointer"
+              required
             >
-              {allMembers
+              <option value="">Select Auditor...</option>
+              {auditorCandidates
                 .filter(m => String(m.id) !== String(newAssigneeId))
                 .map(m => (
                   <option key={m.id} value={m.id} className="bg-[#0a153a] text-white">
@@ -139,7 +176,7 @@ export default function ReassignModal({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/5 rounded-xl transition"
+              className="px-4 py-2 text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/5 rounded-xl transition cursor-pointer"
             >
               Cancel
             </button>

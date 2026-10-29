@@ -18,6 +18,7 @@ import {
   LayoutGrid
 } from 'lucide-react';
 import { PATENT_ROLES, hasPatentRole } from '../patent/patentStateMachine.js';
+import { fetchAllPatentRoleRecords } from '../patent/patentRoles.js';
 import PatentKanbanBoard from './PatentKanbanBoard.jsx';
 import PatentDetailDrawer from './PatentDetailDrawer.jsx';
 import NewFilingModal from './NewFilingModal.jsx';
@@ -46,6 +47,7 @@ export default function PatentFilingDashboard({
   const [showNewFilingModal, setShowNewFilingModal] = useState(false);
   const [selectedFiling, setSelectedFiling] = useState(null);
   const [notification, setNotification] = useState(null);
+  const [patentRoleRecords, setPatentRoleRecords] = useState(null);
 
   const isSuperAdmin = hasPatentRole(userRoles, PATENT_ROLES.SUPER_ADMIN);
 
@@ -57,12 +59,16 @@ export default function PatentFilingDashboard({
     }
   }, [notification]);
 
-  // Load filings on mount
+  // Load filings and dynamic role records on mount
   useEffect(() => {
     async function init() {
       setLoading(true);
-      const loaded = await loadFilingsFromStorage(allEmployees);
+      const [loaded, roles] = await Promise.all([
+        loadFilingsFromStorage(allEmployees),
+        fetchAllPatentRoleRecords()
+      ]);
       setFilings(loaded);
+      if (roles) setPatentRoleRecords(roles);
       setLoading(false);
     }
     init();
@@ -77,15 +83,14 @@ export default function PatentFilingDashboard({
   // Filtered filings based on search & toolbar filters
   const filteredFilings = useMemo(() => {
     return filings.filter(f => {
-      // Search query (code, title, assignee, auditor, type)
+      // Search query (code, assignee, auditor, type)
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
         const codeMatch = (f.code || '').toLowerCase().includes(q);
-        const titleMatch = (f.title || '').toLowerCase().includes(q);
         const assigneeMatch = (f.assignee_name || '').toLowerCase().includes(q);
         const auditorMatch = (f.auditor_name || '').toLowerCase().includes(q);
         const typeMatch = (f.filing_type || '').toLowerCase().includes(q);
-        if (!codeMatch && !titleMatch && !assigneeMatch && !auditorMatch && !typeMatch) {
+        if (!codeMatch && !assigneeMatch && !auditorMatch && !typeMatch) {
           return false;
         }
       }
@@ -244,7 +249,7 @@ export default function PatentFilingDashboard({
             type="text"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Search code, title, assignee, auditor, type..."
+            placeholder="Search code, assignee, auditor, type..."
             className="w-full glass-input text-xs pl-9 py-2"
           />
         </div>
@@ -337,6 +342,7 @@ export default function PatentFilingDashboard({
         onSubmit={handleCreateFiling}
         allMembers={allEmployees}
         filings={filings}
+        patentRoleRecords={patentRoleRecords}
       />
 
       {/* Detail Slide-Over Drawer */}
@@ -347,6 +353,7 @@ export default function PatentFilingDashboard({
         currentUser={currentUser}
         userRoles={userRoles}
         allMembers={allEmployees}
+        patentRoleRecords={patentRoleRecords}
         onTransition={handleTransition}
         onReassign={handleReassign}
       />

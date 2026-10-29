@@ -7,6 +7,7 @@ import {
   executeReassign,
   PATENT_ROLES
 } from '../../src/patent/patentStateMachine.js';
+import { getMemberPatentRoles } from '../../src/patent/patentRoles.js';
 
 export default async function handler(req, res) {
   // CORS & Methods
@@ -54,9 +55,32 @@ export default async function handler(req, res) {
       .eq('member_id', actorId);
 
     const actorRoles = (roleRecords || []).map(r => r.role);
+    const effectiveActorRoles = actorRoles.length > 0 ? actorRoles : getMemberPatentRoles({ id: actorId });
 
     // 3. Dispatch action
     if (action === 'reassign') {
+      const targetAssigneeId = newAssigneeId || filing.assignee_id;
+      const targetAuditorId = newAuditorId || filing.auditor_id;
+
+      // Check role memberships for targets
+      const { data: allRoleRecords } = await supabase
+        .from('patent_user_roles')
+        .select('member_id, role');
+
+      const assigneeRoles = (allRoleRecords || [])
+        .filter(r => String(r.member_id) === String(targetAssigneeId))
+        .map(r => r.role);
+      const effectiveAssigneeRoles = assigneeRoles.length > 0
+        ? assigneeRoles
+        : getMemberPatentRoles({ id: targetAssigneeId });
+
+      const auditorRoles = (allRoleRecords || [])
+        .filter(r => String(r.member_id) === String(targetAuditorId))
+        .map(r => r.role);
+      const effectiveAuditorRoles = auditorRoles.length > 0
+        ? auditorRoles
+        : getMemberPatentRoles({ id: targetAuditorId });
+
       const result = await executeReassign({
         filing,
         expectedVersion,
@@ -64,7 +88,9 @@ export default async function handler(req, res) {
         newAuditorId,
         reason: reassignReason || note,
         actorId,
-        actorRoles,
+        actorRoles: effectiveActorRoles,
+        assigneeRoles: effectiveAssigneeRoles,
+        auditorRoles: effectiveAuditorRoles,
         dbClient: supabase
       });
 

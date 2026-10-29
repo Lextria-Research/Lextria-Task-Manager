@@ -1,9 +1,13 @@
 // src/PatentFiling/NewFilingModal.jsx
 // "+ New Filing" creation modal for SUPER_ADMIN
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { X, Plus, Clock, Calendar, AlertCircle, FileSpreadsheet } from 'lucide-react';
-import { validateFilingCreation, PATENT_ROLES } from '../patent/patentStateMachine.js';
+import { PATENT_ROLES } from '../patent/patentStateMachine.js';
+import {
+  filterMembersByPatentRole,
+  fetchAllPatentRoleRecords
+} from '../patent/patentRoles.js';
 
 const DEFAULT_FILING_TYPES = [
   'Provisional',
@@ -19,11 +23,11 @@ export default function NewFilingModal({
   onClose,
   onSubmit,
   allMembers = [],
-  filings = []
+  filings = [],
+  patentRoleRecords = null
 }) {
   const [code, setCode] = useState('');
   const [filingType, setFilingType] = useState('Provisional');
-  const [title, setTitle] = useState('');
   const [assigneeId, setAssigneeId] = useState('');
   const [auditorId, setAuditorId] = useState('');
   const [estFilingHours, setEstFilingHours] = useState('4');
@@ -34,28 +38,92 @@ export default function NewFilingModal({
   const [priority, setPriority] = useState('Medium');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [liveRoleRecords, setLiveRoleRecords] = useState(patentRoleRecords);
+
+  // Fetch latest role records when modal opens if not provided
+  useEffect(() => {
+    if (isOpen && !patentRoleRecords) {
+      fetchAllPatentRoleRecords().then(records => {
+        if (records) setLiveRoleRecords(records);
+      });
+    }
+  }, [isOpen, patentRoleRecords]);
+
+  // Reset form when modal closes or opens
+  useEffect(() => {
+    if (!isOpen) {
+      setCode('');
+      setFilingType('Provisional');
+      setAssigneeId('');
+      setAuditorId('');
+      setEstFilingHours('4');
+      setEstFilingMins('0');
+      setEstAuditHours('1');
+      setEstAuditMins('0');
+      setHardDeadline('');
+      setPriority('Medium');
+      setError('');
+    }
+  }, [isOpen]);
+
+  // Calculate each member's current open workload
+  const memberLoadMap = useMemo(() => {
+    const map = {};
+    allMembers.forEach(m => {
+      const activeAssigned = filings.filter(f => String(f.assignee_id) === String(m.id) && f.status !== 'CLOSED');
+      const activeAudited = filings.filter(f => String(f.auditor_id) === String(m.id) && f.status !== 'CLOSED');
+      const totalMinutes = activeAssigned.reduce((acc, f) => acc + (f.est_filing_minutes || 0), 0) +
+                           activeAudited.reduce((acc, f) => acc + (f.est_audit_minutes || 0), 0);
+      map[m.id] = {
+        count: activeAssigned.length + activeAudited.length,
+        hours: (totalMinutes / 60).toFixed(1)
+      };
+    });
+    return map;
+  }, [allMembers, filings]);
+
+  // Filter members strictly by role membership (data-driven)
+  const assigneeCandidates = useMemo(() => {
+    const list = filterMembersByPatentRole(allMembers, PATENT_ROLES.ASSIGNEE, liveRoleRecords);
+    return [...list].sort((a, b) => {
+      const loadA = Number(memberLoadMap[a.id]?.hours || 0);
+      const loadB = Number(memberLoadMap[b.id]?.hours || 0);
+      return loadA - loadB; // least-loaded first
+    });
+  }, [allMembers, liveRoleRecords, memberLoadMap]);
+
+  const auditorCandidates = useMemo(() => {
+    const list = filterMembersByPatentRole(allMembers, PATENT_ROLES.AUDITOR, liveRoleRecords);
+    return [...list].sort((a, b) => {
+      const loadA = Number(memberLoadMap[a.id]?.hours || 0);
+      const loadB = Number(memberLoadMap[b.id]?.hours || 0);
+      return loadA - loadB; // least-loaded first
+    });
+  }, [allMembers, liveRoleRecords, memberLoadMap]);
 
   if (!isOpen) return null;
 
-  // Calculate each member's current open load
-  const memberLoadMap = {};
-  allMembers.forEach(m => {
-    const activeAssigned = filings.filter(f => String(f.assignee_id) === String(m.id) && f.status !== 'CLOSED');
-    const activeAudited = filings.filter(f => String(f.auditor_id) === String(m.id) && f.status !== 'CLOSED');
-    const totalMinutes = activeAssigned.reduce((acc, f) => acc + (f.est_filing_minutes || 0), 0) +
-                         activeAudited.reduce((acc, f) => acc + (f.est_audit_minutes || 0), 0);
-    memberLoadMap[m.id] = {
-      count: activeAssigned.length + activeAudited.length,
-      hours: (totalMinutes / 60).toFixed(1)
-    };
-  });
+  // Handle Assignee change: exclude from Auditor and check conflict
+  const handleAssigneeChange = (newAssignee) => {
+    if (auditorId && String(auditorId) === String(newAssignee)) {
+      setAuditorId('');
+      setError('Assignee and auditor must be different.');
+    } else if (error === 'Assignee and auditor must be different.') {
+      setError('');
+    }
+    setAssigneeId(newAssignee);
+  };
 
-  // Sort members least-loaded first
-  const sortedMembers = [...allMembers].sort((a, b) => {
-    const loadA = Number(memberLoadMap[a.id]?.hours || 0);
-    const loadB = Number(memberLoadMap[b.id]?.hours || 0);
-    return loadA - loadB;
-  });
+  // Handle Auditor change: exclude from Assignee and check conflict
+  const handleAuditorChange = (newAuditor) => {
+    if (assigneeId && String(assigneeId) === String(newAuditor)) {
+      setAssigneeId('');
+      setError('Assignee and auditor must be different.');
+    } else if (error === 'Assignee and auditor must be different.') {
+      setError('');
+    }
+    setAuditorId(newAuditor);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -79,7 +147,7 @@ export default function NewFilingModal({
 
     // Assignee != Auditor validation
     if (String(assigneeId) === String(auditorId)) {
-      setError('Assignee and Auditor cannot be the same person.');
+      setError('Assignee and auditor must be different.');
       return;
     }
 
@@ -89,7 +157,6 @@ export default function NewFilingModal({
     const filingData = {
       code: cleanCode,
       filing_type: filingType,
-      title: title.trim(),
       assignee_id: assigneeId,
       auditor_id: auditorId,
       est_filing_minutes: estFilingMinutes,
@@ -129,7 +196,7 @@ export default function NewFilingModal({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
           >
             <X size={18} />
           </button>
@@ -177,21 +244,7 @@ export default function NewFilingModal({
             </div>
           </div>
 
-          {/* Title / Client Note */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              Title / Client Invention Summary
-            </label>
-            <input
-              type="text"
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              placeholder="e.g. Optical Sensor Calibration for Micro-controllers"
-              className="w-full glass-input text-xs"
-            />
-          </div>
-
-          {/* Row 2: Assignee & Auditor (Sorted least-loaded first, Auditor excludes Assignee) */}
+          {/* Row 2: Assignee & Auditor (Role-driven, least-loaded first, mutually exclusive) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
@@ -199,19 +252,18 @@ export default function NewFilingModal({
               </label>
               <select
                 value={assigneeId}
-                onChange={e => {
-                  setAssigneeId(e.target.value);
-                  if (auditorId === e.target.value) setAuditorId('');
-                }}
+                onChange={e => handleAssigneeChange(e.target.value)}
                 className="w-full glass-input text-xs cursor-pointer bg-[#0a153a]"
                 required
               >
                 <option value="">Select Assignee...</option>
-                {sortedMembers.map(m => (
-                  <option key={m.id} value={m.id} className="bg-[#0a153a] text-white">
-                    {m.name} ({memberLoadMap[m.id]?.hours}h load)
-                  </option>
-                ))}
+                {assigneeCandidates
+                  .filter(m => String(m.id) !== String(auditorId)) // Mutual exclusion: exclude selected Auditor
+                  .map(m => (
+                    <option key={m.id} value={m.id} className="bg-[#0a153a] text-white">
+                      {m.name} ({memberLoadMap[m.id]?.hours}h load)
+                    </option>
+                  ))}
               </select>
             </div>
 
@@ -221,13 +273,13 @@ export default function NewFilingModal({
               </label>
               <select
                 value={auditorId}
-                onChange={e => setAuditorId(e.target.value)}
+                onChange={e => handleAuditorChange(e.target.value)}
                 className="w-full glass-input text-xs cursor-pointer bg-[#0a153a]"
                 required
               >
                 <option value="">Select Auditor...</option>
-                {sortedMembers
-                  .filter(m => String(m.id) !== String(assigneeId)) // exclude selected assignee!
+                {auditorCandidates
+                  .filter(m => String(m.id) !== String(assigneeId)) // Mutual exclusion: exclude selected Assignee
                   .map(m => (
                     <option key={m.id} value={m.id} className="bg-[#0a153a] text-white">
                       {m.name} ({memberLoadMap[m.id]?.hours}h load)
@@ -328,7 +380,7 @@ export default function NewFilingModal({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/5 rounded-xl transition"
+              className="px-4 py-2 text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/5 rounded-xl transition cursor-pointer"
             >
               Cancel
             </button>

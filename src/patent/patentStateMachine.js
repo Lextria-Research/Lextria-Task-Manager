@@ -172,7 +172,9 @@ export function validateFilingCreation({
   auditor_id,
   est_filing_minutes = 0,
   est_audit_minutes = 0,
-  actorRoles = []
+  actorRoles = [],
+  assigneeRoles,
+  auditorRoles
 }) {
   const isSuperAdmin = hasPatentRole(actorRoles, PATENT_ROLES.SUPER_ADMIN);
   if (!isSuperAdmin) {
@@ -198,6 +200,16 @@ export function validateFilingCreation({
   // CRITICAL VALIDATION: assignee_id != auditor_id
   if (String(assignee_id) === String(auditor_id)) {
     return { valid: false, status: 400, error: 'Assignee and Auditor cannot be the same person.' };
+  }
+
+  // Server-side role guard: Assignee must hold ASSIGNEE role
+  if (assigneeRoles && !assigneeRoles.includes(PATENT_ROLES.ASSIGNEE)) {
+    return { valid: false, status: 400, error: 'Designated assignee must hold the ASSIGNEE role in Patent Workflow.' };
+  }
+
+  // Server-side role guard: Auditor must hold AUDITOR role
+  if (auditorRoles && !auditorRoles.includes(PATENT_ROLES.AUDITOR)) {
+    return { valid: false, status: 400, error: 'Designated auditor must hold the AUDITOR role in Patent Workflow.' };
   }
 
   if (est_filing_minutes < 0 || est_audit_minutes < 0) {
@@ -394,6 +406,8 @@ export async function executeReassign({
   reason,
   actorId,
   actorRoles = [],
+  assigneeRoles,
+  auditorRoles,
   dbClient
 }) {
   if (!hasPatentRole(actorRoles, PATENT_ROLES.SUPER_ADMIN)) {
@@ -417,6 +431,16 @@ export async function executeReassign({
   // CRITICAL VALIDATION: assignee != auditor
   if (String(assigneeId) === String(auditorId)) {
     return { success: false, status: 400, error: 'Assignee and Auditor cannot be the same person.' };
+  }
+
+  // Server-side role guard: Assignee must hold ASSIGNEE role
+  if (assigneeRoles && !assigneeRoles.includes(PATENT_ROLES.ASSIGNEE)) {
+    return { success: false, status: 400, error: 'Designated assignee must hold the ASSIGNEE role in Patent Workflow.' };
+  }
+
+  // Server-side role guard: Auditor must hold AUDITOR role
+  if (auditorRoles && !auditorRoles.includes(PATENT_ROLES.AUDITOR)) {
+    return { success: false, status: 400, error: 'Designated auditor must hold the AUDITOR role in Patent Workflow.' };
   }
 
   const nowIso = new Date().toISOString();

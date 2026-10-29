@@ -35,6 +35,7 @@ export default function PatentDetailDrawer({
   currentUser,
   userRoles = [],
   allMembers = [],
+  patentRoleRecords = null,
   onTransition,
   onReassign
 }) {
@@ -118,11 +119,6 @@ export default function PatentDetailDrawer({
             <h2 className="text-lg font-bold text-white tracking-tight">
               {filing.filing_type}
             </h2>
-            {filing.title && (
-              <p className="text-xs text-slate-300 mt-1 line-clamp-2">
-                {filing.title}
-              </p>
-            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -487,6 +483,7 @@ export default function PatentDetailDrawer({
         }}
         filing={filing}
         allMembers={allMembers}
+        patentRoleRecords={patentRoleRecords}
       />
 
       {/* Image Lightbox */}

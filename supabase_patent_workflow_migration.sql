@@ -123,28 +123,32 @@ CREATE TABLE IF NOT EXISTS patent_correction_rounds (
 CREATE INDEX IF NOT EXISTS idx_patent_rounds_filing ON patent_correction_rounds(filing_id);
 
 -- ==========================================================
--- 6. SEED INITIAL ROLES BASED ON EXISTING MEMBERS TABLE
+-- 6. SEED INITIAL ROLES BASED ON EXACT USER UUIDs
 -- ==========================================================
--- Super Admin: Mounisha
+-- Super Admin: Mounisha (42a71f9a-7119-457c-8092-0d5b75ce3060)
 INSERT INTO patent_user_roles (member_id, role)
-SELECT id, 'SUPER_ADMIN' FROM members
-WHERE LOWER(TRIM(name)) = 'mounisha'
+VALUES ('42a71f9a-7119-457c-8092-0d5b75ce3060', 'SUPER_ADMIN')
 ON CONFLICT (member_id, role) DO NOTHING;
 
 -- Assignees: Prashanth, Akshay, Karthik, Chaitra, Kaushal, Prathvi
-INSERT INTO patent_user_roles (member_id, role)
-SELECT id, 'ASSIGNEE' FROM members
-WHERE LOWER(TRIM(name)) IN ('prashanth', 'akshay', 'karthik', 'chaitra', 'kaushal', 'prathvi')
+INSERT INTO patent_user_roles (member_id, role) VALUES
+  ('f7fe55e4-7c00-4030-86ed-0ccf39737074', 'ASSIGNEE'), -- Prashanth
+  ('396ee572-3f3b-47cc-8b11-d710cc8ed4bc', 'ASSIGNEE'), -- Akshay
+  ('a6ecc962-3946-41ea-9946-1ff6dcc08133', 'ASSIGNEE'), -- Karthik
+  ('b89a8fa8-4b89-4f11-bd54-787aeb0fa80d', 'ASSIGNEE'), -- Chaitra
+  ('0a11ce02-42df-4007-b8a7-afcb4b9efe2c', 'ASSIGNEE'), -- Kaushal
+  ('8eeb4375-25d3-4c3d-844c-7dd455e3c2e8', 'ASSIGNEE')  -- Prathvi
 ON CONFLICT (member_id, role) DO NOTHING;
 
 -- Auditors: Prathvi, Chaitra, Kaushal, Karthik
-INSERT INTO patent_user_roles (member_id, role)
-SELECT id, 'AUDITOR' FROM members
-WHERE LOWER(TRIM(name)) IN ('prathvi', 'chaitra', 'kaushal', 'karthik')
+INSERT INTO patent_user_roles (member_id, role) VALUES
+  ('8eeb4375-25d3-4c3d-844c-7dd455e3c2e8', 'AUDITOR'), -- Prathvi
+  ('b89a8fa8-4b89-4f11-bd54-787aeb0fa80d', 'AUDITOR'), -- Chaitra
+  ('0a11ce02-42df-4007-b8a7-afcb4b9efe2c', 'AUDITOR'), -- Kaushal
+  ('a6ecc962-3946-41ea-9946-1ff6dcc08133', 'AUDITOR')  -- Karthik
 ON CONFLICT (member_id, role) DO NOTHING;
 
 -- Ack Checker: Prashanth
 INSERT INTO patent_user_roles (member_id, role)
-SELECT id, 'ACK_CHECKER' FROM members
-WHERE LOWER(TRIM(name)) = 'prashanth'
+VALUES ('f7fe55e4-7c00-4030-86ed-0ccf39737074', 'ACK_CHECKER')
 ON CONFLICT (member_id, role) DO NOTHING;
