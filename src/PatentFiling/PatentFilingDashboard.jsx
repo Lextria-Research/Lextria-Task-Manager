@@ -267,7 +267,8 @@ export default function PatentFilingDashboard({
     const res = await updateFilingTypeInStorage({
       filing: selectedFiling,
       newFilingType,
-      actor: currentUser
+      actor: currentUser,
+      allMembers: allEmployees
     });
 
     if (res.success) {
@@ -314,7 +315,8 @@ export default function PatentFilingDashboard({
       actor: currentUser,
       actorRoles: userRoles,
       note,
-      payload
+      payload,
+      allMembers: allEmployees
     });
 
     if (res.success) {

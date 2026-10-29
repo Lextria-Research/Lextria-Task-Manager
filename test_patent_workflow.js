@@ -522,6 +522,33 @@ const prathviCorrectionNormalized = await executeTransition({
 });
 assert(prathviCorrectionNormalized.success === true, 'Acceptance Test 6: Prathvi sending normalized PAT-2026-003 for correction succeeds without authorization error');
 
+// ----------------------------------------------------
+// Test Group 10: resolveMemberUuid & Persistence Integrity
+// ----------------------------------------------------
+console.log('\n--- TEST GROUP 10: Member UUID Resolution & Storage Integrity ---');
+const { resolveMemberUuid } = await import('./src/PatentFiling/patentStorage.js');
+
+assert(
+  resolveMemberUuid('user_mounisha') === '42a71f9a-7119-457c-8092-0d5b75ce3060',
+  'resolveMemberUuid translates user_mounisha to Mounisha UUID'
+);
+assert(
+  resolveMemberUuid('user_prashanth') === 'f7fe55e4-7c00-4030-86ed-0ccf39737074',
+  'resolveMemberUuid translates user_prashanth to Prashanth UUID'
+);
+assert(
+  resolveMemberUuid('Akshay') === '396ee572-3f3b-47cc-8b11-d710cc8ed4bc',
+  'resolveMemberUuid translates Akshay name to Akshay UUID'
+);
+assert(
+  resolveMemberUuid('396ee572-3f3b-47cc-8b11-d710cc8ed4bc') === '396ee572-3f3b-47cc-8b11-d710cc8ed4bc',
+  'resolveMemberUuid preserves valid UUID directly'
+);
+assert(
+  resolveMemberUuid(null, '42a71f9a-7119-457c-8092-0d5b75ce3060') === '42a71f9a-7119-457c-8092-0d5b75ce3060',
+  'resolveMemberUuid falls back safely when identifier is missing'
+);
+
 console.log('\n=====================================================');
 console.log(`TEST RESULTS: ${passedTests}/${totalTests} PASSED`);
 console.log('=====================================================');
