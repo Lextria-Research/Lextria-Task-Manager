@@ -4,7 +4,11 @@
 import React, { useState, useMemo } from 'react';
 import { X, UserCheck, AlertCircle } from 'lucide-react';
 import { PATENT_ROLES } from '../patent/patentStateMachine.js';
-import { filterMembersByPatentRole } from '../patent/patentRoles.js';
+import {
+  filterMembersByPatentRole,
+  getCanonicalMemberUuid,
+  getCleanMemberName
+} from '../patent/patentRoles.js';
 
 export default function ReassignModal({
   isOpen,
@@ -31,8 +35,16 @@ export default function ReassignModal({
 
   if (!isOpen || !filing) return null;
 
+  const isSamePerson = (idA, idB) => {
+    if (!idA || !idB) return false;
+    if (String(idA) === String(idB)) return true;
+    const cA = getCanonicalMemberUuid({ id: idA });
+    const cB = getCanonicalMemberUuid({ id: idB });
+    return Boolean(cA && cB && cA.toLowerCase() === cB.toLowerCase());
+  };
+
   const handleAssigneeChange = (assigneeId) => {
-    if (newAuditorId && String(newAuditorId) === String(assigneeId)) {
+    if (newAuditorId && isSamePerson(newAuditorId, assigneeId)) {
       setNewAuditorId('');
       setError('Assignee and auditor must be different.');
     } else if (error === 'Assignee and auditor must be different.') {
@@ -42,7 +54,7 @@ export default function ReassignModal({
   };
 
   const handleAuditorChange = (auditorId) => {
-    if (newAssigneeId && String(newAssigneeId) === String(auditorId)) {
+    if (newAssigneeId && isSamePerson(newAssigneeId, auditorId)) {
       setNewAssigneeId('');
       setError('Assignee and auditor must be different.');
     } else if (error === 'Assignee and auditor must be different.') {
@@ -127,10 +139,10 @@ export default function ReassignModal({
             >
               <option value="">Select Assignee...</option>
               {assigneeCandidates
-                .filter(m => String(m.id) !== String(newAuditorId))
+                .filter(m => !isSamePerson(m.id, newAuditorId))
                 .map(m => (
                   <option key={m.id} value={m.id} className="bg-[#0a153a] text-white">
-                    {m.name}
+                    {getCleanMemberName(m)}
                   </option>
                 ))}
             </select>
@@ -148,10 +160,10 @@ export default function ReassignModal({
             >
               <option value="">Select Auditor...</option>
               {auditorCandidates
-                .filter(m => String(m.id) !== String(newAssigneeId))
+                .filter(m => !isSamePerson(m.id, newAssigneeId))
                 .map(m => (
                   <option key={m.id} value={m.id} className="bg-[#0a153a] text-white">
-                    {m.name}
+                    {getCleanMemberName(m)}
                   </option>
                 ))}
             </select>

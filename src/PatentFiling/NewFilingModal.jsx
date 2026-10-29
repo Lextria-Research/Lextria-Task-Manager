@@ -6,7 +6,9 @@ import { X, AlertCircle, FileSpreadsheet } from 'lucide-react';
 import { PATENT_ROLES } from '../patent/patentStateMachine.js';
 import {
   filterMembersByPatentRole,
-  fetchAllPatentRoleRecords
+  fetchAllPatentRoleRecords,
+  getCanonicalMemberUuid,
+  getCleanMemberName
 } from '../patent/patentRoles.js';
 
 export default function NewFilingModal({
@@ -60,18 +62,37 @@ export default function NewFilingModal({
     }
   }, [isOpen, patentRoleRecords]);
 
+  // Helper to determine if two IDs represent the same canonical individual
+  const isSamePerson = (idA, idB) => {
+    if (!idA || !idB) return false;
+    if (String(idA) === String(idB)) return true;
+    const cA = getCanonicalMemberUuid({ id: idA });
+    const cB = getCanonicalMemberUuid({ id: idB });
+    return Boolean(cA && cB && cA.toLowerCase() === cB.toLowerCase());
+  };
+
   // Calculate each member's current open workload
   const memberLoadMap = useMemo(() => {
     const map = {};
     allMembers.forEach(m => {
-      const activeAssigned = filings.filter(f => String(f.assignee_id) === String(m.id) && f.status !== 'CLOSED');
-      const activeAudited = filings.filter(f => String(f.auditor_id) === String(m.id) && f.status !== 'CLOSED');
+      const canonical = getCanonicalMemberUuid(m);
+      const activeAssigned = filings.filter(f =>
+        (String(f.assignee_id) === String(m.id) || (canonical && String(f.assignee_id).toLowerCase() === String(canonical).toLowerCase())) &&
+        f.status !== 'CLOSED'
+      );
+      const activeAudited = filings.filter(f =>
+        (String(f.auditor_id) === String(m.id) || (canonical && String(f.auditor_id).toLowerCase() === String(canonical).toLowerCase())) &&
+        f.status !== 'CLOSED'
+      );
       const totalMinutes = activeAssigned.reduce((acc, f) => acc + (f.est_filing_minutes || 0), 0) +
                            activeAudited.reduce((acc, f) => acc + (f.est_audit_minutes || 0), 0);
       map[m.id] = {
         count: activeAssigned.length + activeAudited.length,
         hours: (totalMinutes / 60).toFixed(1)
       };
+      if (canonical) {
+        map[canonical] = map[m.id];
+      }
     });
     return map;
   }, [allMembers, filings]);
@@ -99,7 +120,7 @@ export default function NewFilingModal({
 
   // Handle Assignee change: exclude from Auditor and check conflict
   const handleAssigneeChange = (newAssignee) => {
-    if (auditorId && String(auditorId) === String(newAssignee)) {
+    if (auditorId && isSamePerson(auditorId, newAssignee)) {
       setAuditorId('');
       setError('Assignee and auditor must be different.');
     } else if (error === 'Assignee and auditor must be different.') {
@@ -110,7 +131,7 @@ export default function NewFilingModal({
 
   // Handle Auditor change: exclude from Assignee and check conflict
   const handleAuditorChange = (newAuditor) => {
-    if (assigneeId && String(assigneeId) === String(newAuditor)) {
+    if (assigneeId && isSamePerson(assigneeId, newAuditor)) {
       setAssigneeId('');
       setError('Assignee and auditor must be different.');
     } else if (error === 'Assignee and auditor must be different.') {
@@ -261,10 +282,10 @@ export default function NewFilingModal({
               >
                 <option value="">Select Assignee...</option>
                 {assigneeCandidates
-                  .filter(m => String(m.id) !== String(auditorId)) // Mutual exclusion: exclude selected Auditor
+                  .filter(m => !isSamePerson(m.id, auditorId)) // Mutual exclusion: exclude selected Auditor
                   .map(m => (
                     <option key={m.id} value={m.id} className="bg-[#0a153a] text-white">
-                      {m.name} ({memberLoadMap[m.id]?.hours}h load)
+                      {getCleanMemberName(m)} ({memberLoadMap[m.id]?.hours || '0.0'}h load)
                     </option>
                   ))}
               </select>
@@ -282,10 +303,10 @@ export default function NewFilingModal({
               >
                 <option value="">Select Auditor...</option>
                 {auditorCandidates
-                  .filter(m => String(m.id) !== String(assigneeId)) // Mutual exclusion: exclude selected Assignee
+                  .filter(m => !isSamePerson(m.id, assigneeId)) // Mutual exclusion: exclude selected Assignee
                   .map(m => (
                     <option key={m.id} value={m.id} className="bg-[#0a153a] text-white">
-                      {m.name} ({memberLoadMap[m.id]?.hours}h load)
+                      {getCleanMemberName(m)} ({memberLoadMap[m.id]?.hours || '0.0'}h load)
                     </option>
                   ))}
               </select>

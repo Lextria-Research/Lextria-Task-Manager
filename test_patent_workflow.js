@@ -549,6 +549,52 @@ assert(
   'resolveMemberUuid falls back safely when identifier is missing'
 );
 
+// ----------------------------------------------------
+// Test Group 11: Agent to Member Mapping for Akshay & Kaushal
+// ----------------------------------------------------
+console.log('\n--- TEST GROUP 11: Agent to Member Mapping for Akshay & Kaushal ---');
+const sampleAllEmployees = [
+  { id: 'eafcd62c-fc86-4e25-971e-343c14a2cf36', name: 'Akshaya' },
+  { id: '5e4b1fe1-5ec5-4a44-b89c-a24d6a1f9b0f', name: 'Kaushal Kamath' },
+  { id: '923eeac5-35a5-461e-af6f-719f32d30281', name: 'karthik' },
+  { id: 'fb937e40-077b-46ff-a2a7-8942f09d9f59', name: 'Prashanth' },
+  { id: 'f7c5a4e8-94b4-4510-8c47-2b7c2d9c90ca', name: 'Prathvi' },
+  { id: '2ff5eac9-31ad-43da-ac65-fcfa4792bc35', name: 'Chaitra' }
+];
+
+const assigneesFromAgents = filterMembersByPatentRole(sampleAllEmployees, PATENT_ROLES.ASSIGNEE);
+const auditorsFromAgents = filterMembersByPatentRole(sampleAllEmployees, PATENT_ROLES.AUDITOR);
+
+assert(
+  assigneesFromAgents.some(a => a.name === 'Akshaya'),
+  'Akshay (Akshaya) is included in Assignee list from allEmployees'
+);
+assert(
+  assigneesFromAgents.some(a => a.name === 'Kaushal Kamath'),
+  'Kaushal (Kaushal Kamath) is included in Assignee list from allEmployees'
+);
+assert(
+  auditorsFromAgents.some(a => a.name === 'Kaushal Kamath'),
+  'Kaushal (Kaushal Kamath) is included in Auditor list from allEmployees'
+);
+assert(
+  assigneesFromAgents.length === 6,
+  `Assignee list has exactly 6 members (found ${assigneesFromAgents.length})`
+);
+assert(
+  auditorsFromAgents.length === 4,
+  `Auditor list has exactly 4 members (found ${auditorsFromAgents.length})`
+);
+
+assert(
+  resolveMemberUuid('eafcd62c-fc86-4e25-971e-343c14a2cf36') === '396ee572-3f3b-47cc-8b11-d710cc8ed4bc',
+  'resolveMemberUuid translates Akshaya agent ID to Akshay canonical member UUID'
+);
+assert(
+  resolveMemberUuid('5e4b1fe1-5ec5-4a44-b89c-a24d6a1f9b0f') === '0a11ce02-42df-4007-b8a7-afcb4b9efe2c',
+  'resolveMemberUuid translates Kaushal agent ID to Kaushal canonical member UUID'
+);
+
 console.log('\n=====================================================');
 console.log(`TEST RESULTS: ${passedTests}/${totalTests} PASSED`);
 console.log('=====================================================');

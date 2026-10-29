@@ -8,7 +8,12 @@ import {
   executeReassign,
   PATENT_STATUSES
 } from '../patent/patentStateMachine.js';
-import { KNOWN_MEMBER_UUIDS } from '../patent/patentRoles.js';
+import {
+  KNOWN_MEMBER_UUIDS,
+  KNOWN_AGENT_TO_MEMBER_UUIDS,
+  getCanonicalMemberUuid,
+  isSameMemberName
+} from '../patent/patentRoles.js';
 import { broadcastPatentChange } from './patentRealtime.js';
 
 const LOCAL_STORAGE_KEY = 'lextria_patent_filings_cache';
@@ -51,19 +56,34 @@ export function resolveMemberUuid(idOrName, fallbackUuid = '42a71f9a-7119-457c-8
   if (!idOrName) return fallbackUuid;
   const str = String(idOrName).trim().toLowerCase();
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (uuidRegex.test(str)) return str;
 
-  for (const [name, uuid] of Object.entries(KNOWN_MEMBER_UUIDS)) {
-    if (str === uuid || str === `user_${name}` || str.includes(name)) return uuid;
+  // 1. Direct agent-to-member mapping
+  if (KNOWN_AGENT_TO_MEMBER_UUIDS[str]) {
+    return KNOWN_AGENT_TO_MEMBER_UUIDS[str];
   }
 
+  // 2. Direct check against known member UUIDs or user aliases
+  for (const [name, uuid] of Object.entries(KNOWN_MEMBER_UUIDS)) {
+    if (str === uuid.toLowerCase() || str === `user_${name}` || isSameMemberName(str, name)) {
+      return uuid;
+    }
+  }
+
+  // 3. Check allMembers if provided
   if (Array.isArray(allMembers)) {
     const found = allMembers.find(m =>
       String(m.id).toLowerCase() === str ||
-      (m.name && m.name.toLowerCase().includes(str))
+      (m.name && isSameMemberName(m.name, str))
     );
-    if (found && uuidRegex.test(found.id)) return found.id;
+    if (found) {
+      const canonical = getCanonicalMemberUuid(found);
+      if (canonical && uuidRegex.test(canonical)) return canonical;
+      if (uuidRegex.test(found.id)) return found.id;
+    }
   }
+
+  // 4. If it's already a valid UUID and no special mapping exists
+  if (uuidRegex.test(str)) return str;
 
   return fallbackUuid;
 }
