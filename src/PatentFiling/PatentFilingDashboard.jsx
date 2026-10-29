@@ -1,21 +1,14 @@
 // src/PatentFiling/PatentFilingDashboard.jsx
 // Main container and toolbar for the Patent Filing Workflow
 
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   FileSpreadsheet,
   Plus,
   Search,
-  Filter,
-  RotateCcw,
   Archive,
-  User,
-  Users,
   CheckCircle2,
-  AlertCircle,
-  Clock,
-  Flame,
-  LayoutGrid
+  AlertCircle
 } from 'lucide-react';
 import { PATENT_ROLES, hasPatentRole } from '../patent/patentStateMachine.js';
 import { fetchAllPatentRoleRecords, isMemberMatch } from '../patent/patentRoles.js';
@@ -26,9 +19,21 @@ import {
   loadFilingsFromStorage,
   saveNewFilingToStorage,
   executeTransitionInStorage,
-  executeReassignInStorage
+  executeReassignInStorage,
+  fetchSystemFilingTypes,
+  updateFilingTypeInStorage
 } from './patentStorage.js';
 import { initPatentRealtimeSync } from './patentRealtime.js';
+
+// Pre-existing fixed filing types that were removed in favor of manual entry
+const REMOVED_PRE_EXISTING_TYPES = new Set([
+  'Provisional',
+  'Non-Provisional',
+  'PCT International',
+  'Design Patent',
+  'Convention Application',
+  'National Phase'
+]);
 
 export default function PatentFilingDashboard({
   currentUser,
@@ -36,7 +41,7 @@ export default function PatentFilingDashboard({
   userRoles = []
 }) {
   const [filings, setFilings] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [systemFilingTypes, setSystemFilingTypes] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [personFilter, setPersonFilter] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState('ALL');
@@ -64,14 +69,14 @@ export default function PatentFilingDashboard({
   // Load filings and dynamic role records on mount
   useEffect(() => {
     async function init() {
-      setLoading(true);
-      const [loaded, roles] = await Promise.all([
+      const [loaded, roles, types] = await Promise.all([
         loadFilingsFromStorage(allEmployees),
-        fetchAllPatentRoleRecords()
+        fetchAllPatentRoleRecords(),
+        fetchSystemFilingTypes()
       ]);
       setFilings(loaded);
       if (roles) setPatentRoleRecords(roles);
-      setLoading(false);
+      if (types) setSystemFilingTypes(types);
     }
     init();
   }, [allEmployees]);
@@ -124,6 +129,14 @@ export default function PatentFilingDashboard({
           }
         });
 
+        // Update system-wide filing types for all users
+        if (incomingFiling.filing_type) {
+          const t = incomingFiling.filing_type.trim();
+          if (t && !REMOVED_PRE_EXISTING_TYPES.has(t)) {
+            setSystemFilingTypes(prev => prev.includes(t) ? prev : [...prev, t]);
+          }
+        }
+
         // Update selected filing in detail drawer if open
         setSelectedFiling(prev => {
           if (prev && prev.id === incomingFiling.id) {
@@ -143,6 +156,8 @@ export default function PatentFilingDashboard({
             msg = `New filing ${incomingFiling.code} assigned to you!`;
           } else if (payload.action === 'REASSIGN') {
             msg = `Filing ${incomingFiling.code} reassigned.`;
+          } else if (payload.action === 'UPDATE_TYPE') {
+            msg = `Filing ${incomingFiling.code} type updated to "${incomingFiling.filing_type}".`;
           } else if (incomingFiling.status === 'AUDIT') {
             msg = `Filing ${incomingFiling.code} sent to Audit.`;
           } else if (incomingFiling.status === 'CORRECTION') {
@@ -168,11 +183,27 @@ export default function PatentFilingDashboard({
     };
   }, [currentUser, userRoles, allEmployees]);
 
-  // Unique filing types for filter dropdown
+  // Unique manually entered filing types across the system (excluding the removed fixed list)
   const filingTypes = useMemo(() => {
-    const set = new Set(filings.map(f => f.filing_type).filter(Boolean));
-    return Array.from(set);
-  }, [filings]);
+    const set = new Set();
+    filings.forEach(f => {
+      if (f.filing_type && typeof f.filing_type === 'string') {
+        const clean = f.filing_type.trim();
+        if (clean && !REMOVED_PRE_EXISTING_TYPES.has(clean)) {
+          set.add(clean);
+        }
+      }
+    });
+    systemFilingTypes.forEach(t => {
+      if (t && typeof t === 'string') {
+        const clean = t.trim();
+        if (clean && !REMOVED_PRE_EXISTING_TYPES.has(clean)) {
+          set.add(clean);
+        }
+      }
+    });
+    return Array.from(set).sort();
+  }, [filings, systemFilingTypes]);
 
   // Filtered filings based on search & toolbar filters
   const filteredFilings = useMemo(() => {
@@ -215,12 +246,48 @@ export default function PatentFilingDashboard({
     const res = await saveNewFilingToStorage(filingData, currentUser, allEmployees);
     if (res.success) {
       setFilings(prev => [res.filing, ...prev]);
+      if (res.filing.filing_type) {
+        const cleanType = res.filing.filing_type.trim();
+        if (cleanType && !REMOVED_PRE_EXISTING_TYPES.has(cleanType)) {
+          setSystemFilingTypes(prev => prev.includes(cleanType) ? prev : [...prev, cleanType]);
+        }
+      }
       setNotification({
         type: 'success',
         message: `Filing code "${res.filing.code}" successfully created and assigned!`
       });
       return { success: true };
     }
+    return res;
+  };
+
+  // Update filing type handler
+  const handleUpdateFilingType = async (newFilingType) => {
+    if (!selectedFiling) return;
+    const res = await updateFilingTypeInStorage({
+      filing: selectedFiling,
+      newFilingType,
+      actor: currentUser
+    });
+
+    if (res.success) {
+      setFilings(prev => prev.map(f => f.id === res.filing.id ? { ...f, ...res.filing } : f));
+      setSelectedFiling(prev => ({ ...prev, ...res.filing }));
+      const cleanType = res.filing.filing_type.trim();
+      if (cleanType && !REMOVED_PRE_EXISTING_TYPES.has(cleanType)) {
+        setSystemFilingTypes(prev => prev.includes(cleanType) ? prev : [...prev, cleanType]);
+      }
+      setNotification({
+        type: 'success',
+        message: `Filing type updated to "${res.filing.filing_type}".`
+      });
+      return { success: true };
+    }
+
+    setNotification({
+      type: 'error',
+      message: res.error || 'Failed to update filing type.'
+    });
     return res;
   };
 
@@ -480,6 +547,7 @@ export default function PatentFilingDashboard({
         allMembers={allEmployees}
         filings={filings}
         patentRoleRecords={patentRoleRecords}
+        existingFilingTypes={filingTypes}
       />
 
       {/* Detail Slide-Over Drawer */}
@@ -493,6 +561,7 @@ export default function PatentFilingDashboard({
         patentRoleRecords={patentRoleRecords}
         onTransition={handleTransition}
         onReassign={handleReassign}
+        onUpdateFilingType={handleUpdateFilingType}
       />
     </div>
   );

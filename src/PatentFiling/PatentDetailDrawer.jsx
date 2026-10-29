@@ -31,7 +31,8 @@ export default function PatentDetailDrawer({
   allMembers = [],
   patentRoleRecords = null,
   onTransition,
-  onReassign
+  onReassign,
+  onUpdateFilingType
 }) {
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
   const [showReassignModal, setShowReassignModal] = useState(false);
@@ -44,6 +45,8 @@ export default function PatentDetailDrawer({
   const [forceMoveReason, setForceMoveReason] = useState('');
   const [actionError, setActionError] = useState('');
   const [isActing, setIsActing] = useState(false);
+  const [isEditingType, setIsEditingType] = useState(false);
+  const [customTypeInput, setCustomTypeInput] = useState('');
 
   const [historyData, setHistoryData] = useState(null);
 
@@ -126,9 +129,55 @@ export default function PatentDetailDrawer({
                 v{filing.version}
               </span>
             </div>
-            <h2 className="text-lg font-bold text-white tracking-tight">
-              {filing.filing_type}
-            </h2>
+            <div className="flex items-center gap-2 mt-1">
+              {isEditingType ? (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input
+                    type="text"
+                    value={customTypeInput}
+                    onChange={e => setCustomTypeInput(e.target.value)}
+                    placeholder="Enter manual filing type..."
+                    className="glass-input text-xs py-1 px-2.5 bg-[#0a153a] text-white"
+                    autoFocus
+                  />
+                  <button
+                    onClick={async () => {
+                      if (!customTypeInput.trim()) return;
+                      if (onUpdateFilingType) {
+                        await onUpdateFilingType(customTypeInput.trim());
+                      }
+                      setIsEditingType(false);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-[11px] font-bold cursor-pointer"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setIsEditingType(false)}
+                    className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 text-[11px] cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2.5">
+                  <h2 className="text-lg font-bold text-white tracking-tight">
+                    {filing.filing_type || 'Patent Filing'}
+                  </h2>
+                  {isSuperAdmin && onUpdateFilingType && (
+                    <button
+                      onClick={() => {
+                        setCustomTypeInput(filing.filing_type || '');
+                        setIsEditingType(true);
+                      }}
+                      className="text-[11px] text-brand-400 hover:text-brand-300 underline font-medium cursor-pointer"
+                    >
+                      Edit Type
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-2">

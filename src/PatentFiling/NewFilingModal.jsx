@@ -9,22 +9,14 @@ import {
   fetchAllPatentRoleRecords
 } from '../patent/patentRoles.js';
 
-const DEFAULT_FILING_TYPES = [
-  'Provisional',
-  'Non-Provisional',
-  'PCT International',
-  'Design Patent',
-  'Convention Application',
-  'National Phase'
-];
-
 export default function NewFilingModal({
   isOpen,
   onClose,
   onSubmit,
   allMembers = [],
   filings = [],
-  patentRoleRecords = null
+  patentRoleRecords = null,
+  existingFilingTypes = []
 }) {
   const [code, setCode] = useState('');
   const [filingType, setFilingType] = useState('');
@@ -243,12 +235,12 @@ export default function NewFilingModal({
                 list="filing-type-options"
                 value={filingType}
                 onChange={e => setFilingType(e.target.value)}
-                placeholder="Type filing type (e.g. Provisional, PCT)"
+                placeholder="Type filing type (e.g. Utility, Biotech)"
                 className="w-full glass-input text-xs bg-[#0a153a] text-white placeholder-slate-500"
                 required
               />
               <datalist id="filing-type-options">
-                {DEFAULT_FILING_TYPES.map(type => (
+                {existingFilingTypes.map(type => (
                   <option key={type} value={type} />
                 ))}
               </datalist>

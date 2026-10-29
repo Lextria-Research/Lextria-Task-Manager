@@ -616,3 +616,81 @@ export function getFilingEventsAndRounds(filingId) {
 
   return { events: filingEvents, rounds: filingRounds };
 }
+
+/**
+ * Fetches all unique filing types across all filings in Supabase.
+ */
+export async function fetchSystemFilingTypes() {
+  try {
+    const { data, error } = await supabase
+      .from('patent_filings')
+      .select('filing_type');
+
+    if (!error && Array.isArray(data)) {
+      return Array.from(new Set(data.map(d => d.filing_type).filter(Boolean)));
+    }
+  } catch (e) {
+    console.warn('Error fetching system filing types:', e);
+  }
+  return [];
+}
+
+/**
+ * Updates a filing's filing_type.
+ */
+export async function updateFilingTypeInStorage({ filing, newFilingType, actor }) {
+  const cleanType = (newFilingType || '').trim();
+  if (!cleanType) {
+    return { success: false, error: 'Filing type cannot be empty.' };
+  }
+
+  const newVersion = (filing.version || 1) + 1;
+  const nowIso = new Date().toISOString();
+
+  // 1. Update in Supabase
+  try {
+    await supabase
+      .from('patent_filings')
+      .update({
+        filing_type: cleanType,
+        version: newVersion,
+        updated_at: nowIso
+      })
+      .eq('id', filing.id)
+      .eq('version', filing.version);
+
+    await supabase.from('patent_filing_events').insert([{
+      filing_id: filing.id,
+      from_status: filing.status,
+      to_status: filing.status,
+      actor_id: actor.id,
+      timestamp: nowIso,
+      note: `Filing type updated from "${filing.filing_type}" to "${cleanType}"`
+    }]);
+  } catch (e) {
+    console.warn('Supabase update filing_type exception:', e);
+  }
+
+  // 2. Update local cache
+  const updatedFiling = {
+    ...filing,
+    filing_type: cleanType,
+    version: newVersion,
+    updated_at: nowIso
+  };
+
+  const cached = getLocalCache(LOCAL_STORAGE_KEY, []);
+  const nextList = cached.map(f => f.id === filing.id ? updatedFiling : f);
+  saveLocalCache(LOCAL_STORAGE_KEY, nextList);
+
+  // 3. Broadcast real-time change event
+  broadcastPatentChange({
+    action: 'UPDATE_TYPE',
+    filing: updatedFiling,
+    actorId: actor.id,
+    actorName: actor.name,
+    version: newVersion
+  });
+
+  return { success: true, filing: updatedFiling };
+}
