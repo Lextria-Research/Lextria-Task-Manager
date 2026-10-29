@@ -1,8 +1,8 @@
 // src/PatentFiling/NewFilingModal.jsx
 // "+ New Filing" creation modal for SUPER_ADMIN
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { X, Plus, Clock, Calendar, AlertCircle, FileSpreadsheet } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { X, AlertCircle, FileSpreadsheet } from 'lucide-react';
 import { PATENT_ROLES } from '../patent/patentStateMachine.js';
 import {
   filterMembersByPatentRole,
@@ -27,7 +27,7 @@ export default function NewFilingModal({
   patentRoleRecords = null
 }) {
   const [code, setCode] = useState('');
-  const [filingType, setFilingType] = useState('Provisional');
+  const [filingType, setFilingType] = useState('');
   const [assigneeId, setAssigneeId] = useState('');
   const [auditorId, setAuditorId] = useState('');
   const [estFilingHours, setEstFilingHours] = useState('4');
@@ -40,6 +40,25 @@ export default function NewFilingModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [liveRoleRecords, setLiveRoleRecords] = useState(patentRoleRecords);
 
+  const resetForm = () => {
+    setCode('');
+    setFilingType('');
+    setAssigneeId('');
+    setAuditorId('');
+    setEstFilingHours('4');
+    setEstFilingMins('0');
+    setEstAuditHours('1');
+    setEstAuditMins('0');
+    setHardDeadline('');
+    setPriority('Medium');
+    setError('');
+  };
+
+  const handleClose = () => {
+    resetForm();
+    onClose();
+  };
+
   // Fetch latest role records when modal opens if not provided
   useEffect(() => {
     if (isOpen && !patentRoleRecords) {
@@ -48,23 +67,6 @@ export default function NewFilingModal({
       });
     }
   }, [isOpen, patentRoleRecords]);
-
-  // Reset form when modal closes or opens
-  useEffect(() => {
-    if (!isOpen) {
-      setCode('');
-      setFilingType('Provisional');
-      setAssigneeId('');
-      setAuditorId('');
-      setEstFilingHours('4');
-      setEstFilingMins('0');
-      setEstAuditHours('1');
-      setEstAuditMins('0');
-      setHardDeadline('');
-      setPriority('Medium');
-      setError('');
-    }
-  }, [isOpen]);
 
   // Calculate each member's current open workload
   const memberLoadMap = useMemo(() => {
@@ -135,6 +137,12 @@ export default function NewFilingModal({
       return;
     }
 
+    const cleanFilingType = filingType.trim();
+    if (!cleanFilingType) {
+      setError('Please enter a filing type (e.g. Provisional, PCT, Design).');
+      return;
+    }
+
     if (!assigneeId) {
       setError('Please select an Assignee.');
       return;
@@ -156,7 +164,7 @@ export default function NewFilingModal({
 
     const filingData = {
       code: cleanCode,
-      filing_type: filingType,
+      filing_type: cleanFilingType,
       assignee_id: assigneeId,
       auditor_id: auditorId,
       est_filing_minutes: estFilingMinutes,
@@ -171,7 +179,7 @@ export default function NewFilingModal({
       if (res && res.error) {
         setError(res.error);
       } else {
-        onClose();
+        handleClose();
       }
     } catch (err) {
       setError(err.message || 'Failed to create filing.');
@@ -195,7 +203,7 @@ export default function NewFilingModal({
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
           >
             <X size={18} />
@@ -230,17 +238,20 @@ export default function NewFilingModal({
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
                 Filing Type <span className="text-red-400">*</span>
               </label>
-              <select
+              <input
+                type="text"
+                list="filing-type-options"
                 value={filingType}
                 onChange={e => setFilingType(e.target.value)}
-                className="w-full glass-input text-xs cursor-pointer bg-[#0a153a]"
-              >
+                placeholder="Type filing type (e.g. Provisional, PCT)"
+                className="w-full glass-input text-xs bg-[#0a153a] text-white placeholder-slate-500"
+                required
+              />
+              <datalist id="filing-type-options">
                 {DEFAULT_FILING_TYPES.map(type => (
-                  <option key={type} value={type} className="bg-[#0a153a] text-white">
-                    {type}
-                  </option>
+                  <option key={type} value={type} />
                 ))}
-              </select>
+              </datalist>
             </div>
           </div>
 

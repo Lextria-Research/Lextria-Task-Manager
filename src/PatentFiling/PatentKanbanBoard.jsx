@@ -75,8 +75,6 @@ export default function PatentKanbanBoard({
   showClosedArchive = false
 }) {
   const isSuperAdmin = hasPatentRole(userRoles, PATENT_ROLES.SUPER_ADMIN);
-  const isAssignee = hasPatentRole(userRoles, PATENT_ROLES.ASSIGNEE);
-  const isAuditor = hasPatentRole(userRoles, PATENT_ROLES.AUDITOR);
 
   // Filter filings based on role-scoped view
   const filterByRoleScope = (filing) => {
@@ -153,7 +151,7 @@ export default function PatentKanbanBoard({
 
   // Render 6 Kanban Columns
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 items-start min-w-[1200px] xl:min-w-0">
+    <div className="grid grid-cols-6 gap-3.5 items-start min-w-[1360px]">
       {KANBAN_COLUMNS.map(col => {
         const columnFilings = scopedFilings.filter(f => f.status === col.id);
         const Icon = col.icon;
