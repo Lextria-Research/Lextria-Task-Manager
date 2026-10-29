@@ -17,6 +17,12 @@ import {
 
 const STORAGE_KEY = 'lextria_leader_ticktick_data';
 
+export function isPranavBhat(user) {
+  if (!user) return false;
+  const name = (typeof user === 'string' ? user : user.name || '').trim().toLowerCase().replace(/\s+/g, '');
+  return name.includes('pranav');
+}
+
 export const WhatsAppIcon = ({ size = 16, className = '' }) => (
   <svg
     width={size}
@@ -459,6 +465,14 @@ export default function LeaderTaskboard({ currentUser }) {
   // Active view inside Leader Taskboard:
   // 'tasks' | 'matrix' | 'calendar' | 'pomo' | 'habit' | 'countdown'
   const [activeModule, setActiveModule] = useState('tasks');
+  const canAccessMatrix = isPranavBhat(currentUser);
+
+  // Eisenhower Matrix taskboard is strictly visible for Pranav Bhat only
+  useEffect(() => {
+    if (activeModule === 'matrix' && !canAccessMatrix) {
+      setActiveModule('tasks');
+    }
+  }, [activeModule, canAccessMatrix]);
 
   // Search & Notification popover states
   const [searchOpen, setSearchOpen] = useState(false);
@@ -1130,7 +1144,7 @@ export default function LeaderTaskboard({ currentUser }) {
         <nav className="flex flex-col items-center gap-1.5 w-full">
           {[
             { id: 'tasks', label: 'Tasks', icon: CheckSquare },
-            { id: 'matrix', label: 'Eisenhower Matrix', icon: LayoutGrid },
+            ...(canAccessMatrix ? [{ id: 'matrix', label: 'Eisenhower Matrix', icon: LayoutGrid }] : []),
             { id: 'calendar', label: 'Calendar', icon: CalendarIcon },
             { id: 'pomo', label: 'Pomodoro Focus', icon: Timer },
             { id: 'habit', label: 'Habit Tracker', icon: Flame },
@@ -1701,9 +1715,9 @@ export default function LeaderTaskboard({ currentUser }) {
         )}
 
         {/* ------------------------------------------------------- */}
-        {/* MODULE 2: EISENHOWER MATRIX (Image 1) */}
+        {/* MODULE 2: EISENHOWER MATRIX (Strictly for Pranav Bhat) */}
         {/* ------------------------------------------------------- */}
-        {activeModule === 'matrix' && (
+        {activeModule === 'matrix' && canAccessMatrix && (
           <div className="flex-1 flex flex-col p-6 overflow-y-auto custom-scrollbar">
             <div className="flex items-center justify-between mb-6">
               <div>

@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node test_preview_features.js && node test_leader_and_confidentiality.js && node test_patent_workflow.js && node test_patent_realtime.js && node test_patent_notifications.js && node -e \"require('fs').writeFileSync('public/version.txt', Date.now().toString())\" && vite build",
-    "test": "node test_preview_features.js && node test_leader_and_confidentiality.js && node test_patent_workflow.js && node test_patent_realtime.js && node test_patent_notifications.js",
+    "build": "node test_preview_features.js && node test_leader_and_confidentiality.js && node test_patent_workflow.js && node test_patent_realtime.js && node test_patent_notifications.js && node test_patent_stages_and_analytics.js && node -e \"require('fs').writeFileSync('public/version.txt', Date.now().toString())\" && vite build",
+    "test": "node test_preview_features.js && node test_leader_and_confidentiality.js && node test_patent_workflow.js && node test_patent_realtime.js && node test_patent_notifications.js && node test_patent_stages_and_analytics.js",
     "lint": "eslint .",
     "preview": "vite preview"
   },

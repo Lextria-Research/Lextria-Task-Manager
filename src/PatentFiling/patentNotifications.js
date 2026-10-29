@@ -168,6 +168,175 @@ export function buildFilingReassignNotifications({
   return notifications;
 }
 
+/**
+ * Builds server-decided notifications for filing stage transitions.
+ * Plays respective sound (filer.mp3 / auditor.mp3) for respective personnel at every stage:
+ * - ASSIGNED -> FILING: Auditor notified that filing is accepted & active (auditor.mp3)
+ * - -> AUDIT (from FILING or CORRECTION): Auditor notified of submitted filing (auditor.mp3)
+ * - AUDIT -> CORRECTION: Assignee notified of requested corrections with reason (filer.mp3)
+ * - AUDIT -> PAYMENT: Assignee notified that audit passed and moved to payment (filer.mp3)
+ * - PAYMENT -> ACK: Ack Checker (Prashanth) & Assignee notified of payment confirmation (auditor.mp3 / filer.mp3)
+ * - ACK -> CLOSED: Assignee and Auditor notified of completion and official close (filer.mp3 / auditor.mp3)
+ * - Force Move (Super Admin): Respective assignee / auditor / ack checker notified
+ */
+export function buildFilingTransitionNotifications({
+  filing,
+  fromStatus,
+  toStatus,
+  actor,
+  payload = {},
+  allMembers = []
+}) {
+  if (!filing || !toStatus) return [];
+
+  const notifications = [];
+  const nowIso = new Date().toISOString();
+  const actorName = actor?.name || 'Team Member';
+  const actorId = actor?.id;
+
+  const isActorAssignee = isMemberMatch(actorId, actorName, filing.assignee_id, filing.assignee_name);
+  const isActorAuditor = isMemberMatch(actorId, actorName, filing.auditor_id, filing.auditor_name);
+
+  // 1. ASSIGNED -> FILING
+  if (toStatus === 'FILING') {
+    if (filing.auditor_id && !isActorAuditor) {
+      notifications.push({
+        id: `notif-${Date.now()}-filing-${Math.random().toString(36).slice(2, 7)}`,
+        recipient_id: filing.auditor_id,
+        filing_id: filing.id,
+        code: filing.code,
+        type: 'STAGE_FILING',
+        role_type: 'auditor', // Doorbell sound
+        message: `${filing.code} accepted by Assignee (${filing.assignee_name || 'Assignee'}) and is now in filing.`,
+        read: false,
+        created_at: nowIso
+      });
+    }
+  }
+
+  // 2. -> AUDIT (submitted by Assignee from FILING or CORRECTION)
+  else if (toStatus === 'AUDIT') {
+    if (filing.auditor_id && !isActorAuditor) {
+      const isReaudit = fromStatus === 'CORRECTION';
+      notifications.push({
+        id: `notif-${Date.now()}-audit-${Math.random().toString(36).slice(2, 7)}`,
+        recipient_id: filing.auditor_id,
+        filing_id: filing.id,
+        code: filing.code,
+        type: 'STAGE_AUDIT',
+        role_type: 'auditor', // Doorbell sound
+        message: isReaudit
+          ? `${filing.code} corrections submitted for re-audit by ${filing.assignee_name || 'Assignee'}. Est. audit time: ${formatEstTime(filing.est_audit_minutes)}.`
+          : `${filing.code} has been submitted for your audit by ${filing.assignee_name || 'Assignee'}. Est. audit time: ${formatEstTime(filing.est_audit_minutes)}.`,
+        read: false,
+        created_at: nowIso
+      });
+    }
+  }
+
+  // 3. AUDIT -> CORRECTION (sent by Auditor)
+  else if (toStatus === 'CORRECTION') {
+    if (filing.assignee_id && !isActorAssignee) {
+      const desc = payload?.description ? ` Reason: ${payload.description}` : '';
+      notifications.push({
+        id: `notif-${Date.now()}-correction-${Math.random().toString(36).slice(2, 7)}`,
+        recipient_id: filing.assignee_id,
+        filing_id: filing.id,
+        code: filing.code,
+        type: 'STAGE_CORRECTION',
+        role_type: 'filer', // Air horn sound
+        message: `${filing.code} sent for correction by Auditor (${filing.auditor_name || 'Auditor'}).${desc}`,
+        read: false,
+        created_at: nowIso
+      });
+    }
+  }
+
+  // 4. AUDIT -> PAYMENT (approved by Auditor)
+  else if (toStatus === 'PAYMENT') {
+    if (filing.assignee_id && !isActorAssignee) {
+      notifications.push({
+        id: `notif-${Date.now()}-payment-${Math.random().toString(36).slice(2, 7)}`,
+        recipient_id: filing.assignee_id,
+        filing_id: filing.id,
+        code: filing.code,
+        type: 'STAGE_PAYMENT',
+        role_type: 'filer', // Air horn sound
+        message: `${filing.code} approved by Auditor (${filing.auditor_name || 'Auditor'}) and moved to Payment.`,
+        read: false,
+        created_at: nowIso
+      });
+    }
+  }
+
+  // 5. PAYMENT -> ACK (payment confirmed)
+  else if (toStatus === 'ACK') {
+    // Ack Checker: Prashanth (f7fe55e4-7c00-4030-86ed-0ccf39737074)
+    const ackCheckerId = 'f7fe55e4-7c00-4030-86ed-0ccf39737074';
+    const ref = payload?.payment_reference ? ` (Ref: ${payload.payment_reference})` : '';
+
+    if (!isMemberMatch(actorId, actorName, ackCheckerId)) {
+      notifications.push({
+        id: `notif-${Date.now()}-ack-${Math.random().toString(36).slice(2, 7)}`,
+        recipient_id: ackCheckerId,
+        filing_id: filing.id,
+        code: filing.code,
+        type: 'STAGE_ACK_PENDING',
+        role_type: 'auditor', // Doorbell sound
+        message: `${filing.code} payment confirmed${ref}. Acknowledgment receipt pending.`,
+        read: false,
+        created_at: nowIso
+      });
+    }
+
+    if (filing.assignee_id && !isActorAssignee && String(filing.assignee_id) !== String(ackCheckerId)) {
+      notifications.push({
+        id: `notif-${Date.now()}-ack-assignee-${Math.random().toString(36).slice(2, 7)}`,
+        recipient_id: filing.assignee_id,
+        filing_id: filing.id,
+        code: filing.code,
+        type: 'STAGE_ACK_CONFIRMED',
+        role_type: 'filer', // Air horn sound
+        message: `${filing.code} payment confirmed${ref}. Moved to Acknowledgment.`,
+        read: false,
+        created_at: nowIso
+      });
+    }
+  }
+
+  // 6. ACK -> CLOSED (closed by ACK_CHECKER)
+  else if (toStatus === 'CLOSED') {
+    if (filing.assignee_id && !isActorAssignee) {
+      notifications.push({
+        id: `notif-${Date.now()}-closed-assignee-${Math.random().toString(36).slice(2, 7)}`,
+        recipient_id: filing.assignee_id,
+        filing_id: filing.id,
+        code: filing.code,
+        type: 'STAGE_CLOSED',
+        role_type: 'filer', // Air horn sound
+        message: `${filing.code} – ${filing.filing_type} has been officially closed and completed!`,
+        read: false,
+        created_at: nowIso
+      });
+    }
+    if (filing.auditor_id && !isActorAuditor) {
+      notifications.push({
+        id: `notif-${Date.now()}-closed-auditor-${Math.random().toString(36).slice(2, 7)}`,
+        recipient_id: filing.auditor_id,
+        filing_id: filing.id,
+        code: filing.code,
+        type: 'STAGE_CLOSED',
+        role_type: 'auditor', // Doorbell sound
+        message: `${filing.code} – ${filing.filing_type} has been officially closed and completed!`,
+        read: false,
+        created_at: nowIso
+      });
+    }
+  }
+
+  return notifications;
+}
+
 // ----------------------------------------------------
 // DATABASE & STORAGE PERSISTENCE
 // ----------------------------------------------------

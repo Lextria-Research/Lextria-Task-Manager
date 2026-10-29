@@ -18,6 +18,7 @@ import { broadcastPatentChange } from './patentRealtime.js';
 import {
   buildFilingCreationNotifications,
   buildFilingReassignNotifications,
+  buildFilingTransitionNotifications,
   buildSuperAdminConfirmationMessage,
   savePatentNotificationsToDb
 } from './patentNotifications.js';
@@ -405,17 +406,34 @@ export async function executeTransitionInStorage({
     saveLocalCache(LOCAL_ROUNDS_KEY, rounds);
   }
 
-  // 5. Broadcast real-time change event across all connected clients
+  // 5. Build, persist and broadcast notifications for respective personnel
+  const notifications = buildFilingTransitionNotifications({
+    filing: result.filing,
+    fromStatus,
+    toStatus,
+    actor,
+    payload,
+    allMembers
+  });
+
+  if (notifications && notifications.length > 0) {
+    await savePatentNotificationsToDb(notifications);
+  }
+
+  // 6. Broadcast real-time change event across all connected clients
   broadcastPatentChange({
     action: 'TRANSITION',
     filing: result.filing,
     event: result.event,
+    notifications,
+    fromStatus,
+    toStatus,
     actorId: actorUuid,
     actorName: actor?.name || 'User',
     version: result.filing.version
   });
 
-  return result;
+  return { ...result, notifications };
 }
 
 /**

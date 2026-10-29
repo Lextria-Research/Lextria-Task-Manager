@@ -33,6 +33,7 @@ import MemberManualModal from './MemberManualModal';
 import LeaderTaskboard from './LeaderTaskboard';
 import SettingsPage, { getStoredProfiles } from './SettingsPage';
 import PatentFilingDashboard from './PatentFiling/PatentFilingDashboard';
+import PatentAnalytics from './PatentFiling/PatentAnalytics';
 import { fetchUserPatentRoles, getInitialPatentRoles, isMemberMatch } from './patent/patentRoles';
 import {
   fetchUserPatentNotifications,
@@ -3402,7 +3403,8 @@ export default function App() {
     if (isLeaderOrSharan(sessionData)) {
       setActiveTab('leader-board');
     } else {
-      setActiveTab('queries');
+      const initRoles = getInitialPatentRoles(sessionData);
+      setActiveTab(initRoles.length > 0 ? 'patent-filing' : 'projects');
     }
 
     // Trigger manual on login if not permanently dismissed
@@ -3437,7 +3439,7 @@ export default function App() {
         return savedTab;
       }
     } catch {}
-    return 'queries';
+    return 'patent-filing';
   });
 
   // Patent Module Roles & Deep Link Routing
@@ -3605,12 +3607,14 @@ export default function App() {
     }
   };
 
-  // Confidentiality guard: non-leaders (anyone except Pranav Bhat & Sharan) cannot access leader-board
+  // Confidentiality guard: non-leaders cannot access leader-board, analytics, or queries
   useEffect(() => {
-    if (activeTab === 'leader-board' && !isLeaderOrSharan(currentUser)) {
-      setActiveTab('queries');
+    if (!isLeaderOrSharan(currentUser)) {
+      if (activeTab === 'leader-board' || activeTab === 'queries' || activeTab === 'analytics') {
+        setActiveTab(hasPatentAccess ? 'patent-filing' : 'projects');
+      }
     }
-  }, [currentUser, activeTab]);
+  }, [currentUser, activeTab, hasPatentAccess]);
   const [tasksSubTab, setTasksSubTab] = useState('tasks'); // 'tasks' | 'calendar'
   const [boardViewFilter, setBoardViewFilter] = useState('MY'); // 'MY' | 'ALL'
   const [priorityFilter, setPriorityFilter] = useState('All');
@@ -5696,12 +5700,13 @@ export default function App() {
           <nav className="flex flex-col gap-1 px-2">
             {[
               ...(isLeaderOrSharan(currentUser) ? [
-                { id: 'leader-board', label: 'Leader Workspace', icon: CheckSquare, badge: 'Leader' }
+                { id: 'leader-board', label: 'Leader Workspace', icon: CheckSquare, badge: 'Leader' },
+                { id: 'analytics', label: 'Analytics', icon: BarChart3, badge: 'Leader' },
+                { id: 'queries', label: 'Queries', icon: Database, badge: 'Leader' }
               ] : []),
               ...(hasPatentAccess ? [
                 { id: 'patent-filing', label: 'Patent Filing', icon: FileSpreadsheet, badge: 'Patent' }
               ] : []),
-              { id: 'queries', label: 'Queries', icon: Database },
               { id: 'projects', label: 'Project Reporting', icon: FolderKanban },
               { id: 'settings', label: 'Settings', icon: Settings },
             ].map(({ id, label, icon: Icon, badge }) => (
@@ -5749,7 +5754,7 @@ export default function App() {
           )}
 
           {/* Main Content */}
-          <main className={`flex-1 ${activeTab === 'queries' || activeTab === 'projects' || activeTab === 'leader-board' || activeTab === 'settings' || activeTab === 'patent-filing' ? 'p-0 flex flex-col min-h-0 overflow-auto' : 'px-6 py-6'}`}>
+          <main className={`flex-1 ${activeTab === 'queries' || activeTab === 'projects' || activeTab === 'leader-board' || activeTab === 'settings' || activeTab === 'patent-filing' || activeTab === 'analytics' ? 'p-0 flex flex-col min-h-0 overflow-auto' : 'px-6 py-6'}`}>
 
           {/* Patent Filing Workflow Page */}
           {activeTab === 'patent-filing' && hasPatentAccess && (
@@ -5767,8 +5772,13 @@ export default function App() {
             <LeaderTaskboard currentUser={currentUser} />
           )}
 
-          {/* Queries Page */}
-          {activeTab === 'queries' && (
+          {/* Leadership Analytics Platform (Exclusive to Leaders) */}
+          {activeTab === 'analytics' && isLeaderOrSharan(currentUser) && (
+            <PatentAnalytics currentUser={currentUser} allEmployees={allEmployees} />
+          )}
+
+          {/* Queries Page (Leaders only) */}
+          {activeTab === 'queries' && isLeaderOrSharan(currentUser) && (
             <QueryManager 
               agents={allEmployees} 
               isAdmin={isAdmin} 

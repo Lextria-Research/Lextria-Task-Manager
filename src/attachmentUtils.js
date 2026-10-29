@@ -186,6 +186,16 @@ export function isLeaderOrSharan(user) {
 }
 
 /**
+ * Checks if a user is specifically Pranav Bhat.
+ * Used to restrict the Eisenhower Matrix taskboard exclusively to Pranav Bhat.
+ */
+export function isPranavBhat(user) {
+  if (!user) return false;
+  const name = (typeof user === 'string' ? user : user.name || '').trim().toLowerCase().replace(/\s+/g, '');
+  return name.includes('pranav');
+}
+
+/**
  * Compares two member names with tolerance for whitespace, casing, and partial names.
  */
 export function isSameMember(a, b) {

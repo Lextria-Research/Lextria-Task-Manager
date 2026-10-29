@@ -13,6 +13,8 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { PATENT_STATUSES, PATENT_ROLES, hasPatentRole } from '../patent/patentStateMachine.js';
+import { isMemberMatch } from '../patent/patentRoles.js';
+import { isLeaderOrSharan } from '../attachmentUtils.js';
 import PatentFilingCard from './PatentFilingCard.jsx';
 
 export const KANBAN_COLUMNS = [
@@ -71,53 +73,48 @@ export default function PatentKanbanBoard({
   onCardClick,
   currentUser,
   userRoles = [],
-  viewScope = 'ALL', // 'MY' | 'ALL'
   showClosedArchive = false
 }) {
   const isSuperAdmin = hasPatentRole(userRoles, PATENT_ROLES.SUPER_ADMIN);
+  const isLeader = isSuperAdmin ||
+    (currentUser?.role && currentUser.role.toLowerCase() === 'leader') ||
+    isLeaderOrSharan(currentUser);
 
-  // Filter filings based on role-scoped view
+  // Filter filings based on role-scoped view:
+  // "Merge the all code and my code tab. the members shall see only their codes, and the leaders shall see all the codes assigned."
   const filterByRoleScope = (filing) => {
     // If viewing Closed archive
     if (showClosedArchive) {
-      return filing.status === PATENT_STATUSES.CLOSED;
+      if (filing.status !== PATENT_STATUSES.CLOSED) return false;
+      if (isLeader) return true;
+      const isMine = isMemberMatch(currentUser?.id, currentUser?.name, filing.assignee_id, filing.assignee_name);
+      const isAuditedByMe = isMemberMatch(currentUser?.id, currentUser?.name, filing.auditor_id, filing.auditor_name);
+      return isMine || isAuditedByMe;
     }
 
     if (filing.status === PATENT_STATUSES.CLOSED) return false;
 
-    // Super Admin sees all
-    if (isSuperAdmin || viewScope === 'ALL') {
+    // Leaders see all codes assigned
+    if (isLeader) {
       return true;
     }
 
-    const isMine = String(filing.assignee_id) === String(currentUser?.id) ||
-      (currentUser?.name && filing.assignee_name && filing.assignee_name.toLowerCase().includes(currentUser.name.toLowerCase()));
-    const isAuditedByMe = String(filing.auditor_id) === String(currentUser?.id) ||
-      (currentUser?.name && filing.auditor_name && filing.auditor_name.toLowerCase().includes(currentUser.name.toLowerCase()));
+    // Regular members see only their assigned codes
+    const isMine = isMemberMatch(currentUser?.id, currentUser?.name, filing.assignee_id, filing.assignee_name);
+    const isAuditedByMe = isMemberMatch(currentUser?.id, currentUser?.name, filing.auditor_id, filing.auditor_name);
+    const isAckChecker = hasPatentRole(userRoles, PATENT_ROLES.ACK_CHECKER);
 
-    // Payment and Ack columns are visible to all module users
-    if (filing.status === PATENT_STATUSES.PAYMENT || filing.status === PATENT_STATUSES.ACK) {
-      return true;
-    }
+    if (isMine || isAuditedByMe) return true;
+    if (isAckChecker && (filing.status === PATENT_STATUSES.PAYMENT || filing.status === PATENT_STATUSES.ACK)) return true;
 
-    // Assignee view: their Assigned, Filing, Correction
-    if (filing.status === PATENT_STATUSES.ASSIGNED || filing.status === PATENT_STATUSES.FILING || filing.status === PATENT_STATUSES.CORRECTION) {
-      return isMine;
-    }
-
-    // Auditor view: Audit column where they are the auditor
-    if (filing.status === PATENT_STATUSES.AUDIT) {
-      return isAuditedByMe;
-    }
-
-    return true;
+    return false;
   };
 
   const scopedFilings = filings.filter(filterByRoleScope);
 
   // If viewing Closed Archive
   if (showClosedArchive) {
-    const closedFilings = filings.filter(f => f.status === PATENT_STATUSES.CLOSED);
+    const closedFilings = filings.filter(filterByRoleScope);
     return (
       <div className="space-y-4">
         <div className="flex items-center gap-2 text-sm text-slate-300 pb-2 border-b border-white/10">

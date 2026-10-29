@@ -48,7 +48,6 @@ export default function PatentFilingDashboard({
   const [personFilter, setPersonFilter] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [priorityFilter, setPriorityFilter] = useState('ALL');
-  const [viewScope, setViewScope] = useState('ALL'); // 'MY' | 'ALL'
   const [showClosedArchive, setShowClosedArchive] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('CONNECTED');
 
@@ -477,32 +476,8 @@ export default function PatentFilingDashboard({
           />
         </div>
 
-        {/* Right: Dropdown Filters & Scope Toggle */}
+        {/* Right: Dropdown Filters */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Scope Toggle: My Codes vs All Codes */}
-          <div className="flex items-center bg-white/5 border border-white/10 rounded-xl p-0.5 text-xs">
-            <button
-              onClick={() => setViewScope('MY')}
-              className={`px-3 py-1.5 rounded-lg font-semibold transition cursor-pointer ${
-                viewScope === 'MY'
-                  ? 'bg-brand-500 text-white shadow-md'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              My Codes
-            </button>
-            <button
-              onClick={() => setViewScope('ALL')}
-              className={`px-3 py-1.5 rounded-lg font-semibold transition cursor-pointer ${
-                viewScope === 'ALL'
-                  ? 'bg-brand-500 text-white shadow-md'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              All Codes
-            </button>
-          </div>
-
           {/* Person Filter */}
           <select
             value={personFilter}
@@ -553,7 +528,6 @@ export default function PatentFilingDashboard({
           onCardClick={(filing) => setSelectedFiling(filing)}
           currentUser={currentUser}
           userRoles={userRoles}
-          viewScope={viewScope}
           showClosedArchive={showClosedArchive}
         />
       </div>
