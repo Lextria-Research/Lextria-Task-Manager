@@ -9,6 +9,7 @@ import {
   PATENT_STATUSES
 } from '../patent/patentStateMachine.js';
 import { KNOWN_MEMBER_UUIDS } from '../patent/patentRoles.js';
+import { broadcastPatentChange } from './patentRealtime.js';
 
 const LOCAL_STORAGE_KEY = 'lextria_patent_filings_cache';
 const LOCAL_EVENTS_KEY = 'lextria_patent_events_cache';
@@ -143,6 +144,17 @@ export function saveLocalCache(key, data) {
   } catch (e) {}
 }
 
+export function getKnownMemberName(id, fallback = '') {
+  if (!id) return fallback;
+  const clean = String(id).toLowerCase();
+  for (const [name, uuid] of Object.entries(KNOWN_MEMBER_UUIDS)) {
+    if (clean === uuid || clean === `user_${name}`) {
+      return name.charAt(0).toUpperCase() + name.slice(1);
+    }
+  }
+  return fallback;
+}
+
 /**
  * Loads all filings. First queries Supabase, falls back to local cache/demo data if table is not yet in Supabase.
  */
@@ -153,21 +165,23 @@ export async function loadFilingsFromStorage(allMembers = []) {
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (!error && data && data.length > 0) {
-      // Map names from allMembers
+    if (!error && Array.isArray(data) && data.length > 0) {
+      // Map names from allMembers or known UUIDs
       const enriched = data.map(f => {
         const a = allMembers.find(m => String(m.id) === String(f.assignee_id));
         const u = allMembers.find(m => String(m.id) === String(f.auditor_id));
         return {
           ...f,
-          assignee_name: a ? a.name : f.assignee_name || 'Assignee',
-          auditor_name: u ? u.name : f.auditor_name || 'Auditor'
+          assignee_name: a ? a.name : (f.assignee_name || getKnownMemberName(f.assignee_id, 'Assignee')),
+          auditor_name: u ? u.name : (f.auditor_name || getKnownMemberName(f.auditor_id, 'Auditor'))
         };
       });
       saveLocalCache(LOCAL_STORAGE_KEY, enriched);
       return enriched;
     }
-  } catch (err) {}
+  } catch (err) {
+    console.warn('Error loading filings from Supabase:', err);
+  }
 
   // Helper to normalize filings and resolve real member UUIDs
   const normalizeFilings = (list) => {
@@ -203,8 +217,8 @@ export async function loadFilingsFromStorage(allMembers = []) {
         ...f,
         assignee_id: aId,
         auditor_id: uId,
-        assignee_name: aName,
-        auditor_name: uName
+        assignee_name: aName || getKnownMemberName(aId, 'Assignee'),
+        auditor_name: uName || getKnownMemberName(uId, 'Auditor')
       };
     });
   };
@@ -253,7 +267,7 @@ export async function saveNewFilingToStorage(filingData, actor, allMembers = [])
     updated_at: nowIso
   };
 
-  // 1. Try Supabase
+  // 1. Insert into Supabase
   try {
     const { data, error } = await supabase
       .from('patent_filings')
@@ -276,17 +290,16 @@ export async function saveNewFilingToStorage(filingData, actor, allMembers = [])
 
     if (!error && data) {
       newRecord.id = data.id;
+      newRecord.version = data.version;
+    } else if (error) {
+      console.warn('Supabase insert warning:', error.message);
     }
-  } catch (e) {}
+  } catch (e) {
+    console.warn('Supabase insert exception:', e);
+  }
 
-  // 2. Update local cache
-  const cached = getLocalCache(LOCAL_STORAGE_KEY, DEFAULT_DEMO_FILINGS);
-  const updated = [newRecord, ...cached];
-  saveLocalCache(LOCAL_STORAGE_KEY, updated);
-
-  // Initial event
-  const events = getLocalCache(LOCAL_EVENTS_KEY, []);
-  events.push({
+  // 2. Initial event
+  const initialEvent = {
     filing_id: newRecord.id,
     from_status: null,
     to_status: PATENT_STATUSES.ASSIGNED,
@@ -294,8 +307,37 @@ export async function saveNewFilingToStorage(filingData, actor, allMembers = [])
     actor_name: actor.name,
     timestamp: nowIso,
     note: 'Filing created and assigned by Super Admin'
-  });
+  };
+
+  try {
+    await supabase.from('patent_filing_events').insert([{
+      filing_id: newRecord.id,
+      from_status: null,
+      to_status: PATENT_STATUSES.ASSIGNED,
+      actor_id: actor.id,
+      timestamp: nowIso,
+      note: initialEvent.note
+    }]);
+  } catch (e) {}
+
+  // 3. Update local cache
+  const cached = getLocalCache(LOCAL_STORAGE_KEY, DEFAULT_DEMO_FILINGS);
+  const updated = [newRecord, ...cached];
+  saveLocalCache(LOCAL_STORAGE_KEY, updated);
+
+  const events = getLocalCache(LOCAL_EVENTS_KEY, []);
+  events.push(initialEvent);
   saveLocalCache(LOCAL_EVENTS_KEY, events);
+
+  // 4. Broadcast real-time change event across all connected clients
+  broadcastPatentChange({
+    action: 'CREATE',
+    filing: newRecord,
+    event: initialEvent,
+    actorId: actor.id,
+    actorName: actor.name,
+    version: newRecord.version
+  });
 
   return { success: true, filing: newRecord };
 }
@@ -327,9 +369,9 @@ export async function executeTransitionInStorage({
     return result;
   }
 
-  // Update in Supabase if live
+  // 1. Update in Supabase if live
   try {
-    await supabase
+    const { error: updateErr } = await supabase
       .from('patent_filings')
       .update({
         status: result.filing.status,
@@ -344,14 +386,64 @@ export async function executeTransitionInStorage({
       })
       .eq('id', filing.id)
       .eq('version', filing.version);
-  } catch (e) {}
 
-  // Update local cache
+    if (updateErr) {
+      console.warn('Supabase update warning:', updateErr.message);
+    }
+  } catch (e) {
+    console.warn('Supabase update exception:', e);
+  }
+
+  // 2. Insert event in Supabase
+  try {
+    await supabase.from('patent_filing_events').insert([{
+      filing_id: filing.id,
+      from_status: result.event.from_status,
+      to_status: result.event.to_status,
+      actor_id: actor.id,
+      timestamp: result.event.timestamp || new Date().toISOString(),
+      note: result.event.note || ''
+    }]);
+  } catch (e) {
+    console.warn('Supabase event insert exception:', e);
+  }
+
+  // 3. If correction round created or resolved
+  if (result.newCorrectionRound) {
+    try {
+      await supabase.from('patent_correction_rounds').insert([{
+        filing_id: filing.id,
+        round_no: result.newCorrectionRound.round_no,
+        auditor_id: actor.id,
+        description: result.newCorrectionRound.description,
+        attachments: result.newCorrectionRound.attachments || [],
+        created_at: result.newCorrectionRound.created_at
+      }]);
+    } catch (e) {
+      console.warn('Supabase round insert exception:', e);
+    }
+  } else if (toStatus === PATENT_STATUSES.AUDIT && payload?.assigneeResponseNote) {
+    // Round resolved / responded
+    try {
+      await supabase
+        .from('patent_correction_rounds')
+        .update({
+          resolved_by: actor.id,
+          resolved_at: new Date().toISOString(),
+          assignee_response: payload.assigneeResponseNote
+        })
+        .eq('filing_id', filing.id)
+        .order('round_no', { ascending: false })
+        .limit(1);
+    } catch (e) {}
+  }
+
+  // 4. Update local cache
   const cached = getLocalCache(LOCAL_STORAGE_KEY, DEFAULT_DEMO_FILINGS);
   const nextList = cached.map(f => f.id === filing.id ? { ...f, ...result.filing } : f);
   saveLocalCache(LOCAL_STORAGE_KEY, nextList);
 
-  // Record event
+  // Record event locally
   const events = getLocalCache(LOCAL_EVENTS_KEY, []);
   events.push({
     ...result.event,
@@ -359,7 +451,7 @@ export async function executeTransitionInStorage({
   });
   saveLocalCache(LOCAL_EVENTS_KEY, events);
 
-  // If correction round created
+  // If correction round created locally
   if (result.newCorrectionRound) {
     const rounds = getLocalCache(LOCAL_ROUNDS_KEY, []);
     rounds.push({
@@ -368,6 +460,16 @@ export async function executeTransitionInStorage({
     });
     saveLocalCache(LOCAL_ROUNDS_KEY, rounds);
   }
+
+  // 5. Broadcast real-time change event across all connected clients
+  broadcastPatentChange({
+    action: 'TRANSITION',
+    filing: result.filing,
+    event: result.event,
+    actorId: actor?.id,
+    actorName: actor?.name,
+    version: result.filing.version
+  });
 
   return result;
 }
@@ -403,10 +505,36 @@ export async function executeReassignInStorage({
 
   const updatedWithNames = {
     ...result.filing,
-    assignee_name: assigneeMember ? assigneeMember.name : filing.assignee_name,
-    auditor_name: auditorMember ? auditorMember.name : filing.auditor_name
+    assignee_name: assigneeMember ? assigneeMember.name : (filing.assignee_name || getKnownMemberName(result.filing.assignee_id, 'Assignee')),
+    auditor_name: auditorMember ? auditorMember.name : (filing.auditor_name || getKnownMemberName(result.filing.auditor_id, 'Auditor'))
   };
 
+  // 1. Update in Supabase
+  try {
+    await supabase
+      .from('patent_filings')
+      .update({
+        assignee_id: result.filing.assignee_id,
+        auditor_id: result.filing.auditor_id,
+        version: result.filing.version,
+        updated_at: result.filing.updated_at
+      })
+      .eq('id', filing.id)
+      .eq('version', filing.version);
+
+    await supabase.from('patent_filing_events').insert([{
+      filing_id: filing.id,
+      from_status: filing.status,
+      to_status: filing.status,
+      actor_id: actor.id,
+      timestamp: result.event.timestamp || new Date().toISOString(),
+      note: result.event.note
+    }]);
+  } catch (e) {
+    console.warn('Supabase reassign exception:', e);
+  }
+
+  // 2. Update local cache
   const cached = getLocalCache(LOCAL_STORAGE_KEY, DEFAULT_DEMO_FILINGS);
   const nextList = cached.map(f => f.id === filing.id ? updatedWithNames : f);
   saveLocalCache(LOCAL_STORAGE_KEY, nextList);
@@ -418,7 +546,62 @@ export async function executeReassignInStorage({
   });
   saveLocalCache(LOCAL_EVENTS_KEY, events);
 
+  // 3. Broadcast real-time change event
+  broadcastPatentChange({
+    action: 'REASSIGN',
+    filing: updatedWithNames,
+    event: result.event,
+    previousAssigneeId: filing.assignee_id,
+    previousAuditorId: filing.auditor_id,
+    actorId: actor.id,
+    actorName: actor.name,
+    version: updatedWithNames.version
+  });
+
   return { success: true, filing: updatedWithNames, event: result.event };
+}
+
+/**
+ * Fetches events and correction rounds for a specific filing from Supabase if available,
+ * falling back to local cache.
+ */
+export async function fetchFilingEventsAndRoundsFromDb(filingId, allMembers = []) {
+  try {
+    const [eventsRes, roundsRes] = await Promise.all([
+      supabase
+        .from('patent_filing_events')
+        .select('*')
+        .eq('filing_id', filingId)
+        .order('timestamp', { ascending: true }),
+      supabase
+        .from('patent_correction_rounds')
+        .select('*')
+        .eq('filing_id', filingId)
+        .order('round_no', { ascending: true })
+    ]);
+
+    if (!eventsRes.error && eventsRes.data && eventsRes.data.length > 0) {
+      const enrichedEvents = eventsRes.data.map(ev => {
+        const mem = allMembers.find(m => String(m.id) === String(ev.actor_id));
+        return {
+          ...ev,
+          actor_name: mem ? mem.name : getKnownMemberName(ev.actor_id, 'System')
+        };
+      });
+
+      const enrichedRounds = (roundsRes.data || []).map(rd => {
+        const aud = allMembers.find(m => String(m.id) === String(rd.auditor_id));
+        return {
+          ...rd,
+          auditor_name: aud ? aud.name : getKnownMemberName(rd.auditor_id, 'Auditor')
+        };
+      });
+
+      return { events: enrichedEvents, rounds: enrichedRounds };
+    }
+  } catch (e) {}
+
+  return getFilingEventsAndRounds(filingId);
 }
 
 /**

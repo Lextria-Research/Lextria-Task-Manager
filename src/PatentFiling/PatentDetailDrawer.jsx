@@ -24,7 +24,7 @@ import {
   PATENT_STATUSES,
   hasPatentRole
 } from '../patent/patentStateMachine.js';
-import { getFilingEventsAndRounds } from './patentStorage.js';
+import { getFilingEventsAndRounds, fetchFilingEventsAndRoundsFromDb } from './patentStorage.js';
 import SendCorrectionModal from './SendCorrectionModal.jsx';
 import ReassignModal from './ReassignModal.jsx';
 
@@ -51,6 +51,21 @@ export default function PatentDetailDrawer({
   const [actionError, setActionError] = useState('');
   const [isActing, setIsActing] = useState(false);
 
+  const [historyData, setHistoryData] = useState({ events: [], rounds: [] });
+
+  useEffect(() => {
+    let isMounted = true;
+    if (filing?.id) {
+      setHistoryData(getFilingEventsAndRounds(filing.id));
+      fetchFilingEventsAndRoundsFromDb(filing.id, allMembers).then(res => {
+        if (isMounted && res) {
+          setHistoryData(res);
+        }
+      });
+    }
+    return () => { isMounted = false; };
+  }, [filing?.id, filing?.version, isOpen, allMembers]);
+
   if (!isOpen || !filing) return null;
 
   const isSuperAdmin = hasPatentRole(userRoles, PATENT_ROLES.SUPER_ADMIN);
@@ -60,7 +75,7 @@ export default function PatentDetailDrawer({
     (currentUser?.name && filing.auditor_name && filing.auditor_name.toLowerCase().includes(currentUser.name.toLowerCase()));
   const isAckChecker = hasPatentRole(userRoles, PATENT_ROLES.ACK_CHECKER);
 
-  const { events, rounds } = getFilingEventsAndRounds(filing.id);
+  const { events, rounds } = historyData;
 
   const handleAction = async (toStatus, payload = {}, note = '') => {
     setActionError('');

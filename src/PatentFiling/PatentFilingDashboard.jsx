@@ -18,7 +18,7 @@ import {
   LayoutGrid
 } from 'lucide-react';
 import { PATENT_ROLES, hasPatentRole } from '../patent/patentStateMachine.js';
-import { fetchAllPatentRoleRecords } from '../patent/patentRoles.js';
+import { fetchAllPatentRoleRecords, isMemberMatch } from '../patent/patentRoles.js';
 import PatentKanbanBoard from './PatentKanbanBoard.jsx';
 import PatentDetailDrawer from './PatentDetailDrawer.jsx';
 import NewFilingModal from './NewFilingModal.jsx';
@@ -28,6 +28,7 @@ import {
   executeTransitionInStorage,
   executeReassignInStorage
 } from './patentStorage.js';
+import { initPatentRealtimeSync } from './patentRealtime.js';
 
 export default function PatentFilingDashboard({
   currentUser,
@@ -42,6 +43,7 @@ export default function PatentFilingDashboard({
   const [priorityFilter, setPriorityFilter] = useState('ALL');
   const [viewScope, setViewScope] = useState('ALL'); // 'MY' | 'ALL'
   const [showClosedArchive, setShowClosedArchive] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState('CONNECTED');
 
   // Modals & Drawers
   const [showNewFilingModal, setShowNewFilingModal] = useState(false);
@@ -54,7 +56,7 @@ export default function PatentFilingDashboard({
   // Auto-dismiss toast notification
   useEffect(() => {
     if (notification) {
-      const timer = setTimeout(() => setNotification(null), 4000);
+      const timer = setTimeout(() => setNotification(null), 4500);
       return () => clearTimeout(timer);
     }
   }, [notification]);
@@ -73,6 +75,98 @@ export default function PatentFilingDashboard({
     }
     init();
   }, [allEmployees]);
+
+  // Real-time synchronization subscription
+  useEffect(() => {
+    if (!currentUser || !currentUser.id) return;
+
+    const destroy = initPatentRealtimeSync({
+      currentUser,
+      userRoles,
+      onConnectionChange: (status) => {
+        setConnectionStatus(status);
+      },
+      onRefetchNeeded: async () => {
+        const updated = await loadFilingsFromStorage(allEmployees);
+        setFilings(updated);
+      },
+      onFilingEvent: (payload) => {
+        const incomingFiling = payload.filing;
+        if (!incomingFiling || !incomingFiling.id) return;
+
+        const isSuper = hasPatentRole(userRoles, PATENT_ROLES.SUPER_ADMIN) ||
+          (currentUser.role && currentUser.role.toLowerCase() === 'leader');
+        const isInPaymentOrAck = ['PAYMENT', 'ACK', 'CLOSED'].includes(incomingFiling.status);
+        const isAssignee = isMemberMatch(currentUser.id, currentUser.name, incomingFiling.assignee_id, incomingFiling.assignee_name);
+        const isAuditor = isMemberMatch(currentUser.id, currentUser.name, incomingFiling.auditor_id, incomingFiling.auditor_name);
+
+        const shouldRetain = isSuper || isInPaymentOrAck || isAssignee || isAuditor;
+
+        setFilings(prev => {
+          const existingIdx = prev.findIndex(f => f.id === incomingFiling.id);
+
+          if (!shouldRetain) {
+            // Card should disappear if reassigned away from this user
+            return prev.filter(f => f.id !== incomingFiling.id);
+          }
+
+          if (existingIdx !== -1) {
+            const existing = prev[existingIdx];
+            // Ignore stale events
+            if ((existing.version || 0) >= (incomingFiling.version || 0)) {
+              return prev;
+            }
+            const next = [...prev];
+            next[existingIdx] = { ...existing, ...incomingFiling };
+            return next;
+          } else {
+            return [incomingFiling, ...prev];
+          }
+        });
+
+        // Update selected filing in detail drawer if open
+        setSelectedFiling(prev => {
+          if (prev && prev.id === incomingFiling.id) {
+            if (shouldRetain) {
+              return { ...prev, ...incomingFiling };
+            } else {
+              return null;
+            }
+          }
+          return prev;
+        });
+
+        // Toast notification: Show when mutation was triggered by another user
+        if (payload.actorId && String(payload.actorId) !== String(currentUser.id)) {
+          let msg = `Filing ${incomingFiling.code} updated.`;
+          if (payload.action === 'CREATE') {
+            msg = `New filing ${incomingFiling.code} assigned to you!`;
+          } else if (payload.action === 'REASSIGN') {
+            msg = `Filing ${incomingFiling.code} reassigned.`;
+          } else if (incomingFiling.status === 'AUDIT') {
+            msg = `Filing ${incomingFiling.code} sent to Audit.`;
+          } else if (incomingFiling.status === 'CORRECTION') {
+            msg = `Filing ${incomingFiling.code} sent for Correction.`;
+          } else if (incomingFiling.status === 'PAYMENT') {
+            msg = `Filing ${incomingFiling.code} approved and moved to Payment.`;
+          } else if (incomingFiling.status === 'ACK') {
+            msg = `Filing ${incomingFiling.code} payment confirmed (Ack pending).`;
+          } else if (incomingFiling.status === 'CLOSED') {
+            msg = `Filing ${incomingFiling.code} closed.`;
+          }
+
+          setNotification({
+            type: 'info',
+            message: msg
+          });
+        }
+      }
+    });
+
+    return () => {
+      destroy();
+    };
+  }, [currentUser, userRoles, allEmployees]);
 
   // Unique filing types for filter dropdown
   const filingTypes = useMemo(() => {
@@ -130,9 +224,23 @@ export default function PatentFilingDashboard({
     return res;
   };
 
-  // State machine transition handler
+  // State machine transition handler with Optimistic UI & Rollback
   const handleTransition = async (toStatus, payload = {}, note = '') => {
     if (!selectedFiling) return;
+    const originalFilings = filings;
+    const originalSelected = selectedFiling;
+
+    // 1. Optimistic UI update: move card immediately
+    const optimisticFiling = {
+      ...selectedFiling,
+      status: toStatus,
+      version: (selectedFiling.version || 1) + 1,
+      updated_at: new Date().toISOString()
+    };
+    setFilings(prev => prev.map(f => f.id === selectedFiling.id ? optimisticFiling : f));
+    setSelectedFiling(optimisticFiling);
+
+    // 2. Persist to storage & database
     const res = await executeTransitionInStorage({
       filing: selectedFiling,
       toStatus,
@@ -150,14 +258,24 @@ export default function PatentFilingDashboard({
         message: `Filing ${res.filing.code} moved to ${toStatus}.`
       });
       return { success: true };
+    } else {
+      // 3. Rollback on rejection or validation error
+      setFilings(originalFilings);
+      setSelectedFiling(originalSelected);
+      setNotification({
+        type: 'error',
+        message: res.error || 'Failed to update filing status.'
+      });
+      return res;
     }
-
-    return res;
   };
 
-  // Reassignment handler
+  // Reassignment handler with Optimistic UI & Rollback
   const handleReassign = async (newAssigneeId, newAuditorId, reason) => {
     if (!selectedFiling) return;
+    const originalFilings = filings;
+    const originalSelected = selectedFiling;
+
     const res = await executeReassignInStorage({
       filing: selectedFiling,
       newAssigneeId,
@@ -176,17 +294,30 @@ export default function PatentFilingDashboard({
         message: `Filing ${res.filing.code} reassigned successfully.`
       });
       return { success: true };
+    } else {
+      // Rollback on rejection
+      setFilings(originalFilings);
+      setSelectedFiling(originalSelected);
+      setNotification({
+        type: 'error',
+        message: res.error || 'Failed to reassign filing.'
+      });
+      return res;
     }
-
-    return res;
   };
 
   return (
     <div className="flex-1 flex flex-col min-h-0 space-y-5 px-6 py-4 animate-in fade-in duration-300">
       {/* Toast Notification */}
       {notification && (
-        <div className="fixed top-20 right-8 z-[70] p-4 rounded-2xl bg-emerald-600/90 border border-emerald-400 text-white shadow-2xl flex items-center gap-2.5 text-xs font-semibold backdrop-blur-md animate-in slide-in-from-top-4 duration-300">
-          <CheckCircle2 size={16} />
+        <div className={`fixed top-20 right-8 z-[70] p-4 rounded-2xl border text-white shadow-2xl flex items-center gap-2.5 text-xs font-semibold backdrop-blur-md animate-in slide-in-from-top-4 duration-300 ${
+          notification.type === 'error'
+            ? 'bg-rose-600/95 border-rose-400'
+            : notification.type === 'info'
+            ? 'bg-indigo-600/95 border-indigo-400'
+            : 'bg-emerald-600/95 border-emerald-400'
+        }`}>
+          {notification.type === 'error' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
           <span>{notification.message}</span>
         </div>
       )}
@@ -205,6 +336,12 @@ export default function PatentFilingDashboard({
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-500/20 text-brand-300 border border-brand-500/30 uppercase tracking-wider">
                 6-Stage Pipeline
               </span>
+              {connectionStatus === 'RECONNECTING' && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[11px] font-semibold animate-pulse">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                  Reconnecting…
+                </span>
+              )}
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
               Guarded role-based Kanban pipeline with time tracking and bandwidth balancing
