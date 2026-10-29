@@ -17,13 +17,15 @@ import { DEFAULT_DRAFTERS } from './src/PatentFiling/drafterWorkloadConstants.js
 import { isLeaderOrSharan, isPranavBhat } from './src/attachmentUtils.js';
 import { PATENT_STATUSES, PATENT_ROLES } from './src/patent/patentStateMachine.js';
 import { isMemberMatch } from './src/patent/patentRoles.js';
+import { deleteFilingFromStorage } from './src/PatentFiling/patentStorage.js';
+import { isEventRecipient } from './src/PatentFiling/patentRealtime.js';
 
 let passedTests = 0;
 let failedTests = 0;
 
-function it(desc, fn) {
+async function it(desc, fn) {
   try {
-    fn();
+    await fn();
     console.log(`✅ [PASS] ${desc}`);
     passedTests++;
   } catch (err) {
@@ -31,10 +33,6 @@ function it(desc, fn) {
     failedTests++;
   }
 }
-
-console.log('=====================================================');
-console.log('STARTING STAGES, ANALYTICS & ACCESS PERMISSIONS TESTS');
-console.log('=====================================================\n');
 
 // Mock data
 const mockFiling = {
@@ -56,9 +54,14 @@ const karthikActor = { id: mockFiling.auditor_id, name: 'Karthik' };
 const prashanthAckActor = { id: 'f7fe55e4-7c00-4030-86ed-0ccf39737074', name: 'Prashanth' };
 const mounishaAdminActor = { id: '42a71f9a-7119-457c-8092-0d5b75ce3060', name: 'Mounisha', role: 'leader' };
 
-console.log('--- TEST GROUP 1: Stage-by-Stage Notifications & Sound Assignments ---');
+async function runAllTests() {
+  console.log('=====================================================');
+  console.log('STARTING STAGES, ANALYTICS & ACCESS PERMISSIONS TESTS');
+  console.log('=====================================================\n');
 
-it('Stage 1: ASSIGNED -> FILING notifies Auditor (Doorbell sound)', () => {
+  console.log('--- TEST GROUP 1: Stage-by-Stage Notifications & Sound Assignments ---');
+
+  await it('Stage 1: ASSIGNED -> FILING notifies Auditor (Doorbell sound)', () => {
   const notifs = buildFilingTransitionNotifications({
     filing: mockFiling,
     fromStatus: 'ASSIGNED',
@@ -311,12 +314,52 @@ it('Regular members see only codes where they are assignee or auditor', () => {
   assert.strictEqual(isMineOther || isAuditedByMeOther, false, 'Akshay CANNOT see unrelated members codes');
 });
 
-console.log('\n=====================================================');
-console.log(`TEST SUMMARY: ${passedTests} PASSED, ${failedTests} FAILED`);
-console.log('=====================================================');
+console.log('\n--- TEST GROUP 6: Leader Delete Filing Permission & Real-Time Sync ---');
 
-if (failedTests > 0) {
-  process.exit(1);
-} else {
-  process.exit(0);
+  await it('deleteFilingFromStorage rejects non-leader attempts', async () => {
+    const regularMember = { id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc', name: 'Akshay', role: 'member' };
+    const res = await deleteFilingFromStorage({
+      filingId: 'filing-test-001',
+      code: 'PAT-99',
+      actor: regularMember,
+      actorRoles: [PATENT_ROLES.ASSIGNEE]
+    });
+    assert.strictEqual(res.success, false);
+    assert.ok(res.error.includes('Only firm leaders can delete'));
+  });
+
+  await it('deleteFilingFromStorage permits leaders (Mounisha / Pranav / Sharan)', async () => {
+    const leaderMounisha = { id: '42a71f9a-7119-457c-8092-0d5b75ce3060', name: 'Mounisha', role: 'leader' };
+    const res = await deleteFilingFromStorage({
+      filingId: '00000000-0000-0000-0000-000000000001',
+      code: 'TEST-DEL-1',
+      actor: leaderMounisha,
+      actorRoles: [PATENT_ROLES.SUPER_ADMIN]
+    });
+    assert.strictEqual(res.success, true);
+    assert.strictEqual(res.code, 'TEST-DEL-1');
+  });
+
+  await it('Realtime DELETE event is dispatched to all clients so card disappears everywhere', () => {
+    const regularMember = { id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc', name: 'Akshay', role: 'member' };
+    const deletePayload = {
+      action: 'DELETE',
+      filingId: '00000000-0000-0000-0000-000000000001',
+      code: 'TEST-DEL-1'
+    };
+    const isRecipient = isEventRecipient(deletePayload, regularMember, [PATENT_ROLES.ASSIGNEE]);
+    assert.strictEqual(isRecipient, true, 'All clients must receive DELETE event to remove card from board');
+  });
+
+  console.log('\n=====================================================');
+  console.log(`TEST SUMMARY: ${passedTests} PASSED, ${failedTests} FAILED`);
+  console.log('=====================================================');
+
+  if (failedTests > 0) {
+    process.exit(1);
+  } else {
+    process.exit(0);
+  }
 }
+
+runAllTests();

@@ -1,9 +1,9 @@
 // src/PatentFiling/PatentFilingCard.jsx
 // Dedicated Kanban Card for Patent Filing Workflow matching Tasks design tokens
 
-import { Clock, Calendar, RotateCcw, Flame } from 'lucide-react';
+import { Clock, Calendar, RotateCcw, Flame, Trash2 } from 'lucide-react';
 
-export default function PatentFilingCard({ filing, onClick, currentUser }) {
+export default function PatentFilingCard({ filing, onClick, currentUser, onDelete, isLeader }) {
   const isUrgent = filing.priority === 'Urgent' || filing.priority === 'High';
   const todayStr = new Date().toISOString().split('T')[0];
   const isOverdue = filing.hard_deadline && filing.hard_deadline < todayStr && filing.status !== 'CLOSED';
@@ -46,11 +46,28 @@ export default function PatentFilingCard({ filing, onClick, currentUser }) {
             : 'border-white/10'
       }`}
     >
-      {/* Top Row: Code + Priority (Zero Overlap, Guaranteed Space) */}
+      {/* Top Row: Code + Small Delete Button (Leader Only) + Priority */}
       <div className="flex items-center justify-between gap-2 w-full">
-        <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-lg bg-brand-500/15 text-brand-300 border border-brand-500/30 tracking-wide shrink-0">
-          {filing.code}
-        </span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-lg bg-brand-500/15 text-brand-300 border border-brand-500/30 tracking-wide shrink-0">
+            {filing.code}
+          </span>
+          {isLeader && onDelete && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (window.confirm(`Are you sure you want to delete filing "${filing.code}"? This will permanently remove it from the workflow.`)) {
+                  onDelete(filing);
+                }
+              }}
+              className="opacity-0 group-hover:opacity-100 transition p-1 hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 rounded-lg shrink-0 cursor-pointer"
+              title="Delete filing (Leader only)"
+            >
+              <Trash2 size={12} />
+            </button>
+          )}
+        </div>
 
         {/* Priority Badge */}
         <span

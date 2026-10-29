@@ -13,3 +13,4 @@ export const DEFAULT_DRAFTERS = [
 ];
 
 export const DRAFTER_WORKLOAD_STORAGE_KEY = 'lextria_drafter_workload_records_v1';
+

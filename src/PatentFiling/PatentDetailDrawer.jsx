@@ -11,13 +11,15 @@ import {
   CreditCard,
   MailCheck,
   ArrowRight,
-  ShieldAlert
+  ShieldAlert,
+  Trash2
 } from 'lucide-react';
 import {
   PATENT_ROLES,
   PATENT_STATUSES,
   hasPatentRole
 } from '../patent/patentStateMachine.js';
+import { isLeaderOrSharan } from '../attachmentUtils.js';
 import { getFilingEventsAndRounds, fetchFilingEventsAndRoundsFromDb } from './patentStorage.js';
 import SendCorrectionModal from './SendCorrectionModal.jsx';
 import ReassignModal from './ReassignModal.jsx';
@@ -32,7 +34,8 @@ export default function PatentDetailDrawer({
   patentRoleRecords = null,
   onTransition,
   onReassign,
-  onUpdateFilingType
+  onUpdateFilingType,
+  onDeleteFiling
 }) {
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
   const [showReassignModal, setShowReassignModal] = useState(false);
@@ -65,6 +68,9 @@ export default function PatentDetailDrawer({
   if (!isOpen || !filing) return null;
 
   const isSuperAdmin = hasPatentRole(userRoles, PATENT_ROLES.SUPER_ADMIN);
+  const isLeader = isSuperAdmin ||
+    (currentUser?.role && currentUser.role.toLowerCase() === 'leader') ||
+    isLeaderOrSharan(currentUser);
   const isAssignee = String(filing.assignee_id) === String(currentUser?.id) ||
     (currentUser?.name && filing.assignee_name && filing.assignee_name.toLowerCase().includes(currentUser.name.toLowerCase()));
   const isAuditor = String(filing.auditor_id) === String(currentUser?.id) ||
@@ -188,6 +194,21 @@ export default function PatentDetailDrawer({
                 title="Reassign filing"
               >
                 Reassign
+              </button>
+            )}
+            {isLeader && onDeleteFiling && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm(`Are you sure you want to delete filing "${filing.code}"? This will permanently remove it from the workflow.`)) {
+                    onDeleteFiling(filing);
+                  }
+                }}
+                className="text-xs px-2.5 py-1 rounded-lg bg-rose-500/15 text-rose-300 border border-rose-500/30 hover:bg-rose-500/25 font-semibold transition cursor-pointer flex items-center gap-1.5"
+                title="Delete filing (Leader only)"
+              >
+                <Trash2 size={13} />
+                <span>Delete</span>
               </button>
             )}
             <button

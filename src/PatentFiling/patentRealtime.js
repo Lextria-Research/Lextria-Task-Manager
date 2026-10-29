@@ -26,7 +26,10 @@ let currentConnectionStatus = 'CONNECTED';
  * 5. Explicitly listed notification recipient
  */
 export function isEventRecipient(payload, currentUser, userRoles = []) {
-  if (!currentUser || !payload || !payload.filing) return false;
+  if (!currentUser || !payload) return false;
+  // DELETE events must be received by all connected users so the card is cleanly removed
+  if (payload.action === 'DELETE') return true;
+  if (!payload.filing) return false;
 
   const isSuperAdmin = hasPatentRole(userRoles, PATENT_ROLES.SUPER_ADMIN) ||
     (currentUser.role && currentUser.role.toLowerCase() === 'leader');

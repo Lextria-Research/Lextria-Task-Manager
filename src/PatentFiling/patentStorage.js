@@ -6,8 +6,11 @@ import { supabase } from '../supabaseClient.js';
 import {
   executeTransition,
   executeReassign,
-  PATENT_STATUSES
+  PATENT_STATUSES,
+  PATENT_ROLES,
+  hasPatentRole
 } from '../patent/patentStateMachine.js';
+import { isLeaderOrSharan } from '../attachmentUtils.js';
 import {
   KNOWN_MEMBER_UUIDS,
   KNOWN_AGENT_TO_MEMBER_UUIDS,
@@ -674,4 +677,72 @@ export async function updateFilingTypeInStorage({ filing, newFilingType, actor, 
   });
 
   return { success: true, filing: updatedFiling };
+}
+
+/**
+ * Permanently deletes a patent filing and its associated events/rounds/notifications.
+ * Restricted strictly to Leaders (Mounisha, Pranav Bhat, Sharan).
+ */
+export async function deleteFilingFromStorage({
+  filingId,
+  code,
+  actor,
+  actorRoles = []
+}) {
+  if (!filingId) {
+    return { success: false, error: 'Filing ID is required.' };
+  }
+
+  const isLeader = hasPatentRole(actorRoles, PATENT_ROLES.SUPER_ADMIN) ||
+    isLeaderOrSharan(actor) ||
+    (actor?.role && actor.role.toLowerCase() === 'leader');
+
+  if (!isLeader) {
+    return { success: false, error: 'Only firm leaders can delete patent filings.' };
+  }
+
+  // 1. Delete dependent records from child tables
+  try {
+    await supabase.from('patent_correction_rounds').delete().eq('filing_id', filingId);
+  } catch (e) {}
+
+  try {
+    await supabase.from('patent_filing_events').delete().eq('filing_id', filingId);
+  } catch (e) {}
+
+  try {
+    await supabase.from('patent_notifications').delete().eq('filing_id', filingId);
+  } catch (e) {}
+
+  // 2. Delete parent record from patent_filings
+  try {
+    const { error } = await supabase.from('patent_filings').delete().eq('id', filingId);
+    if (error) {
+      console.warn('Error deleting patent filing from Supabase:', error.message);
+    }
+  } catch (e) {
+    console.warn('Exception deleting patent filing:', e);
+  }
+
+  // 3. Update local caches
+  const cached = getLocalCache(LOCAL_STORAGE_KEY, []);
+  const nextList = cached.filter(f => f.id !== filingId);
+  saveLocalCache(LOCAL_STORAGE_KEY, nextList);
+
+  const cachedEvents = getLocalCache(LOCAL_EVENTS_KEY, []);
+  saveLocalCache(LOCAL_EVENTS_KEY, cachedEvents.filter(e => e.filing_id !== filingId));
+
+  const cachedRounds = getLocalCache(LOCAL_ROUNDS_KEY, []);
+  saveLocalCache(LOCAL_ROUNDS_KEY, cachedRounds.filter(r => r.filing_id !== filingId));
+
+  // 4. Broadcast Realtime change event
+  broadcastPatentChange({
+    action: 'DELETE',
+    filingId,
+    code,
+    actorId: actor?.id,
+    actorName: actor?.name || 'Leader'
+  });
+
+  return { success: true, filingId, code };
 }

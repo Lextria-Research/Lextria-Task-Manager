@@ -21,7 +21,8 @@ import {
   executeTransitionInStorage,
   executeReassignInStorage,
   fetchSystemFilingTypes,
-  updateFilingTypeInStorage
+  updateFilingTypeInStorage,
+  deleteFilingFromStorage
 } from './patentStorage.js';
 import { initPatentRealtimeSync } from './patentRealtime.js';
 
@@ -112,6 +113,15 @@ export default function PatentFilingDashboard({
         setFilings(updated);
       },
       onFilingEvent: (payload) => {
+        if (!payload) return;
+
+        // If DELETE action
+        if (payload.action === 'DELETE' && payload.filingId) {
+          setFilings(prev => prev.filter(f => f.id !== payload.filingId));
+          setSelectedFiling(prev => prev?.id === payload.filingId ? null : prev);
+          return;
+        }
+
         const incomingFiling = payload.filing;
         if (!incomingFiling || !incomingFiling.id) return;
 
@@ -391,6 +401,44 @@ export default function PatentFilingDashboard({
     }
   };
 
+  // Delete handler for Leaders with Optimistic UI & Rollback
+  const handleDeleteFiling = async (filingToDelete) => {
+    if (!filingToDelete || !filingToDelete.id) return;
+    const fId = filingToDelete.id;
+    const fCode = filingToDelete.code;
+
+    const originalFilings = filings;
+    const originalSelected = selectedFiling;
+
+    // Optimistically remove from state
+    setFilings(prev => prev.filter(f => f.id !== fId));
+    if (selectedFiling?.id === fId) {
+      setSelectedFiling(null);
+    }
+
+    const res = await deleteFilingFromStorage({
+      filingId: fId,
+      code: fCode,
+      actor: currentUser,
+      actorRoles: userRoles
+    });
+
+    if (res.success) {
+      setNotification({
+        type: 'success',
+        message: `Filing ${fCode} has been deleted.`
+      });
+    } else {
+      // Rollback on failure
+      setFilings(originalFilings);
+      setSelectedFiling(originalSelected);
+      setNotification({
+        type: 'error',
+        message: res.error || 'Failed to delete filing.'
+      });
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col min-h-0 space-y-5 px-6 py-4 animate-in fade-in duration-300">
       {/* Toast Notification */}
@@ -529,6 +577,7 @@ export default function PatentFilingDashboard({
           currentUser={currentUser}
           userRoles={userRoles}
           showClosedArchive={showClosedArchive}
+          onDeleteFiling={handleDeleteFiling}
         />
       </div>
 
@@ -555,6 +604,7 @@ export default function PatentFilingDashboard({
         onTransition={handleTransition}
         onReassign={handleReassign}
         onUpdateFilingType={handleUpdateFilingType}
+        onDeleteFiling={handleDeleteFiling}
       />
     </div>
   );
