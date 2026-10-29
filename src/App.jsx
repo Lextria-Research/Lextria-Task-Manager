@@ -3411,6 +3411,9 @@ export default function App() {
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [activeTab, setActiveTab] = useState(() => {
     try {
+      if (typeof window !== 'undefined' && window.location.pathname === '/departments/patent/filing') {
+        return 'patent-filing';
+      }
       const saved = localStorage.getItem('lextria_user_session');
       const user = saved ? JSON.parse(saved) : null;
       if (isLeaderOrSharan(user)) {
