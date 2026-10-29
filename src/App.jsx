@@ -24,7 +24,7 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   Search, Shield, Plus, Trash2, Edit2, CheckCircle2, Circle,
   Bell, Calendar, X, Lock, Unlock, AlertCircle, GripVertical, GripHorizontal, Building2, Layout, Users, ChevronRight, ChevronLeft, ArrowLeft, History, RotateCcw, Tag, BarChart3, Filter, SlidersHorizontal, Image, UploadCloud, Link, Clock, Download, FileSpreadsheet, ArrowUpDown, ArrowUp, ArrowDown,
-  CheckSquare, Database, Wrench, FolderKanban, Settings, Pin, Sun, Flame, Copy, Check, Sparkles
+  CheckSquare, Database, Wrench, FolderKanban, Settings, Pin, Sun, Flame, Copy, Check, Sparkles, Volume2, VolumeX
 } from 'lucide-react';
 import QueryManager from './QueryManager';
 import ProjectReporting from './ProjectReporting';
@@ -33,7 +33,20 @@ import MemberManualModal from './MemberManualModal';
 import LeaderTaskboard from './LeaderTaskboard';
 import SettingsPage, { getStoredProfiles } from './SettingsPage';
 import PatentFilingDashboard from './PatentFiling/PatentFilingDashboard';
-import { fetchUserPatentRoles, getInitialPatentRoles } from './patent/patentRoles';
+import { fetchUserPatentRoles, getInitialPatentRoles, isMemberMatch } from './patent/patentRoles';
+import {
+  fetchUserPatentNotifications,
+  markPatentNotificationAsRead,
+  markAllPatentNotificationsAsRead,
+  isSoundUnlocked,
+  unlockAudioPlayback,
+  tryAcquireSoundAndDesktopLock,
+  playPatentNotificationSound,
+  showPatentDesktopNotification,
+  checkOfflinePatentNotifications,
+  buildSuperAdminConfirmationMessage
+} from './PatentFiling/patentNotifications';
+import { initPatentRealtimeSync } from './PatentFiling/patentRealtime';
 import {
   isLeaderOrSharan,
   uploadFileToZohoWorkDrive,
@@ -3389,7 +3402,7 @@ export default function App() {
     if (isLeaderOrSharan(sessionData)) {
       setActiveTab('leader-board');
     } else {
-      setActiveTab('tasks');
+      setActiveTab('queries');
     }
 
     // Trigger manual on login if not permanently dismissed
@@ -3419,8 +3432,12 @@ export default function App() {
       if (isLeaderOrSharan(user)) {
         return 'leader-board';
       }
+      const savedTab = localStorage.getItem('lextria_active_tab');
+      if (savedTab && savedTab !== 'tasks') {
+        return savedTab;
+      }
     } catch {}
-    return 'tasks';
+    return 'queries';
   });
 
   // Patent Module Roles & Deep Link Routing
@@ -3433,6 +3450,133 @@ export default function App() {
     }
   }, [currentUser]);
   const hasPatentAccess = patentRoles && patentRoles.length > 0;
+
+  // Patent Notification System States
+  const [targetOpenFilingId, setTargetOpenFilingId] = useState(null);
+  const [activePatentToasts, setActivePatentToasts] = useState([]);
+  const [bellNotifications, setBellNotifications] = useState([]);
+  const [isBellOpen, setIsBellOpen] = useState(false);
+  const bellRef = useRef(null);
+
+  const [showAudioUnlockBanner, setShowAudioUnlockBanner] = useState(() => {
+    return currentUser ? !isSoundUnlocked(currentUser.id) : false;
+  });
+
+  useEffect(() => {
+    if (currentUser) {
+      setShowAudioUnlockBanner(!isSoundUnlocked(currentUser.id));
+      fetchUserPatentNotifications(currentUser.id).then(notifs => {
+        setBellNotifications(notifs);
+      });
+      // Deliver offline notifications within 24 hours
+      checkOfflinePatentNotifications({
+        currentUser,
+        onDeliverToast: (notif) => {
+          setActivePatentToasts(prev => {
+            if (prev.some(t => t.id === notif.id)) return prev;
+            return [...prev, notif];
+          });
+        }
+      });
+    }
+  }, [currentUser]);
+
+  // Audio unlock handler
+  const handleUnlockAudio = () => {
+    if (currentUser) {
+      unlockAudioPlayback(currentUser.id);
+      setShowAudioUnlockBanner(false);
+    }
+  };
+
+  // Open filing details from toast or bell list click
+  const handleOpenFilingFromNotification = useCallback((filingId, code, notifId = null) => {
+    if (notifId && currentUser) {
+      markPatentNotificationAsRead(notifId, currentUser.id);
+      setBellNotifications(prev => prev.map(n => n.id === notifId ? { ...n, read: true } : n));
+    }
+    if (notifId) {
+      setActivePatentToasts(prev => prev.filter(t => t.id !== notifId));
+    }
+    setTargetOpenFilingId(filingId || code);
+    handleTabSelect('patent-filing');
+    setIsBellOpen(false);
+  }, [currentUser]);
+
+  // Global Realtime listener for patent notifications across all tabs
+  useEffect(() => {
+    if (!currentUser || !currentUser.id) return;
+
+    const destroy = initPatentRealtimeSync({
+      currentUser,
+      userRoles: patentRoles,
+      onFilingEvent: (payload) => {
+        if (!payload) return;
+
+        // 1. Check if current user is an explicit notification recipient
+        if (Array.isArray(payload.notifications)) {
+          const myNotif = payload.notifications.find(n =>
+            isMemberMatch(currentUser.id, currentUser.name, n.recipient_id)
+          );
+
+          if (myNotif) {
+            // Add to bell list
+            setBellNotifications(prev => [myNotif, ...prev.filter(p => p.id !== myNotif.id)]);
+
+            // Add to active toast stack (stays until dismissed, stackable)
+            setActivePatentToasts(prev => {
+              if (prev.some(t => t.id === myNotif.id)) return prev;
+              return [...prev, myNotif];
+            });
+
+            // Acquire coordination lock so only 1 tab plays sound and shows desktop alert
+            const hasLock = tryAcquireSoundAndDesktopLock(myNotif.id);
+            if (hasLock) {
+              playPatentNotificationSound(myNotif.role_type, currentUser.id);
+
+              showPatentDesktopNotification({
+                title: myNotif.role_type === 'auditor' ? 'Audit Assignment' : 'New Filing Assigned',
+                message: myNotif.message,
+                filingId: myNotif.filing_id,
+                code: myNotif.code,
+                notificationId: myNotif.id,
+                onOpenFiling: (fId, cd) => handleOpenFilingFromNotification(fId, cd, myNotif.id)
+              });
+            }
+          }
+        }
+
+        // 2. Mounisha / actor confirmation toast (no sound)
+        if (payload.actorId && isMemberMatch(currentUser.id, currentUser.name, payload.actorId)) {
+          if (payload.action === 'CREATE' && payload.filing) {
+            const confToast = {
+              id: `conf-${Date.now()}-${payload.filing.id}`,
+              isConfirmation: true,
+              filing_id: payload.filing.id,
+              code: payload.filing.code,
+              message: buildSuperAdminConfirmationMessage(payload.filing, payload.filing.assignee_name, payload.filing.auditor_name)
+            };
+            setActivePatentToasts(prev => [...prev, confToast]);
+          }
+        }
+      }
+    });
+
+    return destroy;
+  }, [currentUser, patentRoles, handleOpenFilingFromNotification]);
+
+  // Close bell dropdown on outside click
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (bellRef.current && !bellRef.current.contains(e.target)) {
+        setIsBellOpen(false);
+      }
+    };
+    if (isBellOpen) {
+      document.addEventListener('mousedown', handleOutsideClick);
+    }
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [isBellOpen]);
 
   // Sync route /departments/patent/filing with activeTab
   useEffect(() => {
@@ -3464,7 +3608,7 @@ export default function App() {
   // Confidentiality guard: non-leaders (anyone except Pranav Bhat & Sharan) cannot access leader-board
   useEffect(() => {
     if (activeTab === 'leader-board' && !isLeaderOrSharan(currentUser)) {
-      setActiveTab('tasks');
+      setActiveTab('queries');
     }
   }, [currentUser, activeTab]);
   const [tasksSubTab, setTasksSubTab] = useState('tasks'); // 'tasks' | 'calendar'
@@ -5377,6 +5521,94 @@ export default function App() {
               </span>
             )}
 
+            {/* Patent Alerts Bell & Notifications List */}
+            <div className="relative" ref={bellRef}>
+              <button
+                onClick={() => setIsBellOpen(!isBellOpen)}
+                className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/10 transition cursor-pointer relative"
+                title="Notifications"
+                aria-label="Notifications"
+              >
+                <Bell size={16} />
+                {bellNotifications.filter(n => !n.read).length > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center shadow-[0_0_8px_rgba(239,68,68,0.8)] animate-pulse">
+                    {bellNotifications.filter(n => !n.read).length}
+                  </span>
+                )}
+              </button>
+
+              {/* Bell Alerts Dropdown */}
+              {isBellOpen && (
+                <div className="absolute right-0 mt-2 w-80 sm:w-96 rounded-2xl bg-[#0a0f2c] border border-white/15 shadow-2xl z-50 overflow-hidden flex flex-col max-h-[460px] animate-in fade-in zoom-in-95 duration-150">
+                  <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between bg-white/5">
+                    <div className="flex items-center gap-2">
+                      <Bell size={15} className="text-brand-400" />
+                      <span className="text-xs font-bold text-white uppercase tracking-wider">Notifications</span>
+                      {bellNotifications.filter(n => !n.read).length > 0 && (
+                        <span className="px-1.5 py-0.5 rounded-md bg-brand-500/20 text-brand-300 text-[10px] font-semibold">
+                          {bellNotifications.filter(n => !n.read).length} new
+                        </span>
+                      )}
+                    </div>
+                    {bellNotifications.some(n => !n.read) && (
+                      <button
+                        onClick={async () => {
+                          if (currentUser) {
+                            await markAllPatentNotificationsAsRead(currentUser.id);
+                            setBellNotifications(prev => prev.map(n => ({ ...n, read: true })));
+                          }
+                        }}
+                        className="text-[11px] text-brand-400 hover:text-brand-300 font-medium transition cursor-pointer"
+                      >
+                        Mark all as read
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="overflow-y-auto flex-1 divide-y divide-white/5 custom-scrollbar">
+                    {bellNotifications.length === 0 ? (
+                      <div className="p-6 text-center text-xs text-slate-400 flex flex-col items-center gap-2">
+                        <Bell size={24} className="text-slate-600" />
+                        <span>No notifications yet</span>
+                      </div>
+                    ) : (
+                      bellNotifications.map(notif => (
+                        <button
+                          key={notif.id}
+                          onClick={() => handleOpenFilingFromNotification(notif.filing_id, notif.code, notif.id)}
+                          className={`w-full text-left p-3.5 hover:bg-white/5 transition flex items-start gap-3 cursor-pointer ${
+                            !notif.read ? 'bg-brand-500/10' : ''
+                          }`}
+                        >
+                          <div className={`mt-0.5 w-7 h-7 rounded-lg flex items-center justify-center shrink-0 border ${
+                            notif.role_type === 'auditor'
+                              ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                              : notif.role_type === 'reassigned'
+                              ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                              : 'bg-brand-500/20 text-brand-300 border-brand-500/30'
+                          }`}>
+                            {notif.role_type === 'auditor' ? <CheckCircle2 size={13} /> : <FileSpreadsheet size={13} />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-1 mb-1">
+                              <span className="text-[11px] font-bold text-white truncate">{notif.code}</span>
+                              <span className="text-[10px] text-slate-400 shrink-0">
+                                {notif.created_at ? new Date(notif.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-300 line-clamp-2 leading-relaxed">{notif.message}</p>
+                          </div>
+                          {!notif.read && (
+                            <span className="w-2 h-2 rounded-full bg-brand-400 shrink-0 mt-1.5 shadow-[0_0_6px_rgba(59,130,246,0.8)]" />
+                          )}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
             {isAdmin && (
               <button 
                 onClick={() => setShowAnalytics(!showAnalytics)} 
@@ -5431,6 +5663,31 @@ export default function App() {
         </div>
       </nav>
 
+      {/* Audio Autoplay Unlock Banner */}
+      {showAudioUnlockBanner && currentUser && (
+        <div className="bg-brand-600/95 text-white px-4 py-2.5 flex items-center justify-between text-xs font-medium z-40 border-b border-brand-400/30 backdrop-blur-md shadow-md animate-in slide-in-from-top duration-300">
+          <div className="flex items-center gap-2">
+            <Volume2 size={16} className="text-brand-200 shrink-0" />
+            <span>Enable notification sound for patent filing assignments and updates</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleUnlockAudio}
+              className="bg-white text-brand-700 hover:bg-brand-50 px-3 py-1 rounded-lg font-bold shadow-sm transition cursor-pointer"
+            >
+              Enable sound
+            </button>
+            <button
+              onClick={() => setShowAudioUnlockBanner(false)}
+              className="text-white/80 hover:text-white p-1 rounded-md transition cursor-pointer"
+              aria-label="Dismiss banner"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Sidebar + Content Layout */}
       <div className="flex min-h-[calc(100vh-73px)]">
 
@@ -5441,7 +5698,6 @@ export default function App() {
               ...(isLeaderOrSharan(currentUser) ? [
                 { id: 'leader-board', label: 'Leader Workspace', icon: CheckSquare, badge: 'Leader' }
               ] : []),
-              { id: 'tasks', label: 'Tasks', icon: Layout },
               ...(hasPatentAccess ? [
                 { id: 'patent-filing', label: 'Patent Filing', icon: FileSpreadsheet, badge: 'Patent' }
               ] : []),
@@ -5477,6 +5733,7 @@ export default function App() {
         <div className="flex-1 min-w-0 flex flex-col">
 
           {/* Breadcrumbs Navigation — only shown on Tasks tab */}
+          {/* Breadcrumbs Navigation */}
           {activeTab === 'patent-filing' && (
             <div className="px-6 pt-6">
               <div className="flex items-center space-x-2 text-sm text-slate-400">
@@ -5491,40 +5748,6 @@ export default function App() {
             </div>
           )}
 
-          {activeTab === 'tasks' && (
-            <div className="px-6 pt-6">
-              <div className="flex items-center space-x-2 text-sm text-slate-400">
-                <button
-                  onClick={() => { setSelectedDeptId(null); setSelectedBoardId(null); }}
-                  className={`hover:text-white transition-colors ${!selectedDeptId ? 'text-brand-400 font-semibold' : ''}`}
-                >
-                  Departments
-                </button>
-
-                {currentDept && (
-                  <>
-                    <ChevronRight size={14} className="text-slate-600" />
-                    <button
-                      onClick={() => setSelectedBoardId(null)}
-                      className={`hover:text-white transition-colors flex items-center gap-1 ${selectedDeptId && !selectedBoardId ? 'text-brand-400 font-semibold' : ''}`}
-                    >
-                      <Building2 size={12} /> {currentDept.name}
-                    </button>
-                  </>
-                )}
-
-                {currentBoard && (
-                  <>
-                    <ChevronRight size={14} className="text-slate-600" />
-                    <span className="text-brand-400 font-semibold flex items-center gap-1">
-                      <Layout size={12} /> {currentBoard.name}
-                    </span>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
           {/* Main Content */}
           <main className={`flex-1 ${activeTab === 'queries' || activeTab === 'projects' || activeTab === 'leader-board' || activeTab === 'settings' || activeTab === 'patent-filing' ? 'p-0 flex flex-col min-h-0 overflow-auto' : 'px-6 py-6'}`}>
 
@@ -5534,6 +5757,8 @@ export default function App() {
               currentUser={currentUser}
               allEmployees={allEmployees}
               userRoles={patentRoles}
+              targetOpenFilingId={targetOpenFilingId}
+              onClearTargetFiling={() => setTargetOpenFilingId(null)}
             />
           )}
 
@@ -5572,312 +5797,9 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'tasks' && (showAnalytics && isAdmin ? (
-            <AnalyticsDashboard departments={departments} archivedTasks={archivedTasks} />
-          ) : (
-            <div className="space-y-5 animate-in fade-in duration-300">
-              {/* Taskboard Top Header & Sub-Tab Bar (matching user reference sketch) */}
-              <div className="flex items-center justify-between flex-wrap gap-4 pb-3 border-b border-white/10">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-600 flex items-center justify-center text-white shadow-lg border border-white/10">
-                    <CheckSquare size={20} />
-                  </div>
-                  <div>
-                    <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                      Tasks
-                    </h2>
-                    <p className="text-xs text-slate-400">
-                      {tasksSubTab === 'tasks' 
-                        ? (boardViewFilter === 'MY' ? "Personal expanded workflow & timeline" : "Team agent columns")
-                        : "Shared team calendar & scheduled deadlines"}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Sub-Tab Selector [ Tasks ] | [ Calendar ] matching sketch */}
-                <div className="flex items-center gap-3 flex-wrap">
-                  <div className="flex items-center p-1 bg-white/5 border border-white/10 rounded-xl text-xs shadow-inner">
-                    <button
-                      onClick={() => setTasksSubTab('tasks')}
-                      className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                        tasksSubTab === 'tasks'
-                          ? 'bg-brand-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.5)]'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      <Layout size={14} />
-                      <span>Tasks</span>
-                    </button>
-                    <button
-                      onClick={() => setTasksSubTab('calendar')}
-                      className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                        tasksSubTab === 'calendar'
-                          ? 'bg-cyan-600 text-white shadow-[0_0_15px_rgba(6,182,212,0.5)]'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      <Calendar size={14} />
-                      <span>Calendar</span>
-                    </button>
-                  </div>
-
-                  {/* Tasks Sub-Tab Specific Controls: View Switcher & Filters */}
-                  {tasksSubTab === 'tasks' && (
-                    <>
-                      {/* View Switcher: My Column vs All Columns */}
-                      <div className="flex items-center p-1 bg-white/5 border border-white/10 rounded-xl text-xs">
-                        <button
-                          onClick={() => setBoardViewFilter('MY')}
-                          className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                            boardViewFilter === 'MY'
-                              ? 'bg-brand-500 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)]'
-                              : 'text-slate-400 hover:text-white'
-                          }`}
-                          title="Show expanded personal 4-column workflow"
-                        >
-                          My Column
-                        </button>
-                        <button
-                          onClick={() => setBoardViewFilter('ALL')}
-                          className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                            boardViewFilter === 'ALL'
-                              ? 'bg-brand-500 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)]'
-                              : 'text-slate-400 hover:text-white'
-                          }`}
-                          title="Show all team columns"
-                        >
-                          All Columns
-                        </button>
-                      </div>
-
-                      {/* Priority Filter */}
-                      <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 shadow-md">
-                        <Filter size={14} className="text-slate-400" />
-                        <select 
-                          value={priorityFilter} 
-                          onChange={(e) => setPriorityFilter(e.target.value)}
-                          className="bg-transparent text-sm text-slate-300 focus:outline-none appearance-none cursor-pointer"
-                        >
-                          <option value="All" className="bg-[#1a0a2e]">All Priorities</option>
-                          <option value="High" className="bg-[#1a0a2e]">High</option>
-                          <option value="Medium" className="bg-[#1a0a2e]">Medium</option>
-                          <option value="Low" className="bg-[#1a0a2e]">Low</option>
-                        </select>
-                      </div>
-
-                      {/* Due Date Filter */}
-                      <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 shadow-md">
-                        <Calendar size={14} className="text-slate-400" />
-                        <select 
-                          value={dueDateFilter} 
-                          onChange={(e) => setDueDateFilter(e.target.value)}
-                          className="bg-transparent text-sm text-slate-300 focus:outline-none appearance-none cursor-pointer"
-                        >
-                          <option value="All" className="bg-[#1a0a2e]">Any Date</option>
-                          <option value="Today" className="bg-[#1a0a2e]">Due Today</option>
-                          <option value="Overdue" className="bg-[#1a0a2e]">Overdue</option>
-                        </select>
-                      </div>
-
-                      {/* 1-Click Today's Focus Button */}
-                      <button 
-                        onClick={() => setShowStandupDrawer(true)}
-                        className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 rounded-lg text-sm text-amber-300 hover:text-white transition-all shadow-md active:scale-95 cursor-pointer font-medium"
-                        title="Open Today's Focus & Standup Drawer (Alt + D)"
-                      >
-                        <Sun size={15} className="text-amber-400" />
-                        <span>Today's Focus</span>
-                        <kbd className="hidden md:inline-block px-1.5 py-0.2 rounded bg-black/40 text-[9px] text-amber-200/80 font-mono border border-amber-500/30">Alt+D</kbd>
-                      </button>
-
-                      {/* History Button */}
-                      <button 
-                        onClick={() => setShowHistorySidebar(true)}
-                        className="flex items-center gap-2 px-3.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm text-slate-300 hover:text-white transition-all shadow-md active:scale-95 cursor-pointer"
-                      >
-                        <History size={16} className="text-slate-400" />
-                        <span>History</span>
-                        {completedTasks.length > 0 && (
-                          <span className="bg-brand-500/20 text-brand-300 border border-brand-500/30 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                            {completedTasks.length}
-                          </span>
-                        )}
-                      </button>
-
-                      {/* Archive & Reports (Admin only) */}
-                      {isAdmin && (
-                        <button 
-                          onClick={() => setShowArchivePage(true)}
-                          className="flex items-center gap-2 px-3.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm text-slate-300 hover:text-white transition-all shadow-md active:scale-95 cursor-pointer"
-                        >
-                          <Building2 size={16} className="text-slate-400" />
-                          <span>Archive & Reports</span>
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* MAIN CONTENT AREA */}
-              {tasksSubTab === 'calendar' ? (
-                /* Sub-Tab 2: Shared Team Calendar */
-                <SharedTeamCalendarView
-                  departments={departments}
-                  allEmployees={allEmployees}
-                  onOpenSettings={() => setActiveTab('settings')}
-                  onTaskClick={(empId, taskId) => setSelectedTaskDetails({ empId, taskId })}
-                />
-              ) : boardViewFilter === 'MY' ? (
-                /* Sub-Tab 1 - Option A: Expanded 4-Column Workflow View for Member */
-                <MyExpandedMemberBoard
-                  employee={currentMemberEmp || displayedEmployees[0] || allEmployees[0]}
-                  isAdmin={isAdmin}
-                  currentUser={currentUser}
-                  updateTask={updateTask}
-                  deleteTask={(empId, taskOrId) => {
-                    if (typeof taskOrId === 'object' && taskOrId !== null) {
-                      setTaskToDelete({ empId, taskId: taskOrId.id, title: taskOrId.title });
-                    } else {
-                      const foundEmp = allEmployees.find(e => e.id === empId);
-                      const foundTask = foundEmp?.tasks?.find(t => t.id === taskOrId);
-                      setTaskToDelete({ empId, taskId: taskOrId, title: foundTask?.title || 'this task' });
-                    }
-                  }}
-                  addTask={addTask}
-                  onTaskClick={(empId, taskId) => setSelectedTaskDetails({ empId, taskId })}
-                  priorityFilter={priorityFilter}
-                  dueDateFilter={dueDateFilter}
-                  timerTick={timerTick}
-                  onPreviewPhoto={(url, title) => setPreviewPhoto({ url, title })}
-                  onOpenStandup={() => setShowStandupDrawer(true)}
-                />
-              ) : (
-                /* Sub-Tab 1 - Option B: All Team Agent Columns Side-by-Side */
-                <div className="relative group/board">
-                  {/* Left Scroll Paddle */}
-                  {canScrollLeft && (
-                    <button
-                      onClick={() => {
-                        boardContainerRef.current?.scrollBy({ left: -340, behavior: 'smooth' });
-                      }}
-                      className="absolute left-2 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-slate-900/60 hover:bg-slate-900/90 text-brand-400 hover:text-brand-300 border border-white/10 hover:border-brand-500/50 flex items-center justify-center backdrop-blur-md shadow-[0_0_15px_rgba(0,0,0,0.5)] transition-all z-20 hover:scale-110 active:scale-95"
-                      title="Scroll Left"
-                      aria-label="Scroll left"
-                    >
-                      <ChevronLeft size={24} />
-                    </button>
-                  )}
-
-                  {/* Right Scroll Paddle */}
-                  {canScrollRight && (
-                    <button
-                      onClick={() => {
-                        boardContainerRef.current?.scrollBy({ left: 340, behavior: 'smooth' });
-                      }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-slate-900/60 hover:bg-slate-900/90 text-brand-400 hover:text-brand-300 border border-white/10 hover:border-brand-500/50 flex items-center justify-center backdrop-blur-md shadow-[0_0_15px_rgba(0,0,0,0.5)] transition-all z-20 hover:scale-110 active:scale-95"
-                      title="Scroll Right"
-                      aria-label="Scroll right"
-                    >
-                      <ChevronRight size={24} />
-                    </button>
-                  )}
-
-                  <div 
-                    ref={boardContainerRef}
-                    className="flex gap-6 overflow-x-auto pb-6 scrollbar-hide items-stretch min-h-[500px]"
-                  >
-                    <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
-                      <SortableContext items={displayedEmployees.map(e => e.id)} strategy={horizontalListSortingStrategy}>
-                        {displayedEmployees.map(emp => (
-                          <SortableEmployeeCard
-                            key={emp.id}
-                            employee={emp}
-                            currentUser={currentUser}
-                            isAdmin={isAdmin}
-                            onDelete={(emp) => setEmployeeToDelete(emp)}
-                            onEdit={(emp) => { setEditingEmployee(emp); setShowAddEmpModal(true); }}
-                            updateTask={updateTask}
-                            deleteTask={(empId, taskOrId) => {
-                              if (typeof taskOrId === 'object' && taskOrId !== null) {
-                                setTaskToDelete({ empId, taskId: taskOrId.id, title: taskOrId.title });
-                              } else {
-                                const foundTask = emp.tasks?.find(t => t.id === taskOrId);
-                                setTaskToDelete({ empId, taskId: taskOrId, title: foundTask?.title || 'this task' });
-                              }
-                            }}
-                            addTask={addTask}
-                            onTaskClick={(empId, taskId) => setSelectedTaskDetails({ empId, taskId })}
-                            priorityFilter={priorityFilter}
-                            dueDateFilter={dueDateFilter}
-                            archivedTasks={archivedTasks}
-                            timerTick={timerTick}
-                            onPreviewPhoto={(url, title) => setPreviewPhoto({ url, title })}
-                          />
-                        ))}
-                      </SortableContext>
-                      {displayedEmployees.length === 0 && (
-                        <div className="w-[340px] flex-shrink-0 border-2 border-dashed border-white/10 rounded-2xl flex flex-col items-center justify-center text-slate-400 p-6 text-center gap-2">
-                          <Lock size={22} className="text-brand-400 mb-1" />
-                          <p className="text-sm font-medium">
-                            No agent columns found.
-                          </p>
-                          {isAdmin && (
-                            <button
-                              onClick={() => { setEditingEmployee(null); setShowAddEmpModal(true); }}
-                              className="mt-2 text-xs font-semibold text-brand-300 hover:text-white underline cursor-pointer"
-                            >
-                              Add First Agent
-                            </button>
-                          )}
-                        </div>
-                      )}
-                      <DragOverlay dropAnimation={defaultDropAnimationSideEffects({ duration: 250 })}>
-                        {activeDragItem?.type === 'Task' && (
-                          <SortableTaskItem task={activeDragItem.task} employeeId={activeDragItem.employeeId} updateTask={()=>{}} deleteTask={()=>{}} onTaskClick={()=>{}} timerTick={timerTick} />
-                        )}
-                        {activeDragItem?.type === 'Employee' && (
-                          <SortableEmployeeCard 
-                            employee={activeDragItem.employee} 
-                            currentUser={currentUser}
-                            isAdmin={isAdmin} 
-                            onDelete={()=>{}} 
-                            onEdit={()=>{}} 
-                            updateTask={()=>{}} 
-                            deleteTask={()=>{}} 
-                            addTask={()=>{}} 
-                            onTaskClick={()=>{}} 
-                            priorityFilter={priorityFilter}
-                            dueDateFilter={dueDateFilter}
-                            archivedTasks={archivedTasks}
-                            timerTick={timerTick}
-                          />
-                        )}
-                      </DragOverlay>
-                    </DndContext>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-
-      </main>
+</main>
         </div> {/* end right column */}
       </div> {/* end sidebar layout */}
-
-      {/* Contextual Floating Action Button — Tasks tab only for Admins */}
-      {activeTab === 'tasks' && isAdmin && (
-        <button
-          onClick={() => {
-            setEditingEmployee(null);
-            setShowAddEmpModal(true);
-          }}
-          className="fixed bottom-8 right-8 w-14 h-14 bg-brand-600 hover:bg-brand-500 rounded-full flex items-center justify-center text-white shadow-[0_0_20px_rgba(124,58,237,0.6)] hover:shadow-[0_0_30px_rgba(124,58,237,0.8)] transition-all z-30 hover:scale-110"
-          title="Add Agent"
-        >
-          <Plus size={28} />
-        </button>
-      )}
 
       {/* --- MODALS --- */}
       
@@ -6765,6 +6687,79 @@ export default function App() {
       )}
       {/* Toast Notification Popups */}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
+        {/* Patent Assignment Pop-up Toasts (no auto-hide, stackable) */}
+        {activePatentToasts.map(toast => (
+          <div
+            key={toast.id}
+            onClick={() => {
+              if (toast.isConfirmation) {
+                setActivePatentToasts(prev => prev.filter(t => t.id !== toast.id));
+              } else {
+                handleOpenFilingFromNotification(toast.filing_id, toast.code, toast.id);
+              }
+            }}
+            className="pointer-events-auto bg-[#0a0f2c]/95 border border-brand-500/40 p-4 rounded-2xl shadow-[0_12px_40px_rgba(37,99,235,0.35)] flex items-start gap-3 backdrop-blur-xl relative overflow-hidden cursor-pointer hover:border-brand-400 transition-all animate-in slide-in-from-bottom-5 duration-200"
+          >
+            {/* Left accent bar */}
+            <div className={`absolute top-0 left-0 w-1.5 h-full ${
+              toast.isConfirmation
+                ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]'
+                : toast.role_type === 'auditor'
+                ? 'bg-purple-500 shadow-[0_0_8px_#a855f7]'
+                : toast.role_type === 'reassigned'
+                ? 'bg-amber-500 shadow-[0_0_8px_#f59e0b]'
+                : 'bg-brand-500 shadow-[0_0_8px_#3b82f6]'
+            }`} />
+
+            <div className={`p-2 rounded-xl shrink-0 mt-0.5 border ${
+              toast.isConfirmation
+                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                : toast.role_type === 'auditor'
+                ? 'bg-purple-500/20 text-purple-400 border-purple-500/30 animate-pulse'
+                : toast.role_type === 'reassigned'
+                ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                : 'bg-brand-500/20 text-brand-400 border-brand-500/30 animate-pulse'
+            }`}>
+              {toast.isConfirmation ? <Check size={18} /> : toast.role_type === 'auditor' ? <Bell size={18} /> : <FileSpreadsheet size={18} />}
+            </div>
+
+            <div className="flex-1 min-w-0 pr-2">
+              <div className="flex items-center gap-2 mb-1">
+                <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                  toast.isConfirmation
+                    ? 'bg-emerald-500/20 text-emerald-300'
+                    : toast.role_type === 'auditor'
+                    ? 'bg-purple-500/20 text-purple-300'
+                    : toast.role_type === 'reassigned'
+                    ? 'bg-amber-500/20 text-amber-300'
+                    : 'bg-brand-500/20 text-brand-300'
+                }`}>
+                  {toast.isConfirmation ? 'Confirmation' : toast.role_type === 'auditor' ? 'Auditor Assignment' : toast.role_type === 'reassigned' ? 'Reassigned' : 'New Assignment'}
+                </span>
+                {toast.code && <span className="text-[11px] font-bold text-white">{toast.code}</span>}
+              </div>
+              <p className="text-xs text-slate-200 leading-snug">{toast.message}</p>
+              {!toast.isConfirmation && (
+                <div className="text-[10px] text-brand-400 font-semibold mt-2 flex items-center gap-1">
+                  Click to open filing details &rarr;
+                </div>
+              )}
+            </div>
+
+            {/* Dismiss X button */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setActivePatentToasts(prev => prev.filter(t => t.id !== toast.id));
+              }}
+              className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition shrink-0"
+              aria-label="Dismiss toast"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+
         {notifications.map(notif => (
           <div 
             key={notif.id}

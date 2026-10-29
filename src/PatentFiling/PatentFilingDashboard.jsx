@@ -38,7 +38,9 @@ const REMOVED_PRE_EXISTING_TYPES = new Set([
 export default function PatentFilingDashboard({
   currentUser,
   allEmployees = [],
-  userRoles = []
+  userRoles = [],
+  targetOpenFilingId = null,
+  onClearTargetFiling = null
 }) {
   const [filings, setFilings] = useState([]);
   const [systemFilingTypes, setSystemFilingTypes] = useState([]);
@@ -65,6 +67,21 @@ export default function PatentFilingDashboard({
       return () => clearTimeout(timer);
     }
   }, [notification]);
+
+  // Open filing detail drawer automatically when targeted (e.g. from notification click)
+  useEffect(() => {
+    if (targetOpenFilingId && filings.length > 0) {
+      const targetStr = String(targetOpenFilingId).trim().toLowerCase();
+      const match = filings.find(f =>
+        String(f.id).toLowerCase() === targetStr ||
+        (f.code && f.code.trim().toLowerCase() === targetStr)
+      );
+      if (match) {
+        setSelectedFiling(match);
+        if (onClearTargetFiling) onClearTargetFiling();
+      }
+    }
+  }, [targetOpenFilingId, filings, onClearTargetFiling]);
 
   // Load filings and dynamic role records on mount
   useEffect(() => {

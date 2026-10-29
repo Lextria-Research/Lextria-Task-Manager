@@ -8,6 +8,7 @@ import {
   PATENT_STATUSES
 } from '../../src/patent/patentStateMachine.js';
 import { getMemberPatentRoles } from '../../src/patent/patentRoles.js';
+import { buildFilingCreationNotifications } from '../../src/PatentFiling/patentNotifications.js';
 
 export default async function handler(req, res) {
   const method = req.method;
@@ -172,10 +173,33 @@ export default async function handler(req, res) {
         note: 'Filing created and assigned by Super Admin'
       }]);
 
+      // Server-decided notifications for Assignee and Auditor
+      const notifications = buildFilingCreationNotifications({
+        filing: created,
+        creatorName: 'Mounisha',
+        assigneeUuid: assignee_id,
+        auditorUuid: auditor_id
+      });
+      try {
+        await supabase.from('patent_notifications').insert(notifications.map(n => ({
+          recipient_id: n.recipient_id,
+          filing_id: n.filing_id,
+          code: n.code,
+          type: n.type,
+          role_type: n.role_type,
+          message: n.message,
+          read: false,
+          created_at: n.created_at
+        })));
+      } catch (e) {
+        console.warn('API notification insert failed:', e);
+      }
+
       return res.status(201).json({
         success: true,
         message: 'Filing created successfully.',
-        filing: created
+        filing: created,
+        notifications
       });
     } catch (e) {
       return res.status(500).json({ error: e.message });

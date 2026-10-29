@@ -188,7 +188,6 @@ function getNavigationTabs(user) {
     ...(isLeaderOrSharan(user) ? [
       { id: 'leader-board', label: 'Leader Workspace', badge: 'Leader' }
     ] : []),
-    { id: 'tasks', label: 'Tasks' },
     { id: 'queries', label: 'Queries' },
     { id: 'projects', label: 'Project Reporting' },
     { id: 'settings', label: 'Settings' },
@@ -196,21 +195,21 @@ function getNavigationTabs(user) {
 }
 
 const pranavTabs = getNavigationTabs({ name: 'Pranav Bhat', role: 'leader' });
-assert(pranavTabs.length === 5, 'Leader has 5 tabs (including Settings)');
+assert(pranavTabs.length === 4, 'Leader has 4 tabs (including Settings)');
 assert(pranavTabs[0].id === 'leader-board', 'Leader tab is the FIRST tab');
 assert(pranavTabs[0].label === 'Leader Workspace', 'Leader tab labeled correctly');
-assert(pranavTabs[4].id === 'settings', 'Settings tab is present at the end for Leader');
+assert(pranavTabs[3].id === 'settings', 'Settings tab is present at the end for Leader');
 
 const sharanTabs = getNavigationTabs({ name: 'Sharan', role: 'member' });
-assert(sharanTabs.length === 5, 'Sharan has 5 tabs');
+assert(sharanTabs.length === 4, 'Sharan has 4 tabs');
 assert(sharanTabs[0].id === 'leader-board', 'Sharan has leader tab as the FIRST tab');
-assert(sharanTabs[4].id === 'settings', 'Settings tab is present at the end for Sharan');
+assert(sharanTabs[3].id === 'settings', 'Settings tab is present at the end for Sharan');
 
 const mahekTabs = getNavigationTabs({ name: 'Mahek', role: 'member' });
-assert(mahekTabs.length === 4, 'Member Mahek has 4 tabs (Tasks, Queries, Projects, Settings)');
+assert(mahekTabs.length === 3, 'Member Mahek has 3 tabs (Queries, Projects, Settings)');
 assert(!mahekTabs.some(t => t.id === 'leader-board'), 'Leader tab is completely absent for Mahek');
-assert(mahekTabs[0].id === 'tasks', 'Member first tab is tasks');
-assert(mahekTabs[3].id === 'settings', 'Settings tab is present at the end for Member');
+assert(mahekTabs[0].id === 'queries', 'Member first tab is queries');
+assert(mahekTabs[2].id === 'settings', 'Settings tab is present at the end for Member');
 
 // ----------------------------------------------------
 // Test Group 5: Google & Zoho Calendar Integration

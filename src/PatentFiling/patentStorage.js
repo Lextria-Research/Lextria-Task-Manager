@@ -15,6 +15,12 @@ import {
   isSameMemberName
 } from '../patent/patentRoles.js';
 import { broadcastPatentChange } from './patentRealtime.js';
+import {
+  buildFilingCreationNotifications,
+  buildFilingReassignNotifications,
+  buildSuperAdminConfirmationMessage,
+  savePatentNotificationsToDb
+} from './patentNotifications.js';
 
 const LOCAL_STORAGE_KEY = 'lextria_patent_filings_cache';
 const LOCAL_EVENTS_KEY = 'lextria_patent_events_cache';
@@ -247,17 +253,29 @@ export async function saveNewFilingToStorage(filingData, actor, allMembers = [])
   events.push(initialEvent);
   saveLocalCache(LOCAL_EVENTS_KEY, events);
 
-  // 4. Broadcast real-time change event across all connected clients
+  // 4. Generate & persist server-decided notifications for Assignee and Auditor
+  const notifications = buildFilingCreationNotifications({
+    filing: newRecord,
+    creatorName: actor?.name || 'Mounisha',
+    assigneeUuid,
+    auditorUuid
+  });
+  await savePatentNotificationsToDb(notifications);
+
+  // 5. Broadcast real-time change event across all connected clients
   broadcastPatentChange({
     action: 'CREATE',
     filing: newRecord,
     event: initialEvent,
+    notifications,
     actorId: creatorUuid,
     actorName: actor?.name || 'Mounisha',
     version: newRecord.version
   });
 
-  return { success: true, filing: newRecord };
+  const confirmationToast = buildSuperAdminConfirmationMessage(newRecord, newRecord.assignee_name, newRecord.auditor_name);
+
+  return { success: true, filing: newRecord, notifications, confirmationToast };
 }
 
 /**
@@ -478,11 +496,23 @@ export async function executeReassignInStorage({
   });
   saveLocalCache(LOCAL_EVENTS_KEY, events);
 
-  // 3. Broadcast real-time change event
+  // 3. Generate & persist reassignment notifications
+  const notifications = buildFilingReassignNotifications({
+    filing: updatedWithNames,
+    previousAssigneeId: filing.assignee_id,
+    previousAuditorId: filing.auditor_id,
+    newAssigneeId: newAssigneeUuid,
+    newAuditorId: newAuditorUuid,
+    creatorName: actor?.name || 'Mounisha'
+  });
+  await savePatentNotificationsToDb(notifications);
+
+  // 4. Broadcast real-time change event
   broadcastPatentChange({
     action: 'REASSIGN',
     filing: updatedWithNames,
     event: result.event,
+    notifications,
     previousAssigneeId: filing.assignee_id,
     previousAuditorId: filing.auditor_id,
     actorId: actorUuid,
@@ -490,7 +520,7 @@ export async function executeReassignInStorage({
     version: updatedWithNames.version
   });
 
-  return { success: true, filing: updatedWithNames, event: result.event };
+  return { success: true, filing: updatedWithNames, event: result.event, notifications };
 }
 
 /**

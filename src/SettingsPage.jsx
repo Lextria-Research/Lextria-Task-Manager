@@ -4,8 +4,13 @@ import {
   User, Lock, Shield, Sun, Moon, Camera, Trash2, Edit2, Plus, UserPlus,
   Check, Key, Eye, EyeOff, Building2, Briefcase, RefreshCw, AlertCircle,
   Sparkles, CheckCircle2, Copy, X, ArrowRight, Calendar, MessageSquare, Send,
-  Globe, ExternalLink, Link2, Download, Bell, HelpCircle
+  Globe, ExternalLink, Link2, Download, Bell, HelpCircle, Volume2, VolumeX, Play
 } from 'lucide-react';
+import {
+  getPatentSoundEnabled,
+  setPatentSoundEnabled,
+  playPatentNotificationSound
+} from './PatentFiling/patentNotifications';
 import { isLeaderOrSharan, uploadFileToZohoWorkDrive } from './attachmentUtils';
 import {
   getCliqConfig,
@@ -88,6 +93,36 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
   // -------------------------------------------------------------
   const currentUserName = typeof currentUser === 'string' ? currentUser : currentUser?.name || '';
   const currentUserId = typeof currentUser === 'object' ? currentUser?.id : null;
+
+  // Patent Filing Notification Sounds & Desktop Alerts
+  const [patentSoundEnabled, setPatentSoundEnabledState] = useState(() => {
+    return getPatentSoundEnabled(currentUser?.id || currentUserName);
+  });
+  const [desktopPermission, setDesktopPermission] = useState(() => {
+    return typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default';
+  });
+
+  const handleTogglePatentSound = () => {
+    const nextVal = !patentSoundEnabled;
+    setPatentSoundEnabledState(nextVal);
+    setPatentSoundEnabled(currentUser?.id || currentUserName, nextVal);
+  };
+
+  const handleTestFilerSound = () => {
+    playPatentNotificationSound('filer', currentUser?.id || currentUserName);
+  };
+
+  const handleTestAuditorSound = () => {
+    playPatentNotificationSound('auditor', currentUser?.id || currentUserName);
+  };
+
+  const handleRequestDesktopPermission = () => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      Notification.requestPermission().then(perm => {
+        setDesktopPermission(perm);
+      });
+    }
+  };
 
   const [profileName, setProfileName] = useState(currentUserName);
   const [profilePassword, setProfilePassword] = useState(typeof currentUser === 'object' ? currentUser?.password || '' : '');
@@ -1042,6 +1077,99 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
               </button>
             </div>
           </form>
+        </div>
+
+        {/* ------------------------------------------------------------- */}
+        {/* PATENT FILING NOTIFICATION SOUNDS & DESKTOP ALERTS */}
+        {/* ------------------------------------------------------------- */}
+        <div className={`rounded-2xl border p-6 transition-all ${cardBgClass}`}>
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <h2 className="text-base font-bold flex items-center gap-2 text-white">
+              <Volume2 size={18} className="text-brand-400" />
+              <span>Patent Filing Notification Sounds & Alerts</span>
+            </h2>
+            <button
+              type="button"
+              onClick={handleTogglePatentSound}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition cursor-pointer border ${
+                patentSoundEnabled
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                  : 'bg-red-500/20 text-red-300 border-red-500/30'
+              }`}
+            >
+              {patentSoundEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
+              <span>{patentSoundEnabled ? 'Sound: ON' : 'Sound: OFF'}</span>
+            </button>
+          </div>
+
+          <p className={`text-xs mb-4 ${subTextClass}`}>
+            Customize assignment pop-ups and full-volume sound alerts when Mounisha assigns or reassigns a patent filing to you.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+            {/* Test Filer Sound */}
+            <div className="p-3.5 rounded-xl border border-white/10 bg-white/5 flex items-center justify-between">
+              <div>
+                <div className="text-xs font-semibold text-white">Filer Notification Sound</div>
+                <div className="text-[11px] text-slate-400">Air horn sound (played for Assignee)</div>
+              </div>
+              <button
+                type="button"
+                onClick={handleTestFilerSound}
+                className="px-3 py-1.5 rounded-lg bg-brand-500/20 hover:bg-brand-500/30 text-brand-300 border border-brand-500/30 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Play size={12} /> Test Sound
+              </button>
+            </div>
+
+            {/* Test Auditor Sound */}
+            <div className="p-3.5 rounded-xl border border-white/10 bg-white/5 flex items-center justify-between">
+              <div>
+                <div className="text-xs font-semibold text-white">Auditor Notification Sound</div>
+                <div className="text-[11px] text-slate-400">Doorbell sound (played for Auditor)</div>
+              </div>
+              <button
+                type="button"
+                onClick={handleTestAuditorSound}
+                className="px-3 py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Play size={12} /> Test Sound
+              </button>
+            </div>
+          </div>
+
+          {/* Desktop Notifications Status & Re-enable Hint */}
+          <div className="p-3.5 rounded-xl border border-white/10 bg-white/5 text-xs flex flex-col gap-2">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <span className="font-semibold text-white flex items-center gap-2">
+                <Bell size={14} className="text-cyan-400" /> Desktop (OS) Notifications:
+              </span>
+              {desktopPermission === 'granted' && (
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold text-[11px] flex items-center gap-1">
+                  <CheckCircle2 size={12} /> Active
+                </span>
+              )}
+              {desktopPermission === 'denied' && (
+                <span className="px-2.5 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/30 font-semibold text-[11px] flex items-center gap-1">
+                  <AlertCircle size={12} /> Blocked in Browser
+                </span>
+              )}
+              {desktopPermission === 'default' && (
+                <button
+                  type="button"
+                  onClick={handleRequestDesktopPermission}
+                  className="px-3 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-semibold text-[11px] hover:bg-cyan-500/30 transition cursor-pointer"
+                >
+                  Enable Desktop Alerts
+                </button>
+              )}
+            </div>
+            {desktopPermission === 'denied' && (
+              <div className="text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 p-2.5 rounded-lg mt-1">
+                <strong>How to re-enable:</strong> Notifications are blocked in your browser. Click the padlock or site settings icon next to the URL in your browser address bar and change Notifications permission to <em>Allow</em>.
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ------------------------------------------------------------- */}

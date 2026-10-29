@@ -8,6 +8,7 @@ import {
   PATENT_ROLES
 } from '../../src/patent/patentStateMachine.js';
 import { getMemberPatentRoles } from '../../src/patent/patentRoles.js';
+import { buildFilingReassignNotifications } from '../../src/PatentFiling/patentNotifications.js';
 
 export default async function handler(req, res) {
   // CORS & Methods
@@ -98,11 +99,36 @@ export default async function handler(req, res) {
         return res.status(result.status || 400).json({ error: result.error });
       }
 
+      // Build & persist server-decided notifications for reassignment
+      const notifications = buildFilingReassignNotifications({
+        filing: result.filing,
+        previousAssigneeId: filing.assignee_id,
+        previousAuditorId: filing.auditor_id,
+        newAssigneeId: result.filing.assignee_id,
+        newAuditorId: result.filing.auditor_id,
+        creatorName: 'Mounisha'
+      });
+      try {
+        await supabase.from('patent_notifications').insert(notifications.map(n => ({
+          recipient_id: n.recipient_id,
+          filing_id: n.filing_id,
+          code: n.code,
+          type: n.type,
+          role_type: n.role_type,
+          message: n.message,
+          read: false,
+          created_at: n.created_at
+        })));
+      } catch (e) {
+        console.warn('API reassign notification insert failed:', e);
+      }
+
       return res.status(200).json({
         success: true,
         message: 'Filing reassigned successfully.',
         filing: result.filing,
-        event: result.event
+        event: result.event,
+        notifications
       });
     }
 
