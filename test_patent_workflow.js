@@ -44,7 +44,7 @@ console.log('--- TEST GROUP 1: Seed Role Assignments ---');
 assert(SEED_ROLE_ASSIGNMENTS.SUPER_ADMIN.includes('Mounisha'), 'Mounisha has SUPER_ADMIN role');
 assert(SEED_ROLE_ASSIGNMENTS.ACK_CHECKER.includes('Prashanth'), 'Prashanth has ACK_CHECKER role');
 
-const expectedAssignees = ['Prashanth', 'Akshay', 'Karthik', 'Chaitra', 'Kaushal', 'Prathvi'];
+const expectedAssignees = ['Prashanth', 'Akshay', 'Karthik', 'Chaitra', 'Kaushal', 'Prathvi', 'Nikhil'];
 expectedAssignees.forEach(name => {
   assert(SEED_ROLE_ASSIGNMENTS.ASSIGNEE.includes(name), `${name} has ASSIGNEE role`);
 });
@@ -430,6 +430,7 @@ const mockTeam = [
   { id: 'b89a8fa8-4b89-4f11-bd54-787aeb0fa80d', name: 'Chaitra' },
   { id: '0a11ce02-42df-4007-b8a7-afcb4b9efe2c', name: 'Kaushal' },
   { id: '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8', name: 'Prathvi' },
+  { id: '802e6882-8cf0-4eb7-9cd1-6fdd235a98ad', name: 'Nikhil' },
   { id: '42a71f9a-7119-457c-8092-0d5b75ce3060', name: 'Mounisha' },
   { id: 'user_other_1', name: 'John Doe' },
   { id: 'user_other_2', name: 'Alice Smith' }
@@ -438,10 +439,10 @@ const mockTeam = [
 const assignees = filterMembersByPatentRole(mockTeam, PATENT_ROLES.ASSIGNEE);
 const auditors = filterMembersByPatentRole(mockTeam, PATENT_ROLES.AUDITOR);
 
-assert(assignees.length === 6, 'Acceptance Test 2: Assignee list contains exactly 6 members');
+assert(assignees.length === 7, 'Acceptance Test 2: Assignee list contains exactly 7 members');
 const assigneeNames = assignees.map(m => m.name).sort();
-const expectedAssigneeList = ['Akshay', 'Chaitra', 'Karthik', 'Kaushal', 'Prashanth', 'Prathvi'].sort();
-assert(JSON.stringify(assigneeNames) === JSON.stringify(expectedAssigneeList), 'Acceptance Test 2: Assignees match exactly Prashanth, Akshay, Karthik, Chaitra, Kaushal, Prathvi');
+const expectedAssigneeList = ['Akshay', 'Chaitra', 'Karthik', 'Kaushal', 'Nikhil', 'Prashanth', 'Prathvi'].sort();
+assert(JSON.stringify(assigneeNames) === JSON.stringify(expectedAssigneeList), 'Acceptance Test 2: Assignees match exactly Prashanth, Akshay, Karthik, Chaitra, Kaushal, Prathvi, Nikhil');
 
 assert(auditors.length === 4, 'Acceptance Test 2: Auditor list contains exactly 4 members');
 const auditorNames = auditors.map(m => m.name).sort();
@@ -552,14 +553,15 @@ assert(
 // ----------------------------------------------------
 // Test Group 11: Agent to Member Mapping for Akshay & Kaushal
 // ----------------------------------------------------
-console.log('\n--- TEST GROUP 11: Agent to Member Mapping for Akshay & Kaushal ---');
+console.log('\n--- TEST GROUP 11: Agent to Member Mapping for Akshay, Kaushal & Nikhil ---');
 const sampleAllEmployees = [
   { id: 'eafcd62c-fc86-4e25-971e-343c14a2cf36', name: 'Akshaya' },
   { id: '5e4b1fe1-5ec5-4a44-b89c-a24d6a1f9b0f', name: 'Kaushal Kamath' },
   { id: '923eeac5-35a5-461e-af6f-719f32d30281', name: 'karthik' },
   { id: 'fb937e40-077b-46ff-a2a7-8942f09d9f59', name: 'Prashanth' },
   { id: 'f7c5a4e8-94b4-4510-8c47-2b7c2d9c90ca', name: 'Prathvi' },
-  { id: '2ff5eac9-31ad-43da-ac65-fcfa4792bc35', name: 'Chaitra' }
+  { id: '2ff5eac9-31ad-43da-ac65-fcfa4792bc35', name: 'Chaitra' },
+  { id: '99c4cf52-cda0-4e46-99e6-e55e0f7f49b1', name: 'Nikhil' }
 ];
 
 const assigneesFromAgents = filterMembersByPatentRole(sampleAllEmployees, PATENT_ROLES.ASSIGNEE);
@@ -574,12 +576,16 @@ assert(
   'Kaushal (Kaushal Kamath) is included in Assignee list from allEmployees'
 );
 assert(
+  assigneesFromAgents.some(a => a.name === 'Nikhil'),
+  'Nikhil is included in Assignee list from allEmployees'
+);
+assert(
   auditorsFromAgents.some(a => a.name === 'Kaushal Kamath'),
   'Kaushal (Kaushal Kamath) is included in Auditor list from allEmployees'
 );
 assert(
-  assigneesFromAgents.length === 6,
-  `Assignee list has exactly 6 members (found ${assigneesFromAgents.length})`
+  assigneesFromAgents.length === 7,
+  `Assignee list has exactly 7 members (found ${assigneesFromAgents.length})`
 );
 assert(
   auditorsFromAgents.length === 4,
@@ -594,6 +600,44 @@ assert(
   resolveMemberUuid('5e4b1fe1-5ec5-4a44-b89c-a24d6a1f9b0f') === '0a11ce02-42df-4007-b8a7-afcb4b9efe2c',
   'resolveMemberUuid translates Kaushal agent ID to Kaushal canonical member UUID'
 );
+assert(
+  resolveMemberUuid('99c4cf52-cda0-4e46-99e6-e55e0f7f49b1') === '802e6882-8cf0-4eb7-9cd1-6fdd235a98ad',
+  'resolveMemberUuid translates Nikhil agent ID to Nikhil canonical member UUID'
+);
+
+// ----------------------------------------------------
+// Test Group 12: Assignee Attaches Temp Code on Transition to Audit
+// ----------------------------------------------------
+console.log('\n--- TEST GROUP 12: Temp Code Attachment on Transition to Audit ---');
+const testFilingForAudit = {
+  id: 'f-temp-test-1',
+  code: 'PAT-2026-TEMP-01',
+  status: PATENT_STATUSES.FILING,
+  assignee_id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc', // Akshay
+  auditor_id: 'a6ecc962-3946-41ea-9946-1ff6dcc08133',  // Karthik
+  assignee_name: 'Akshay',
+  auditor_name: 'Karthik',
+  version: 2
+};
+
+const sendToAuditResult = await executeTransition({
+  filing: testFilingForAudit,
+  expectedVersion: 2,
+  toStatus: PATENT_STATUSES.AUDIT,
+  actorId: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc',
+  actorName: 'Akshay',
+  actorRoles: [PATENT_ROLES.ASSIGNEE],
+  payload: {
+    temp_code: 'TEMP/2026/DEL/99812',
+    description: 'Submitted on IPO e-portal'
+  },
+  note: 'Draft filed with Temp Code: TEMP/2026/DEL/99812 (Submitted on IPO e-portal)'
+});
+
+assert(sendToAuditResult.success === true, 'Transition to AUDIT with temp-code succeeds');
+assert(sendToAuditResult.filing.status === PATENT_STATUSES.AUDIT, 'Filing is now in AUDIT status');
+assert(sendToAuditResult.filing.temp_code === 'TEMP/2026/DEL/99812', 'temp_code is saved on filing');
+assert(sendToAuditResult.event.note.includes('TEMP/2026/DEL/99812'), 'Event note contains temp_code');
 
 console.log('\n=====================================================');
 console.log(`TEST RESULTS: ${passedTests}/${totalTests} PASSED`);

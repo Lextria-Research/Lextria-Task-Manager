@@ -296,6 +296,11 @@ export async function executeTransition({
   let newCorrectionRound = null;
   let updateCorrectionRound = null;
 
+  // When transitioning to AUDIT or anytime temp_code is provided in payload
+  if (payload.temp_code) {
+    filingUpdates.temp_code = String(payload.temp_code).trim();
+  }
+
   // A. Moving to CORRECTION: increment correction_count, create new round
   if (toStatus === PATENT_STATUSES.CORRECTION) {
     const nextRoundNo = Number(filing.correction_count || 0) + 1;
@@ -348,13 +353,27 @@ export async function executeTransition({
   if (dbClient) {
     try {
       // 1. Update filing
-      const { data: updatedFiling, error: updateErr } = await dbClient
+      let { data: updatedFiling, error: updateErr } = await dbClient
         .from('patent_filings')
         .update(filingUpdates)
         .eq('id', filing.id)
         .eq('version', filing.version) // atomic conditional update
         .select()
         .single();
+
+      if (updateErr && updateErr.message?.includes('temp_code')) {
+        const fallbackUpdates = { ...filingUpdates };
+        delete fallbackUpdates.temp_code;
+        const retry = await dbClient
+          .from('patent_filings')
+          .update(fallbackUpdates)
+          .eq('id', filing.id)
+          .eq('version', filing.version)
+          .select()
+          .single();
+        updatedFiling = retry.data;
+        updateErr = retry.error;
+      }
 
       if (updateErr || !updatedFiling) {
         return {

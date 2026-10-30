@@ -218,6 +218,8 @@ export function buildFilingTransitionNotifications({
   else if (toStatus === 'AUDIT') {
     if (filing.auditor_id && !isActorAuditor) {
       const isReaudit = fromStatus === 'CORRECTION';
+      const tempVal = filing.temp_code || payload?.temp_code;
+      const tempPart = tempVal ? ` [Temp: ${tempVal}]` : '';
       notifications.push({
         id: `notif-${Date.now()}-audit-${Math.random().toString(36).slice(2, 7)}`,
         recipient_id: filing.auditor_id,
@@ -226,8 +228,8 @@ export function buildFilingTransitionNotifications({
         type: 'STAGE_AUDIT',
         role_type: 'auditor', // Doorbell sound
         message: isReaudit
-          ? `${filing.code} corrections submitted for re-audit by ${filing.assignee_name || 'Assignee'}. Est. audit time: ${formatEstTime(filing.est_audit_minutes)}.`
-          : `${filing.code} has been submitted for your audit by ${filing.assignee_name || 'Assignee'}. Est. audit time: ${formatEstTime(filing.est_audit_minutes)}.`,
+          ? `${filing.code}${tempPart} corrections submitted for re-audit by ${filing.assignee_name || 'Assignee'}. Est. audit time: ${formatEstTime(filing.est_audit_minutes)}.`
+          : `${filing.code}${tempPart} has been submitted for your audit by ${filing.assignee_name || 'Assignee'}. Est. audit time: ${formatEstTime(filing.est_audit_minutes)}.`,
         read: false,
         created_at: nowIso
       });

@@ -327,7 +327,9 @@ export default function PatentFilingDashboard({
     // 1. Optimistic UI update: move card immediately
     const optimisticFiling = {
       ...selectedFiling,
+      ...payload,
       status: toStatus,
+      temp_code: payload.temp_code !== undefined ? payload.temp_code : selectedFiling.temp_code,
       version: (selectedFiling.version || 1) + 1,
       updated_at: new Date().toISOString()
     };

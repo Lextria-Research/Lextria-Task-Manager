@@ -19,12 +19,13 @@ export const SEED_MEMBER_ROLES = {
   'a6ecc962-3946-41ea-9946-1ff6dcc08133': [PATENT_ROLES.ASSIGNEE, PATENT_ROLES.AUDITOR], // Karthik
   'b89a8fa8-4b89-4f11-bd54-787aeb0fa80d': [PATENT_ROLES.ASSIGNEE, PATENT_ROLES.AUDITOR], // Chaitra
   '0a11ce02-42df-4007-b8a7-afcb4b9efe2c': [PATENT_ROLES.ASSIGNEE, PATENT_ROLES.AUDITOR], // Kaushal
-  '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8': [PATENT_ROLES.ASSIGNEE, PATENT_ROLES.AUDITOR]  // Prathvi
+  '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8': [PATENT_ROLES.ASSIGNEE, PATENT_ROLES.AUDITOR], // Prathvi
+  '802e6882-8cf0-4eb7-9cd1-6fdd235a98ad': [PATENT_ROLES.ASSIGNEE]  // Nikhil
 };
 
 export const SEED_ROLE_ASSIGNMENTS = {
   SUPER_ADMIN: ['Mounisha'],
-  ASSIGNEE: ['Prashanth', 'Akshay', 'Karthik', 'Chaitra', 'Kaushal', 'Prathvi'],
+  ASSIGNEE: ['Prashanth', 'Akshay', 'Karthik', 'Chaitra', 'Kaushal', 'Prathvi', 'Nikhil'],
   AUDITOR: ['Prathvi', 'Chaitra', 'Kaushal', 'Karthik'],
   ACK_CHECKER: ['Prashanth']
 };
@@ -36,7 +37,8 @@ export const KNOWN_MEMBER_UUIDS = {
   karthik: 'a6ecc962-3946-41ea-9946-1ff6dcc08133',
   chaitra: 'b89a8fa8-4b89-4f11-bd54-787aeb0fa80d',
   kaushal: '0a11ce02-42df-4007-b8a7-afcb4b9efe2c',
-  prathvi: '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8'
+  prathvi: '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8',
+  nikhil: '802e6882-8cf0-4eb7-9cd1-6fdd235a98ad'
 };
 
 // Maps department agents IDs to canonical members(id) UUIDs
@@ -47,7 +49,8 @@ export const KNOWN_AGENT_TO_MEMBER_UUIDS = {
   'fb937e40-077b-46ff-a2a7-8942f09d9f59': 'f7fe55e4-7c00-4030-86ed-0ccf39737074', // Prashanth
   'f7c5a4e8-94b4-4510-8c47-2b7c2d9c90ca': '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8', // Prathvi
   '2ff5eac9-31ad-43da-ac65-fcfa4792bc35': 'b89a8fa8-4b89-4f11-bd54-787aeb0fa80d', // Chaitra
-  '890be412-39de-4420-bed3-a70516e21469': '42a71f9a-7119-457c-8092-0d5b75ce3060'  // Mounisha
+  '890be412-39de-4420-bed3-a70516e21469': '42a71f9a-7119-457c-8092-0d5b75ce3060', // Mounisha
+  '99c4cf52-cda0-4e46-99e6-e55e0f7f49b1': '802e6882-8cf0-4eb7-9cd1-6fdd235a98ad'  // Nikhil
 };
 
 /**
@@ -60,7 +63,8 @@ export function isSameMemberName(nameA = '', nameB = '') {
   if (a === b) return true;
   if (a.includes(b) || b.includes(a)) return true;
   if ((a === 'akshay' && b === 'akshaya') || (a === 'akshaya' && b === 'akshay')) return true;
-  if ((a.startsWith('kaushal') && b.startsWith('kaushal'))) return true;
+  if (a.startsWith('kaushal') && b.startsWith('kaushal')) return true;
+  if (a.startsWith('nikhil') && b.startsWith('nikhil')) return true;
   return false;
 }
 
@@ -103,6 +107,7 @@ export function getCleanMemberName(member) {
   const n = (member.name || '').trim();
   if (isSameMemberName(n, 'Akshay')) return 'Akshay';
   if (isSameMemberName(n, 'Kaushal')) return 'Kaushal';
+  if (isSameMemberName(n, 'Nikhil')) return 'Nikhil';
   return n;
 }
 

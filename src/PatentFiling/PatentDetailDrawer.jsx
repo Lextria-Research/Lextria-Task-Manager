@@ -12,7 +12,8 @@ import {
   MailCheck,
   ArrowRight,
   ShieldAlert,
-  Trash2
+  Trash2,
+  Copy
 } from 'lucide-react';
 import {
   PATENT_ROLES,
@@ -42,6 +43,9 @@ export default function PatentDetailDrawer({
   const [lightboxImage, setLightboxImage] = useState(null);
 
   // Transition form states
+  const [tempCodeInput, setTempCodeInput] = useState('');
+  const [filingNotesInput, setFilingNotesInput] = useState('');
+  const [copiedTempCode, setCopiedTempCode] = useState(false);
   const [assigneeResponseNote, setAssigneeResponseNote] = useState('');
   const [paymentRefInput, setPaymentRefInput] = useState('');
   const [forceMoveStatus, setForceMoveStatus] = useState('');
@@ -56,6 +60,9 @@ export default function PatentDetailDrawer({
   useEffect(() => {
     let isMounted = true;
     if (filing?.id) {
+      setTempCodeInput(filing.temp_code || '');
+      setFilingNotesInput('');
+      setActionError('');
       fetchFilingEventsAndRoundsFromDb(filing.id, allMembers).then(res => {
         if (isMounted && res) {
           setHistoryData(res);
@@ -63,7 +70,7 @@ export default function PatentDetailDrawer({
       });
     }
     return () => { isMounted = false; };
-  }, [filing?.id, filing?.version, isOpen, allMembers]);
+  }, [filing?.id, filing?.version, filing?.temp_code, isOpen, allMembers]);
 
   if (!isOpen || !filing) return null;
 
@@ -134,6 +141,11 @@ export default function PatentDetailDrawer({
               <span className="text-xs text-slate-400">
                 v{filing.version}
               </span>
+              {filing.temp_code && (
+                <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1">
+                  Temp: {filing.temp_code}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2 mt-1">
               {isEditingType ? (
@@ -256,14 +268,54 @@ export default function PatentDetailDrawer({
             {/* 2. FILING -> Send to Audit (Assignee only) */}
             {filing.status === PATENT_STATUSES.FILING && (
               isAssignee ? (
-                <button
-                  disabled={isActing}
-                  onClick={() => handleAction(PATENT_STATUSES.AUDIT, {}, 'Draft filed; submitted for audit')}
-                  className="w-full glass-button text-xs font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 cursor-pointer bg-brand-600 hover:bg-brand-500"
-                >
-                  <ArrowRight size={16} />
-                  <span>Filed — Send to Audit</span>
-                </button>
+                <div className="space-y-3 p-3.5 rounded-xl bg-brand-950/40 border border-brand-500/20">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-brand-200 mb-1 flex items-center justify-between">
+                      <span>Temp Code / Application Number <span className="text-red-400">*</span></span>
+                      <span className="text-[10px] text-slate-400 font-normal">Auditor requirement</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={tempCodeInput}
+                      onChange={e => setTempCodeInput(e.target.value)}
+                      placeholder="e.g. TEMP-2026-001 or 202641012345"
+                      className="w-full glass-input text-xs font-mono font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                      Filing Description / Notes for Auditor (Optional)
+                    </label>
+                    <textarea
+                      value={filingNotesInput}
+                      onChange={e => setFilingNotesInput(e.target.value)}
+                      placeholder="Add draft summary, filing particulars, or notes for the auditor..."
+                      rows={2}
+                      className="w-full glass-input text-xs"
+                    />
+                  </div>
+                  <button
+                    disabled={isActing}
+                    onClick={() => {
+                      if (!tempCodeInput.trim()) {
+                        setActionError('Please enter the Temp Code / Application Number before sending to audit.');
+                        return;
+                      }
+                      const noteText = filingNotesInput.trim()
+                        ? `Draft filed (Temp: ${tempCodeInput.trim()}) - ${filingNotesInput.trim()}`
+                        : `Draft filed (Temp: ${tempCodeInput.trim()}); submitted for audit`;
+                      handleAction(
+                        PATENT_STATUSES.AUDIT,
+                        { temp_code: tempCodeInput.trim(), filing_notes: filingNotesInput.trim() },
+                        noteText
+                      );
+                    }}
+                    className="w-full glass-button text-xs font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 cursor-pointer bg-brand-600 hover:bg-brand-500"
+                  >
+                    <ArrowRight size={16} />
+                    <span>Filed — Attach Temp Code & Send to Audit</span>
+                  </button>
+                </div>
               ) : (
                 <div className="text-xs text-slate-400 italic">
                   Assignee ({filing.assignee_name}) is currently drafting/filing.
@@ -274,23 +326,50 @@ export default function PatentDetailDrawer({
             {/* 3. AUDIT -> Send for Correction OR Approve for Payment (Auditor only) */}
             {filing.status === PATENT_STATUSES.AUDIT && (
               isAuditor ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <button
-                    disabled={isActing}
-                    onClick={() => setShowCorrectionModal(true)}
-                    className="w-full bg-amber-600/80 hover:bg-amber-600 text-white font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
-                  >
-                    <RotateCcw size={15} />
-                    <span>Send for Correction</span>
-                  </button>
-                  <button
-                    disabled={isActing}
-                    onClick={() => handleAction(PATENT_STATUSES.PAYMENT, {}, 'Audit approved; proceed to payment')}
-                    className="w-full bg-emerald-600/80 hover:bg-emerald-600 text-white font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
-                  >
-                    <CheckCircle2 size={15} />
-                    <span>Approve — Proceed to Payment</span>
-                  </button>
+                <div className="space-y-3">
+                  {filing.temp_code && (
+                    <div className="p-3 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-between">
+                      <div>
+                        <div className="text-[10px] text-purple-300 uppercase tracking-wider font-bold">
+                          Application Temp Code for Audit
+                        </div>
+                        <div className="text-sm font-mono font-bold text-white tracking-wide mt-0.5">
+                          {filing.temp_code}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(filing.temp_code);
+                          setCopiedTempCode(true);
+                          setTimeout(() => setCopiedTempCode(false), 2000);
+                        }}
+                        className="text-xs px-2.5 py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-500/40 flex items-center gap-1.5 transition cursor-pointer"
+                        title="Copy Temp Code"
+                      >
+                        <Copy size={13} />
+                        <span>{copiedTempCode ? 'Copied!' : 'Copy'}</span>
+                      </button>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <button
+                      disabled={isActing}
+                      onClick={() => setShowCorrectionModal(true)}
+                      className="w-full bg-amber-600/80 hover:bg-amber-600 text-white font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
+                    >
+                      <RotateCcw size={15} />
+                      <span>Send for Correction</span>
+                    </button>
+                    <button
+                      disabled={isActing}
+                      onClick={() => handleAction(PATENT_STATUSES.PAYMENT, {}, 'Audit approved; proceed to payment')}
+                      className="w-full bg-emerald-600/80 hover:bg-emerald-600 text-white font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
+                    >
+                      <CheckCircle2 size={15} />
+                      <span>Approve — Proceed to Payment</span>
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="text-xs text-slate-400 italic">
@@ -430,6 +509,30 @@ export default function PatentDetailDrawer({
 
           {/* Key Metadata Table */}
           <div className="grid grid-cols-2 gap-3 text-xs">
+            {filing.temp_code && (
+              <div className="col-span-2 p-3 rounded-xl bg-purple-950/25 border border-purple-500/30 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] text-purple-300 block mb-0.5 font-bold uppercase tracking-wider">
+                    Application Temp Code
+                  </span>
+                  <span className="font-mono font-bold text-white text-sm tracking-wide">
+                    {filing.temp_code}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(filing.temp_code);
+                    setCopiedTempCode(true);
+                    setTimeout(() => setCopiedTempCode(false), 2000);
+                  }}
+                  className="text-xs px-2.5 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-500/40 flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <Copy size={12} />
+                  <span>{copiedTempCode ? 'Copied!' : 'Copy'}</span>
+                </button>
+              </div>
+            )}
             <div className="p-3 rounded-xl bg-white/5 border border-white/10">
               <span className="text-[10px] text-slate-400 block mb-0.5">Assignee</span>
               <span className="font-semibold text-white">{filing.assignee_name || 'Unassigned'}</span>

@@ -87,10 +87,18 @@ export default function PatentFilingCard({ filing, onClick, currentUser, onDelet
       </div>
 
       {/* Prominent Filing Type Title */}
-      <div className="pt-0.5">
+      <div className="pt-0.5 flex items-center justify-between gap-1.5">
         <h4 className="text-xs font-semibold text-slate-100 tracking-tight leading-snug truncate" title={filing.filing_type}>
           {filing.filing_type || 'Patent Filing'}
         </h4>
+        {filing.temp_code && (
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-300 border border-purple-500/30 font-mono font-bold tracking-wide shrink-0 truncate max-w-[130px]"
+            title={`Application Temp Code: ${filing.temp_code}`}
+          >
+            Temp: {filing.temp_code}
+          </span>
+        )}
       </div>
 
       {/* Personnel Row: Filer -> Reviewer (Clean & Uncrowded) */}

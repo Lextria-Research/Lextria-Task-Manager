@@ -109,12 +109,17 @@ export async function loadFilingsFromStorage(allMembers = []) {
       .order('created_at', { ascending: false });
 
     if (!error && Array.isArray(data)) {
+      const cached = getLocalCache(LOCAL_STORAGE_KEY, []);
+      const cachedMap = new Map(cached.map(c => [c.id, c]));
+
       // Map names from allMembers or known UUIDs
       const enriched = data.map(f => {
         const a = allMembers.find(m => String(m.id) === String(f.assignee_id));
         const u = allMembers.find(m => String(m.id) === String(f.auditor_id));
+        const c = cachedMap.get(f.id);
         return {
           ...f,
+          temp_code: f.temp_code || c?.temp_code || null,
           assignee_name: a ? a.name : (f.assignee_name || getKnownMemberName(f.assignee_id, 'Assignee')),
           auditor_name: u ? u.name : (f.auditor_name || getKnownMemberName(f.auditor_id, 'Auditor'))
         };
@@ -170,6 +175,7 @@ export async function saveNewFilingToStorage(filingData, actor, allMembers = [])
     id: `filing-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     code: cleanCode,
     filing_type: cleanType,
+    temp_code: filingData.temp_code || null,
     title: filingData.title || null,
     assignee_id: assigneeUuid,
     auditor_id: auditorUuid,
@@ -321,6 +327,10 @@ export async function executeTransitionInStorage({
       updated_at: result.filing.updated_at
     };
 
+    if (result.filing.temp_code !== undefined && result.filing.temp_code !== null) {
+      updatePayload.temp_code = result.filing.temp_code;
+    }
+
     if (result.filing.payment_confirmed_by) {
       updatePayload.payment_confirmed_by = resolveMemberUuid(result.filing.payment_confirmed_by, actorUuid, allMembers);
       updatePayload.payment_confirmed_at = result.filing.payment_confirmed_at;
@@ -330,11 +340,21 @@ export async function executeTransitionInStorage({
       updatePayload.ack_confirmed_at = result.filing.ack_confirmed_at;
     }
 
-    const { error: updateErr } = await supabase
+    let { error: updateErr } = await supabase
       .from('patent_filings')
       .update(updatePayload)
       .eq('id', filing.id)
       .eq('version', filing.version);
+
+    if (updateErr && updateErr.message?.includes('temp_code')) {
+      delete updatePayload.temp_code;
+      const retry = await supabase
+        .from('patent_filings')
+        .update(updatePayload)
+        .eq('id', filing.id)
+        .eq('version', filing.version);
+      updateErr = retry.error;
+    }
 
     if (updateErr) {
       console.warn('Supabase update warning:', updateErr.message);
@@ -388,7 +408,12 @@ export async function executeTransitionInStorage({
 
   // 4. Update local cache
   const cached = getLocalCache(LOCAL_STORAGE_KEY, []);
-  const nextList = cached.map(f => f.id === filing.id ? { ...f, ...result.filing } : f);
+  const updatedFilingWithTemp = {
+    ...filing,
+    ...result.filing,
+    temp_code: result.filing.temp_code !== undefined ? result.filing.temp_code : (filing.temp_code || null)
+  };
+  const nextList = cached.map(f => f.id === filing.id ? updatedFilingWithTemp : f);
   saveLocalCache(LOCAL_STORAGE_KEY, nextList);
 
   // Record event locally
@@ -745,4 +770,66 @@ export async function deleteFilingFromStorage({
   });
 
   return { success: true, filingId, code };
+}
+
+/**
+ * Updates a filing's temp_code.
+ */
+export async function updateTempCodeInStorage({ filing, newTempCode, actor, allMembers = [] }) {
+  const cleanTemp = (newTempCode || '').trim();
+  const newVersion = (filing.version || 1) + 1;
+  const nowIso = new Date().toISOString();
+  const actorUuid = resolveMemberUuid(actor?.id || actor?.name, '42a71f9a-7119-457c-8092-0d5b75ce3060', allMembers);
+
+  // 1. Update in Supabase
+  try {
+    const updateObj = {
+      temp_code: cleanTemp || null,
+      version: newVersion,
+      updated_at: nowIso
+    };
+    let { error } = await supabase
+      .from('patent_filings')
+      .update(updateObj)
+      .eq('id', filing.id)
+      .eq('version', filing.version);
+
+    if (error && error.message?.includes('temp_code')) {
+      // Column not migrated yet in Supabase
+    }
+
+    await supabase.from('patent_filing_events').insert([{
+      filing_id: filing.id,
+      from_status: filing.status,
+      to_status: filing.status,
+      actor_id: actorUuid,
+      timestamp: nowIso,
+      note: cleanTemp ? 'Temp Code updated to "' + cleanTemp + '"' : 'Temp Code cleared'
+    }]);
+  } catch (e) {
+    console.warn('Supabase update temp_code exception:', e);
+  }
+
+  // 2. Update local cache
+  const updatedFiling = {
+    ...filing,
+    temp_code: cleanTemp || null,
+    version: newVersion,
+    updated_at: nowIso
+  };
+
+  const cached = getLocalCache(LOCAL_STORAGE_KEY, []);
+  const nextList = cached.map(f => f.id === filing.id ? updatedFiling : f);
+  saveLocalCache(LOCAL_STORAGE_KEY, nextList);
+
+  // 3. Broadcast real-time change event
+  broadcastPatentChange({
+    action: 'UPDATE_TEMP_CODE',
+    filing: updatedFiling,
+    actorId: actorUuid,
+    actorName: actor?.name || 'User',
+    version: newVersion
+  });
+
+  return { success: true, filing: updatedFiling };
 }
