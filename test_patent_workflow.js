@@ -18,6 +18,7 @@ import {
   getMemberPatentRoles,
   filterMembersByPatentRole
 } from './src/patent/patentRoles.js';
+import { matchFilingSearch } from './src/PatentFiling/patentStorage.js';
 
 let totalTests = 0;
 let passedTests = 0;
@@ -638,6 +639,63 @@ assert(sendToAuditResult.success === true, 'Transition to AUDIT with temp-code s
 assert(sendToAuditResult.filing.status === PATENT_STATUSES.AUDIT, 'Filing is now in AUDIT status');
 assert(sendToAuditResult.filing.temp_code === 'TEMP/2026/DEL/99812', 'temp_code is saved on filing');
 assert(sendToAuditResult.event.note.includes('TEMP/2026/DEL/99812'), 'Event note contains temp_code');
+
+// ----------------------------------------------------
+// Test Group 13: Deep Card Search Across All Fields
+// ----------------------------------------------------
+console.log('\n--- TEST GROUP 13: Deep Card Search Across All Fields ---');
+
+const sampleCard = {
+  id: 'card-search-1',
+  code: 'PAT-2026-099',
+  temp_code: 'TEMP/2026/IPO/7711',
+  filing_type: 'Non-Provisional',
+  title: 'Quantum Entangled Cryptography System',
+  description: 'Method and apparatus for quantum key exchange',
+  filing_notes: 'Submitted via fast-track route',
+  assignee_name: 'Akshay',
+  auditor_name: 'Prathvi',
+  status: PATENT_STATUSES.CORRECTION,
+  priority: 'Urgent',
+  payment_reference: 'IPO-MUM-2026-88221',
+  hard_deadline: '2026-12-15',
+  correction_rounds: [
+    {
+      round_no: 1,
+      description: 'REFILE - Claim 1 must define the entanglement threshold',
+      assignee_response: 'Claim 1 amended with specific photon wavelength'
+    }
+  ],
+  events: [
+    {
+      note: 'Draft filed with Temp Code: TEMP/2026/IPO/7711 (e-portal ack)',
+      actor_name: 'Akshay'
+    }
+  ]
+};
+
+assert(matchFilingSearch(sampleCard, 'PAT-2026-099'), 'Search matches by code');
+assert(matchFilingSearch(sampleCard, 'pat-2026'), 'Search matches by code case-insensitively');
+assert(matchFilingSearch(sampleCard, 'TEMP/2026/IPO/7711'), 'Search matches by temp code');
+assert(matchFilingSearch(sampleCard, '7711'), 'Search matches by temp code partial number');
+assert(matchFilingSearch(sampleCard, 'Akshay'), 'Search matches by assignee name');
+assert(matchFilingSearch(sampleCard, 'akshay'), 'Search matches by assignee lowercase');
+assert(matchFilingSearch(sampleCard, 'Prathvi'), 'Search matches by auditor name');
+assert(matchFilingSearch(sampleCard, 'Non-Provisional'), 'Search matches by filing type');
+assert(matchFilingSearch(sampleCard, 'Quantum'), 'Search matches by title');
+assert(matchFilingSearch(sampleCard, 'quantum key exchange'), 'Search matches by description');
+assert(matchFilingSearch(sampleCard, 'fast-track'), 'Search matches by filing notes');
+assert(matchFilingSearch(sampleCard, 'Urgent'), 'Search matches by priority');
+assert(matchFilingSearch(sampleCard, 'IPO-MUM-2026-88221'), 'Search matches by payment reference');
+assert(matchFilingSearch(sampleCard, 'REFILE'), 'Search matches by correction round deficiency description');
+assert(matchFilingSearch(sampleCard, 'entanglement threshold'), 'Search matches by correction specific reason');
+assert(matchFilingSearch(sampleCard, 'photon wavelength'), 'Search matches by assignee correction response');
+assert(matchFilingSearch(sampleCard, 'e-portal ack'), 'Search matches by audit trail event note');
+assert(matchFilingSearch(sampleCard, 'akshay refile'), 'Search matches multi-word query across multiple card fields');
+assert(matchFilingSearch(sampleCard, 'prathvi urgent'), 'Search matches auditor + priority multi-word query');
+assert(!matchFilingSearch(sampleCard, 'random_non_existent_text_xyz'), 'Non-matching query returns false');
+assert(matchFilingSearch(sampleCard, ''), 'Empty search matches all filings');
+assert(matchFilingSearch(sampleCard, '   '), 'Whitespace-only search matches all filings');
 
 console.log('\n=====================================================');
 console.log(`TEST RESULTS: ${passedTests}/${totalTests} PASSED`);

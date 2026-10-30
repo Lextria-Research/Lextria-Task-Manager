@@ -8,7 +8,8 @@ import {
   Search,
   Archive,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  X
 } from 'lucide-react';
 import { PATENT_ROLES, hasPatentRole } from '../patent/patentStateMachine.js';
 import { fetchAllPatentRoleRecords, isMemberMatch } from '../patent/patentRoles.js';
@@ -22,7 +23,11 @@ import {
   executeReassignInStorage,
   fetchSystemFilingTypes,
   updateFilingTypeInStorage,
-  deleteFilingFromStorage
+  deleteFilingFromStorage,
+  matchFilingSearch,
+  getLocalCache,
+  LOCAL_ROUNDS_KEY,
+  LOCAL_EVENTS_KEY
 } from './patentStorage.js';
 import { initPatentRealtimeSync } from './patentRealtime.js';
 
@@ -233,15 +238,13 @@ export default function PatentFilingDashboard({
 
   // Filtered filings based on search & toolbar filters
   const filteredFilings = useMemo(() => {
+    const localRounds = getLocalCache(LOCAL_ROUNDS_KEY, []);
+    const localEvents = getLocalCache(LOCAL_EVENTS_KEY, []);
+
     return filings.filter(f => {
-      // Search query (code, assignee, auditor, type)
+      // Deep search query across EVERYTHING inside the card (code, assignee, auditor, temp code, description, corrections, notes, etc.)
       if (searchQuery.trim()) {
-        const q = searchQuery.trim().toLowerCase();
-        const codeMatch = (f.code || '').toLowerCase().includes(q);
-        const assigneeMatch = (f.assignee_name || '').toLowerCase().includes(q);
-        const auditorMatch = (f.auditor_name || '').toLowerCase().includes(q);
-        const typeMatch = (f.filing_type || '').toLowerCase().includes(q);
-        if (!codeMatch && !assigneeMatch && !auditorMatch && !typeMatch) {
+        if (!matchFilingSearch(f, searchQuery, localRounds, localEvents)) {
           return false;
         }
       }
@@ -516,14 +519,24 @@ export default function PatentFilingDashboard({
       <div className="p-3.5 rounded-2xl bg-[#080d26]/80 border border-white/10 flex flex-wrap items-center justify-between gap-3 shadow-lg">
         {/* Left: Search Bar */}
         <div className="relative flex-1 min-w-[240px] max-w-md">
-          <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
           <input
             type="text"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Search code, assignee, auditor, type..."
-            className="w-full glass-input text-xs pl-9 py-2"
+            placeholder="Search code, assignee, auditor, temp code, description, corrections..."
+            className="w-full glass-input text-xs pl-9 pr-8 py-2"
           />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer transition p-1"
+              title="Clear search"
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
 
         {/* Right: Dropdown Filters */}

@@ -26,9 +26,9 @@ import {
   savePatentNotificationsToDb
 } from './patentNotifications.js';
 
-const LOCAL_STORAGE_KEY = 'lextria_patent_filings_cache';
-const LOCAL_EVENTS_KEY = 'lextria_patent_events_cache';
-const LOCAL_ROUNDS_KEY = 'lextria_patent_rounds_cache';
+export const LOCAL_STORAGE_KEY = 'lextria_patent_filings_cache';
+export const LOCAL_EVENTS_KEY = 'lextria_patent_events_cache';
+export const LOCAL_ROUNDS_KEY = 'lextria_patent_rounds_cache';
 
 // Clean initial empty state - filings are stored and managed live in Supabase
 const DEFAULT_DEMO_FILINGS = [];
@@ -103,14 +103,52 @@ export function resolveMemberUuid(idOrName, fallbackUuid = '42a71f9a-7119-457c-8
  */
 export async function loadFilingsFromStorage(allMembers = []) {
   try {
-    const { data, error } = await supabase
-      .from('patent_filings')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const fetchSafe = async (fn) => {
+      try {
+        const res = await fn();
+        return res?.data || [];
+      } catch (e) {
+        return [];
+      }
+    };
+
+    const [filingsRes, roundsData, eventsData] = await Promise.all([
+      supabase.from('patent_filings').select('*').order('created_at', { ascending: false }),
+      fetchSafe(() => supabase.from('patent_correction_rounds').select('*').order('created_at', { ascending: false })),
+      fetchSafe(() => supabase.from('patent_filing_events').select('*').order('timestamp', { ascending: false }))
+    ]);
+
+    if (Array.isArray(roundsData) && roundsData.length > 0) {
+      saveLocalCache(LOCAL_ROUNDS_KEY, roundsData);
+    }
+    if (Array.isArray(eventsData) && eventsData.length > 0) {
+      saveLocalCache(LOCAL_EVENTS_KEY, eventsData);
+    }
+
+    const { data, error } = filingsRes || {};
 
     if (!error && Array.isArray(data)) {
       const cached = getLocalCache(LOCAL_STORAGE_KEY, []);
       const cachedMap = new Map(cached.map(c => [c.id, c]));
+
+      const allRounds = Array.isArray(roundsData) && roundsData.length > 0 ? roundsData : getLocalCache(LOCAL_ROUNDS_KEY, []);
+      const allEvents = Array.isArray(eventsData) && eventsData.length > 0 ? eventsData : getLocalCache(LOCAL_EVENTS_KEY, []);
+
+      const roundsByFiling = new Map();
+      allRounds.forEach(r => {
+        if (!r.filing_id) return;
+        const list = roundsByFiling.get(r.filing_id) || [];
+        list.push(r);
+        roundsByFiling.set(r.filing_id, list);
+      });
+
+      const eventsByFiling = new Map();
+      allEvents.forEach(e => {
+        if (!e.filing_id) return;
+        const list = eventsByFiling.get(e.filing_id) || [];
+        list.push(e);
+        eventsByFiling.set(e.filing_id, list);
+      });
 
       // Map names from allMembers or known UUIDs
       const enriched = data.map(f => {
@@ -121,7 +159,9 @@ export async function loadFilingsFromStorage(allMembers = []) {
           ...f,
           temp_code: f.temp_code || c?.temp_code || null,
           assignee_name: a ? a.name : (f.assignee_name || getKnownMemberName(f.assignee_id, 'Assignee')),
-          auditor_name: u ? u.name : (f.auditor_name || getKnownMemberName(f.auditor_id, 'Auditor'))
+          auditor_name: u ? u.name : (f.auditor_name || getKnownMemberName(f.auditor_id, 'Auditor')),
+          correction_rounds: roundsByFiling.get(f.id) || c?.correction_rounds || [],
+          events: eventsByFiling.get(f.id) || c?.events || []
         };
       });
       saveLocalCache(LOCAL_STORAGE_KEY, enriched);
@@ -832,4 +872,82 @@ export async function updateTempCodeInStorage({ filing, newTempCode, actor, allM
   });
 
   return { success: true, filing: updatedFiling };
+}
+
+/**
+ * Comprehensive search matching across ALL fields and child records inside a filing card:
+ * code, assignee, auditor, temp_code, title, description, filing_notes, filing_type,
+ * priority, status, payment_reference, hard_deadline, estimated times,
+ * all correction round deficiency notes, assignee responses, round numbers, attachments,
+ * and all audit trail event notes.
+ */
+export function matchFilingSearch(filing, query, allRounds = [], allEvents = []) {
+  if (!query || !query.trim()) return true;
+  if (!filing) return false;
+
+  const q = query.trim().toLowerCase();
+
+  // 1. Gather all direct properties
+  const pieces = [
+    filing.code,
+    filing.temp_code,
+    filing.filing_type,
+    filing.title,
+    filing.description,
+    filing.filing_notes,
+    filing.assignee_name,
+    filing.auditor_name,
+    filing.status,
+    filing.priority,
+    filing.payment_reference,
+    filing.hard_deadline,
+    filing.est_filing_minutes ? `${filing.est_filing_minutes}m ${Math.floor(filing.est_filing_minutes / 60)}h` : null,
+    filing.est_audit_minutes ? `${filing.est_audit_minutes}m ${Math.floor(filing.est_audit_minutes / 60)}h` : null
+  ];
+
+  // 2. Gather all correction round text
+  const filingRounds = [
+    ...(Array.isArray(filing.correction_rounds) ? filing.correction_rounds : []),
+    ...allRounds.filter(r => String(r.filing_id) === String(filing.id))
+  ];
+  filingRounds.forEach(r => {
+    if (r.description) pieces.push(r.description);
+    if (r.assignee_response) pieces.push(r.assignee_response);
+    if (r.round_no) pieces.push(`round ${r.round_no}`);
+    if (Array.isArray(r.attachments)) {
+      r.attachments.forEach(att => {
+        if (typeof att === 'string') pieces.push(att);
+        else if (att?.name) pieces.push(att.name);
+      });
+    }
+  });
+
+  // 3. Gather all event notes and audit history
+  const filingEvents = [
+    ...(Array.isArray(filing.events) ? filing.events : []),
+    ...allEvents.filter(e => String(e.filing_id) === String(filing.id))
+  ];
+  filingEvents.forEach(e => {
+    if (e.note) pieces.push(e.note);
+    if (e.actor_name) pieces.push(e.actor_name);
+    if (e.from_status) pieces.push(e.from_status);
+    if (e.to_status) pieces.push(e.to_status);
+  });
+
+  // 4. Combine into searchable text
+  const fullText = pieces
+    .filter(p => p !== null && p !== undefined)
+    .map(p => String(p).toLowerCase())
+    .join(' ');
+
+  // Direct substring match
+  if (fullText.includes(q)) return true;
+
+  // Multi-term match (every term in query must match somewhere in the card's data)
+  const tokens = q.split(/\s+/).filter(Boolean);
+  if (tokens.length > 1 && tokens.every(token => fullText.includes(token))) {
+    return true;
+  }
+
+  return false;
 }
