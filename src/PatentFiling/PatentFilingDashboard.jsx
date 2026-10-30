@@ -545,9 +545,10 @@ export default function PatentFilingDashboard({
           <select
             value={personFilter}
             onChange={e => setPersonFilter(e.target.value)}
-            className="glass-input text-xs py-1.5 px-3 bg-[#0a153a] cursor-pointer"
+            className="glass-input text-xs py-1.5 px-3 bg-[#0a153a] text-slate-100 cursor-pointer"
+            style={{ colorScheme: 'dark' }}
           >
-            <option value="ALL">All Team Members</option>
+            <option value="ALL" className="bg-[#0a153a] text-white">All Team Members</option>
             {allEmployees.map(m => (
               <option key={m.id} value={m.id} className="bg-[#0a153a] text-white">
                 {m.name}
@@ -559,9 +560,10 @@ export default function PatentFilingDashboard({
           <select
             value={typeFilter}
             onChange={e => setTypeFilter(e.target.value)}
-            className="glass-input text-xs py-1.5 px-3 bg-[#0a153a] cursor-pointer"
+            className="glass-input text-xs py-1.5 px-3 bg-[#0a153a] text-slate-100 cursor-pointer"
+            style={{ colorScheme: 'dark' }}
           >
-            <option value="ALL">All Types</option>
+            <option value="ALL" className="bg-[#0a153a] text-white">All Types</option>
             {filingTypes.map(t => (
               <option key={t} value={t} className="bg-[#0a153a] text-white">
                 {t}
@@ -573,13 +575,14 @@ export default function PatentFilingDashboard({
           <select
             value={priorityFilter}
             onChange={e => setPriorityFilter(e.target.value)}
-            className="glass-input text-xs py-1.5 px-3 bg-[#0a153a] cursor-pointer"
+            className="glass-input text-xs py-1.5 px-3 bg-[#0a153a] text-slate-100 cursor-pointer"
+            style={{ colorScheme: 'dark' }}
           >
-            <option value="ALL">All Priorities</option>
-            <option value="Urgent">Urgent</option>
-            <option value="High">High</option>
-            <option value="Medium">Medium</option>
-            <option value="Low">Low</option>
+            <option value="ALL" className="bg-[#0a153a] text-white">All Priorities</option>
+            <option value="Urgent" className="bg-[#0a153a] text-white">Urgent</option>
+            <option value="High" className="bg-[#0a153a] text-white">High</option>
+            <option value="Medium" className="bg-[#0a153a] text-white">Medium</option>
+            <option value="Low" className="bg-[#0a153a] text-white">Low</option>
           </select>
         </div>
       </div>
