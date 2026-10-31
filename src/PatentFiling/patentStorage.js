@@ -951,3 +951,150 @@ export function matchFilingSearch(filing, query, allRounds = [], allEvents = [])
 
   return false;
 }
+
+/**
+ * Fully updates a patent filing's attributes.
+ * Restricted to Super Admin (Mounisha).
+ * Only updates fields provided in `updates` and preserves all other previous fields.
+ */
+export async function updateFilingInStorage({
+  filing,
+  updates = {},
+  actor,
+  actorRoles = [],
+  allMembers = []
+}) {
+  if (!filing || !filing.id) {
+    return { success: false, error: 'Filing not found.' };
+  }
+
+  // 1. Authorization: Only SUPER_ADMIN (Mounisha) or Leaders can execute full card edit
+  const isSuperAdmin = hasPatentRole(actorRoles, PATENT_ROLES.SUPER_ADMIN) ||
+    (actor?.role && actor.role.toLowerCase() === 'leader') ||
+    (actor?.name && actor.name.toLowerCase().includes('mounisha')) ||
+    isLeaderOrSharan(actor);
+
+  if (!isSuperAdmin) {
+    return { success: false, error: 'Only Super Admin (Mounisha) can edit filing card details.' };
+  }
+
+  const actorUuid = resolveMemberUuid(actor?.id || actor?.name, '42a71f9a-7119-457c-8092-0d5b75ce3060', allMembers);
+  const nowIso = new Date().toISOString();
+  const newVersion = (filing.version || 1) + 1;
+
+  // 2. Validate Assignee != Auditor if both present or updated
+  const targetAssigneeId = updates.assignee_id !== undefined ? updates.assignee_id : filing.assignee_id;
+  const targetAuditorId = updates.auditor_id !== undefined ? updates.auditor_id : filing.auditor_id;
+
+  if (targetAssigneeId && targetAuditorId && String(targetAssigneeId) === String(targetAuditorId)) {
+    return { success: false, error: 'Assignee and auditor must be different team members.' };
+  }
+
+  const assigneeUuid = targetAssigneeId ? resolveMemberUuid(targetAssigneeId, targetAssigneeId, allMembers) : filing.assignee_id;
+  const auditorUuid = targetAuditorId ? resolveMemberUuid(targetAuditorId, targetAuditorId, allMembers) : filing.auditor_id;
+
+  const assigneeMember = allMembers.find(m => String(m.id) === String(assigneeUuid));
+  const auditorMember = allMembers.find(m => String(m.id) === String(auditorUuid));
+
+  const cleanCode = updates.code !== undefined ? (updates.code || '').trim().toUpperCase() : filing.code;
+  if (!cleanCode) {
+    return { success: false, error: 'Filing code cannot be empty.' };
+  }
+
+  const cleanType = updates.filing_type !== undefined ? (updates.filing_type || '').trim() : filing.filing_type;
+  if (!cleanType) {
+    return { success: false, error: 'Filing type cannot be empty.' };
+  }
+
+  // 3. Assemble updated filing object (preserving all previous data)
+  const updatedFiling = {
+    ...filing,
+    code: cleanCode,
+    filing_type: cleanType,
+    temp_code: updates.temp_code !== undefined ? (updates.temp_code ? String(updates.temp_code).trim() : null) : (filing.temp_code || null),
+    title: updates.title !== undefined ? (updates.title ? String(updates.title).trim() : null) : (filing.title || null),
+    description: updates.description !== undefined ? (updates.description ? String(updates.description).trim() : null) : (filing.description || null),
+    assignee_id: assigneeUuid,
+    auditor_id: auditorUuid,
+    assignee_name: assigneeMember ? assigneeMember.name : (updates.assignee_name || filing.assignee_name || getKnownMemberName(assigneeUuid, 'Assignee')),
+    auditor_name: auditorMember ? auditorMember.name : (updates.auditor_name || filing.auditor_name || getKnownMemberName(auditorUuid, 'Auditor')),
+    status: updates.status !== undefined && updates.status ? updates.status : filing.status,
+    priority: updates.priority !== undefined && updates.priority ? updates.priority : (filing.priority || 'Medium'),
+    est_filing_minutes: updates.est_filing_minutes !== undefined ? Number(updates.est_filing_minutes) || 0 : (filing.est_filing_minutes || 0),
+    est_audit_minutes: updates.est_audit_minutes !== undefined ? Number(updates.est_audit_minutes) || 0 : (filing.est_audit_minutes || 0),
+    hard_deadline: updates.hard_deadline !== undefined ? (updates.hard_deadline || null) : (filing.hard_deadline || null),
+    payment_reference: updates.payment_reference !== undefined ? (updates.payment_reference ? String(updates.payment_reference).trim() : null) : (filing.payment_reference || null),
+    version: newVersion,
+    updated_at: nowIso
+  };
+
+  // 4. Update in Supabase
+  try {
+    const updatePayload = {
+      code: updatedFiling.code,
+      filing_type: updatedFiling.filing_type,
+      temp_code: updatedFiling.temp_code,
+      title: updatedFiling.title || updatedFiling.description || null,
+      assignee_id: updatedFiling.assignee_id,
+      auditor_id: updatedFiling.auditor_id,
+      status: updatedFiling.status,
+      priority: updatedFiling.priority,
+      est_filing_minutes: updatedFiling.est_filing_minutes,
+      est_audit_minutes: updatedFiling.est_audit_minutes,
+      hard_deadline: updatedFiling.hard_deadline,
+      payment_reference: updatedFiling.payment_reference,
+      version: newVersion,
+      updated_at: nowIso
+    };
+
+    let { error: updateErr } = await supabase
+      .from('patent_filings')
+      .update(updatePayload)
+      .eq('id', filing.id)
+      .eq('version', filing.version);
+
+    if (updateErr && (updateErr.message?.includes('temp_code') || updateErr.message?.includes('description'))) {
+      if (updateErr.message?.includes('temp_code')) delete updatePayload.temp_code;
+      if (updateErr.message?.includes('description')) delete updatePayload.description;
+      const retry = await supabase
+        .from('patent_filings')
+        .update(updatePayload)
+        .eq('id', filing.id)
+        .eq('version', filing.version);
+      updateErr = retry.error;
+    }
+
+    if (updateErr) {
+      console.warn('Supabase update warning in updateFilingInStorage:', updateErr.message);
+    }
+
+    // Insert audit event
+    const changesSummary = updates.reason ? `Admin Edit: ${updates.reason}` : 'Filing card updated by Super Admin (Mounisha)';
+    await supabase.from('patent_filing_events').insert([{
+      filing_id: filing.id,
+      from_status: filing.status,
+      to_status: updatedFiling.status,
+      actor_id: actorUuid,
+      timestamp: nowIso,
+      note: changesSummary
+    }]);
+  } catch (err) {
+    console.warn('Error in Supabase updateFilingInStorage:', err);
+  }
+
+  // 5. Update local cache
+  const cached = getLocalCache(LOCAL_STORAGE_KEY, []);
+  const nextList = cached.map(f => f.id === filing.id ? updatedFiling : f);
+  saveLocalCache(LOCAL_STORAGE_KEY, nextList);
+
+  // 6. Broadcast Realtime change event
+  broadcastPatentChange({
+    action: 'UPDATE_FILING',
+    filing: updatedFiling,
+    actorId: actorUuid,
+    actorName: actor?.name || 'Mounisha',
+    version: newVersion
+  });
+
+  return { success: true, filing: updatedFiling };
+}

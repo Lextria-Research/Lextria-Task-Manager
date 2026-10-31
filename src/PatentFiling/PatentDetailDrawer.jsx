@@ -13,7 +13,8 @@ import {
   ArrowRight,
   ShieldAlert,
   Trash2,
-  Copy
+  Copy,
+  Edit3
 } from 'lucide-react';
 import {
   PATENT_ROLES,
@@ -36,7 +37,8 @@ export default function PatentDetailDrawer({
   onTransition,
   onReassign,
   onUpdateFilingType,
-  onDeleteFiling
+  onDeleteFiling,
+  onEditFiling
 }) {
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
   const [showReassignModal, setShowReassignModal] = useState(false);
@@ -199,6 +201,17 @@ export default function PatentDetailDrawer({
           </div>
 
           <div className="flex items-center gap-2">
+            {isSuperAdmin && onEditFiling && (
+              <button
+                type="button"
+                onClick={() => onEditFiling(filing)}
+                className="text-xs px-2.5 py-1 rounded-lg bg-brand-500/20 text-brand-300 border border-brand-500/30 hover:bg-brand-500/30 font-semibold transition cursor-pointer flex items-center gap-1.5"
+                title="Edit filing details (Super Admin only)"
+              >
+                <Edit3 size={12} />
+                <span>Edit</span>
+              </button>
+            )}
             {isSuperAdmin && (
               <button
                 onClick={() => setShowReassignModal(true)}

@@ -74,7 +74,8 @@ export default function PatentKanbanBoard({
   currentUser,
   userRoles = [],
   showClosedArchive = false,
-  onDeleteFiling
+  onDeleteFiling,
+  onEditFiling
 }) {
   const isSuperAdmin = hasPatentRole(userRoles, PATENT_ROLES.SUPER_ADMIN);
   const isLeader = isSuperAdmin ||
@@ -140,7 +141,9 @@ export default function PatentKanbanBoard({
                 currentUser={currentUser}
                 userRoles={userRoles}
                 isLeader={isLeader}
+                isSuperAdmin={isSuperAdmin}
                 onDelete={onDeleteFiling}
+                onEdit={onEditFiling}
               />
             ))}
           </div>

@@ -16,6 +16,7 @@ import { fetchAllPatentRoleRecords, isMemberMatch } from '../patent/patentRoles.
 import PatentKanbanBoard from './PatentKanbanBoard.jsx';
 import PatentDetailDrawer from './PatentDetailDrawer.jsx';
 import NewFilingModal from './NewFilingModal.jsx';
+import EditFilingModal from './EditFilingModal.jsx';
 import {
   loadFilingsFromStorage,
   saveNewFilingToStorage,
@@ -24,6 +25,7 @@ import {
   fetchSystemFilingTypes,
   updateFilingTypeInStorage,
   deleteFilingFromStorage,
+  updateFilingInStorage,
   matchFilingSearch,
   getLocalCache,
   LOCAL_ROUNDS_KEY,
@@ -59,6 +61,7 @@ export default function PatentFilingDashboard({
 
   // Modals & Drawers
   const [showNewFilingModal, setShowNewFilingModal] = useState(false);
+  const [editingFiling, setEditingFiling] = useState(null);
   const [selectedFiling, setSelectedFiling] = useState(null);
   const [notification, setNotification] = useState(null);
   const [patentRoleRecords, setPatentRoleRecords] = useState(null);
@@ -370,6 +373,57 @@ export default function PatentFilingDashboard({
     }
   };
 
+  // Super Admin Edit Filing handler with Optimistic UI & Rollback
+  const handleUpdateFiling = async (filingToUpdate, updates) => {
+    if (!filingToUpdate) return;
+    const originalFilings = filings;
+    const originalSelected = selectedFiling;
+
+    // 1. Optimistic UI update
+    const optimisticFiling = {
+      ...filingToUpdate,
+      ...updates,
+      version: (filingToUpdate.version || 1) + 1,
+      updated_at: new Date().toISOString()
+    };
+    setFilings(prev => prev.map(f => f.id === filingToUpdate.id ? optimisticFiling : f));
+    if (selectedFiling?.id === filingToUpdate.id) {
+      setSelectedFiling(optimisticFiling);
+    }
+
+    // 2. Persist to storage & database
+    const res = await updateFilingInStorage({
+      filing: filingToUpdate,
+      updates,
+      actor: currentUser,
+      actorRoles: userRoles,
+      allMembers: allEmployees
+    });
+
+    if (res.success) {
+      setFilings(prev => prev.map(f => f.id === res.filing.id ? res.filing : f));
+      if (selectedFiling?.id === res.filing.id) {
+        setSelectedFiling(res.filing);
+      }
+      setNotification({
+        type: 'success',
+        message: `Filing ${res.filing.code} details successfully updated!`
+      });
+      return { success: true, filing: res.filing };
+    } else {
+      // 3. Rollback on failure
+      setFilings(originalFilings);
+      if (originalSelected?.id === filingToUpdate.id) {
+        setSelectedFiling(originalSelected);
+      }
+      setNotification({
+        type: 'error',
+        message: res.error || 'Failed to update filing details.'
+      });
+      return res;
+    }
+  };
+
   // Reassignment handler with Optimistic UI & Rollback
   const handleReassign = async (newAssigneeId, newAuditorId, reason) => {
     if (!selectedFiling) return;
@@ -596,6 +650,7 @@ export default function PatentFilingDashboard({
           userRoles={userRoles}
           showClosedArchive={showClosedArchive}
           onDeleteFiling={handleDeleteFiling}
+          onEditFiling={(filing) => setEditingFiling(filing)}
         />
       </div>
 
@@ -623,7 +678,23 @@ export default function PatentFilingDashboard({
         onReassign={handleReassign}
         onUpdateFilingType={handleUpdateFilingType}
         onDeleteFiling={handleDeleteFiling}
+        onEditFiling={(filing) => setEditingFiling(filing)}
       />
+
+      {/* Super Admin Edit Filing Modal */}
+      {editingFiling && (
+        <EditFilingModal
+          isOpen={Boolean(editingFiling)}
+          filing={editingFiling}
+          onClose={() => setEditingFiling(null)}
+          onSubmit={async (updates) => {
+            return await handleUpdateFiling(editingFiling, updates);
+          }}
+          allMembers={allEmployees}
+          patentRoleRecords={patentRoleRecords}
+          existingFilingTypes={filingTypes}
+        />
+      )}
     </div>
   );
 }

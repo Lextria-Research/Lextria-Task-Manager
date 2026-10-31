@@ -18,7 +18,7 @@ import {
   getMemberPatentRoles,
   filterMembersByPatentRole
 } from './src/patent/patentRoles.js';
-import { matchFilingSearch } from './src/PatentFiling/patentStorage.js';
+import { matchFilingSearch, updateFilingInStorage } from './src/PatentFiling/patentStorage.js';
 
 let totalTests = 0;
 let passedTests = 0;
@@ -697,10 +697,92 @@ assert(!matchFilingSearch(sampleCard, 'random_non_existent_text_xyz'), 'Non-matc
 assert(matchFilingSearch(sampleCard, ''), 'Empty search matches all filings');
 assert(matchFilingSearch(sampleCard, '   '), 'Whitespace-only search matches all filings');
 
+// ----------------------------------------------------
+// Test Group 14: Super Admin (Mounisha) Card Edit Feature
+// ----------------------------------------------------
+console.log('\n--- TEST GROUP 14: Super Admin (Mounisha) Card Edit Feature ---');
+
+const baseFilingForEdit = {
+  id: 'filing-edit-test-1',
+  code: 'PAT-2026-EDIT-01',
+  filing_type: 'Provisional',
+  temp_code: 'TEMP-OLD-1',
+  title: 'Original Title',
+  description: 'Original Description',
+  assignee_id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc', // Akshay
+  auditor_id: 'a6ecc962-3946-41ea-9946-1ff6dcc08133',  // Karthik
+  assignee_name: 'Akshay',
+  auditor_name: 'Karthik',
+  status: PATENT_STATUSES.FILING,
+  priority: 'Low',
+  est_filing_minutes: 180,
+  est_audit_minutes: 60,
+  hard_deadline: '2026-11-20',
+  payment_reference: null,
+  version: 1,
+  created_at: '2026-10-01T10:00:00Z'
+};
+
+// 1. Non-super admin cannot edit card
+const nonAdminEdit = await updateFilingInStorage({
+  filing: baseFilingForEdit,
+  updates: { priority: 'Urgent' },
+  actor: { id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc', name: 'Akshay' },
+  actorRoles: [PATENT_ROLES.ASSIGNEE]
+});
+assert(nonAdminEdit.success === false, 'Non-super admin cannot edit filing card');
+assert(nonAdminEdit.error.includes('Only Super Admin'), 'Error message states only Super Admin can edit');
+
+// 2. Setting assignee and auditor to same person is rejected
+const conflictEdit = await updateFilingInStorage({
+  filing: baseFilingForEdit,
+  updates: { auditor_id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc' }, // same as assignee Akshay
+  actor: { id: '42a71f9a-7119-457c-8092-0d5b75ce3060', name: 'Mounisha' },
+  actorRoles: [PATENT_ROLES.SUPER_ADMIN]
+});
+assert(conflictEdit.success === false, 'Setting assignee and auditor to same person is rejected');
+assert(conflictEdit.error.includes('different team members'), 'Error message specifies mutual exclusion');
+
+// 3. Super Admin Mounisha edits card successfully
+const mounishaEdit = await updateFilingInStorage({
+  filing: baseFilingForEdit,
+  updates: {
+    code: 'PAT-2026-EDIT-01-REVISED',
+    filing_type: 'PCT International',
+    temp_code: 'TEMP-NEW-9988',
+    title: 'Updated AI Patent Subject',
+    description: 'Updated matter particulars from client instructions',
+    priority: 'Urgent',
+    est_filing_minutes: 360,
+    est_audit_minutes: 120,
+    hard_deadline: '2026-12-01',
+    payment_reference: 'IPO-MUM-99999',
+    reason: 'Client requested rush conversion to PCT'
+  },
+  actor: { id: '42a71f9a-7119-457c-8092-0d5b75ce3060', name: 'Mounisha' },
+  actorRoles: [PATENT_ROLES.SUPER_ADMIN]
+});
+
+assert(mounishaEdit.success === true, 'Super Admin Mounisha edits card successfully');
+assert(mounishaEdit.filing.code === 'PAT-2026-EDIT-01-REVISED', 'Filing code updated');
+assert(mounishaEdit.filing.filing_type === 'PCT International', 'Filing type updated');
+assert(mounishaEdit.filing.temp_code === 'TEMP-NEW-9988', 'Temp code updated');
+assert(mounishaEdit.filing.title === 'Updated AI Patent Subject', 'Title updated');
+assert(mounishaEdit.filing.description === 'Updated matter particulars from client instructions', 'Description updated');
+assert(mounishaEdit.filing.priority === 'Urgent', 'Priority updated');
+assert(mounishaEdit.filing.est_filing_minutes === 360, 'Est filing minutes updated');
+assert(mounishaEdit.filing.est_audit_minutes === 120, 'Est audit minutes updated');
+assert(mounishaEdit.filing.hard_deadline === '2026-12-01', 'Hard deadline updated');
+assert(mounishaEdit.filing.payment_reference === 'IPO-MUM-99999', 'Payment reference updated');
+assert(mounishaEdit.filing.version === 2, 'Version incremented by 1');
+assert(mounishaEdit.filing.created_at === '2026-10-01T10:00:00Z', 'Untouched previous data (created_at) preserved');
+
 console.log('\n=====================================================');
 console.log(`TEST RESULTS: ${passedTests}/${totalTests} PASSED`);
 console.log('=====================================================');
 
 if (passedTests !== totalTests) {
   process.exit(1);
+} else {
+  process.exit(0);
 }

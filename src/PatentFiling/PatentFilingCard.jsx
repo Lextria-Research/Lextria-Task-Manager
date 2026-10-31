@@ -1,9 +1,9 @@
 // src/PatentFiling/PatentFilingCard.jsx
 // Dedicated Kanban Card for Patent Filing Workflow matching Tasks design tokens
 
-import { Clock, Calendar, RotateCcw, Flame, Trash2 } from 'lucide-react';
+import { Clock, Calendar, RotateCcw, Flame, Trash2, Edit3 } from 'lucide-react';
 
-export default function PatentFilingCard({ filing, onClick, currentUser, onDelete, isLeader }) {
+export default function PatentFilingCard({ filing, onClick, currentUser, onDelete, isLeader, isSuperAdmin, onEdit }) {
   const isUrgent = filing.priority === 'Urgent' || filing.priority === 'High';
   const todayStr = new Date().toISOString().split('T')[0];
   const isOverdue = filing.hard_deadline && filing.hard_deadline < todayStr && filing.status !== 'CLOSED';
@@ -52,6 +52,19 @@ export default function PatentFilingCard({ filing, onClick, currentUser, onDelet
           <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-lg bg-brand-500/15 text-brand-300 border border-brand-500/30 tracking-wide shrink-0">
             {filing.code}
           </span>
+          {isSuperAdmin && onEdit && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit(filing);
+              }}
+              className="opacity-0 group-hover:opacity-100 transition p-1 hover:bg-brand-500/20 text-slate-400 hover:text-brand-300 rounded-lg shrink-0 cursor-pointer"
+              title="Edit filing (Super Admin only)"
+            >
+              <Edit3 size={12} />
+            </button>
+          )}
           {isLeader && onDelete && (
             <button
               type="button"
