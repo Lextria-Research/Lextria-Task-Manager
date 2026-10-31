@@ -722,8 +722,8 @@ export default function QueryTickets({ session, agents = [] }) {
 
   const isLeader = useMemo(() => isLeaderOrSharan(session), [session]);
 
-  // Permission check: only the author of the query and leaders can manage (edit, delete, change status)
-  const canManageTicket = (t) => {
+  // Visibility & permission check: only the author who created the query and leaders can view & manage
+  const canAccessTicket = (t) => {
     if (isLeader) return true;
     if (!t || !session) return false;
     const parsed = parseTicketData(t, allPersonnel);
@@ -732,9 +732,13 @@ export default function QueryTickets({ session, agents = [] }) {
                      (t.created_by && session?.id && String(t.created_by) === String(session?.id));
     return Boolean(isAuthor);
   };
-  const canAccessTicket = () => true;
+  const canManageTicket = canAccessTicket;
 
   const openTicket = (ticket) => {
+    if (!canAccessTicket(ticket)) {
+      alert('This query is private and only accessible to its creator and leaders.');
+      return;
+    }
     setSelectedTicket(ticket);
     setMessages([]);
     fetchMessages(ticket.id);
@@ -943,8 +947,9 @@ export default function QueryTickets({ session, agents = [] }) {
   };
 
   const visibleTickets = useMemo(() => {
-    return tickets;
-  }, [tickets]);
+    if (isLeader) return tickets;
+    return tickets.filter(canAccessTicket);
+  }, [tickets, isLeader, session, allPersonnel]);
 
   // Filter tickets by search query across query text, ticket code, author name, and urgency
   const searchedTickets = useMemo(() => {

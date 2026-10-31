@@ -182,7 +182,7 @@ export function isLeaderOrSharan(user) {
   const name = (typeof user === 'string' ? user : user.name || '').trim().toLowerCase().replace(/\s+/g, '');
   const role = (typeof user === 'object' ? user.role || '' : '').toLowerCase();
   if (role === 'leader' || role === 'admin') return true;
-  return name.includes('pranav') || name.includes('sharan');
+  return name.includes('pranav') || name.includes('sharan') || name.includes('mounisha');
 }
 
 /**
