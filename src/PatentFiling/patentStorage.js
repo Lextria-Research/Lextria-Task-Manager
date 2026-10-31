@@ -340,6 +340,7 @@ export async function executeTransitionInStorage({
   payload = {},
   allMembers = []
 }) {
+  const fromStatus = filing?.status;
   const actorUuid = resolveMemberUuid(actor?.id || actor?.name, '42a71f9a-7119-457c-8092-0d5b75ce3060', allMembers);
   const result = await executeTransition({
     filing,
