@@ -538,6 +538,11 @@ export default function QueryTickets({ session, agents = [] }) {
   };
 
   const updateTicketStatus = async (ticketId, newStatus) => {
+    const target = tickets.find(t => t.id === ticketId) || selectedTicket;
+    if (target && !canManageTicket(target)) {
+      alert('Only the query creator and leaders can change the status of this query.');
+      return;
+    }
     // Optimistic UI update
     const previousTickets = [...tickets];
     const previousSelected = selectedTicket ? { ...selectedTicket } : null;
@@ -717,23 +722,19 @@ export default function QueryTickets({ session, agents = [] }) {
 
   const isLeader = useMemo(() => isLeaderOrSharan(session), [session]);
 
-  const canAccessTicket = (t) => {
+  // Permission check: only the author of the query and leaders can manage (edit, delete, change status)
+  const canManageTicket = (t) => {
     if (isLeader) return true;
-    if (!t) return false;
+    if (!t || !session) return false;
     const parsed = parseTicketData(t, allPersonnel);
     const isAuthor = isSameMember(parsed.authorName, session?.name) ||
                      isSameMember(t.author || t.author_name || t.created_by_name, session?.name) ||
                      (t.created_by && session?.id && String(t.created_by) === String(session?.id));
-    if (isAuthor) return true;
-    if (mentionedTicketIds.has(t.id)) return true;
-    return false;
+    return Boolean(isAuthor);
   };
+  const canAccessTicket = () => true;
 
   const openTicket = (ticket) => {
-    if (!canAccessTicket(ticket)) {
-      alert("This query is confidential and only accessible to its author and the leadership team.");
-      return;
-    }
     setSelectedTicket(ticket);
     setMessages([]);
     fetchMessages(ticket.id);
@@ -775,6 +776,10 @@ export default function QueryTickets({ session, agents = [] }) {
   // --- Edit Ticket Handlers ---
   const startEditTicket = (ticket, e) => {
     if (e) e.stopPropagation();
+    if (!canManageTicket(ticket)) {
+      alert('Only the query creator and leaders can edit this query.');
+      return;
+    }
     const { text, attachments, deadline: parsedDeadline } = parseTicketData(ticket, allPersonnel);
     setEditingTicket(ticket);
     setEditUrgency(ticket.urgency || 'Medium');
@@ -898,6 +903,10 @@ export default function QueryTickets({ session, agents = [] }) {
   // --- Delete Ticket Handlers ---
   const promptDeleteTicket = (ticket, e) => {
     if (e) e.stopPropagation();
+    if (!canManageTicket(ticket)) {
+      alert('Only the query creator and leaders can delete this query.');
+      return;
+    }
     setTicketToDelete(ticket);
   };
 
@@ -934,9 +943,8 @@ export default function QueryTickets({ session, agents = [] }) {
   };
 
   const visibleTickets = useMemo(() => {
-    if (isLeader) return tickets;
-    return tickets.filter(canAccessTicket);
-  }, [tickets, isLeader, session, allPersonnel, mentionedTicketIds]);
+    return tickets;
+  }, [tickets]);
 
   // Filter tickets by search query across query text, ticket code, author name, and urgency
   const searchedTickets = useMemo(() => {
@@ -1082,12 +1090,7 @@ export default function QueryTickets({ session, agents = [] }) {
               History
             </button>
           </div>
-          {!isLeader && (
-            <span className="hidden md:inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-amber-500/10 text-amber-800 border border-amber-500/20" title="Only showing queries created by you or where you are mentioned">
-              <Lock size={11} className="text-amber-600" />
-              Confidential View
-            </span>
-          )}
+
         </div>
 
         {/* Center: Search Input */}
@@ -1246,8 +1249,8 @@ export default function QueryTickets({ session, agents = [] }) {
                       urgencyBadge={urgencyBadge} 
                       agentsList={allPersonnel} 
                       onOpenImage={handleOpenPreview}
-                      onEdit={(t) => startEditTicket(t)}
-                      onDelete={(t) => promptDeleteTicket(t)}
+                      onEdit={canManageTicket(ticket) ? (t) => startEditTicket(t) : null}
+                      onDelete={canManageTicket(ticket) ? (t) => promptDeleteTicket(t) : null}
                     />
                   ))
                 )}
@@ -1272,8 +1275,8 @@ export default function QueryTickets({ session, agents = [] }) {
                       urgencyBadge={urgencyBadge} 
                       agentsList={allPersonnel} 
                       onOpenImage={handleOpenPreview} 
-                      onEdit={(t) => startEditTicket(t)}
-                      onDelete={(t) => promptDeleteTicket(t)}
+                      onEdit={canManageTicket(ticket) ? (t) => startEditTicket(t) : null}
+                      onDelete={canManageTicket(ticket) ? (t) => promptDeleteTicket(t) : null}
                     />
                   ))
                 )}
@@ -1300,8 +1303,8 @@ export default function QueryTickets({ session, agents = [] }) {
                       urgencyBadge={urgencyBadge} 
                       agentsList={allPersonnel} 
                       onOpenImage={handleOpenPreview} 
-                      onEdit={(t) => startEditTicket(t)}
-                      onDelete={(t) => promptDeleteTicket(t)}
+                      onEdit={canManageTicket(ticket) ? (t) => startEditTicket(t) : null}
+                      onDelete={canManageTicket(ticket) ? (t) => promptDeleteTicket(t) : null}
                     />
                   ))}
                 </div>
@@ -1497,22 +1500,26 @@ export default function QueryTickets({ session, agents = [] }) {
                         <span className={`text-[11px] font-bold px-2.5 py-0.5 border rounded-full shrink-0 ${urgencyBadge(selectedTicket.urgency)}`}>
                           {selectedTicket.urgency}
                         </span>
-                        <button
-                          type="button"
-                          onClick={(e) => startEditTicket(selectedTicket, e)}
-                          className="p-1.5 rounded-lg border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-600 hover:text-blue-600 transition cursor-pointer"
-                          title="Edit ticket"
-                        >
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => promptDeleteTicket(selectedTicket, e)}
-                          className="p-1.5 rounded-lg border border-slate-200 hover:border-red-300 hover:bg-red-50 text-slate-600 hover:text-red-600 transition cursor-pointer"
-                          title="Delete ticket"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        {canManageTicket(selectedTicket) && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={(e) => startEditTicket(selectedTicket, e)}
+                              className="p-1.5 rounded-lg border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-600 hover:text-blue-600 transition cursor-pointer"
+                              title="Edit ticket"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => promptDeleteTicket(selectedTicket, e)}
+                              className="p-1.5 rounded-lg border border-slate-200 hover:border-red-300 hover:bg-red-50 text-slate-600 hover:text-red-600 transition cursor-pointer"
+                              title="Delete ticket"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
 
@@ -1619,35 +1626,41 @@ export default function QueryTickets({ session, agents = [] }) {
                 );
               })()}
 
-              <div className="mt-auto pt-4">
-                <p className="text-xs text-slate-500 mb-2 font-semibold uppercase tracking-wider">Update Status</p>
-                <div className="flex flex-col gap-2">
-                  {selectedTicket.status !== 'Open' && (
-                    <button 
-                      onClick={() => updateTicketStatus(selectedTicket.id, 'Open')} 
-                      className="w-full py-2 text-sm rounded-lg border border-slate-300 hover:bg-slate-100 text-slate-700 font-medium transition-colors cursor-pointer"
-                    >
-                      Move to Open
-                    </button>
-                  )}
-                  {selectedTicket.status !== 'In Discussion' && (
-                    <button 
-                      onClick={() => updateTicketStatus(selectedTicket.id, 'In Discussion')} 
-                      className="w-full py-2 text-sm rounded-lg border border-blue-300 bg-blue-50 hover:bg-blue-100 text-blue-700 font-medium transition-colors cursor-pointer"
-                    >
-                      Move to Discussion
-                    </button>
-                  )}
-                  {selectedTicket.status !== 'Resolved' && (
-                    <button 
-                      onClick={() => updateTicketStatus(selectedTicket.id, 'Resolved')} 
-                      className="w-full py-2 text-sm rounded-lg border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-medium transition-colors cursor-pointer"
-                    >
-                      Mark as Resolved
-                    </button>
-                  )}
+              {canManageTicket(selectedTicket) ? (
+                <div className="mt-auto pt-4">
+                  <p className="text-xs text-slate-500 mb-2 font-semibold uppercase tracking-wider">Update Status</p>
+                  <div className="flex flex-col gap-2">
+                    {selectedTicket.status !== 'Open' && (
+                      <button 
+                        onClick={() => updateTicketStatus(selectedTicket.id, 'Open')} 
+                        className="w-full py-2 text-sm rounded-lg border border-slate-300 hover:bg-slate-100 text-slate-700 font-medium transition-colors cursor-pointer"
+                      >
+                        Move to Open
+                      </button>
+                    )}
+                    {selectedTicket.status !== 'In Discussion' && (
+                      <button 
+                        onClick={() => updateTicketStatus(selectedTicket.id, 'In Discussion')} 
+                        className="w-full py-2 text-sm rounded-lg border border-blue-300 bg-blue-50 hover:bg-blue-100 text-blue-700 font-medium transition-colors cursor-pointer"
+                      >
+                        Move to Discussion
+                      </button>
+                    )}
+                    {selectedTicket.status !== 'Resolved' && (
+                      <button 
+                        onClick={() => updateTicketStatus(selectedTicket.id, 'Resolved')} 
+                        className="w-full py-2 text-sm rounded-lg border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-medium transition-colors cursor-pointer"
+                      >
+                        Mark as Resolved
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="mt-auto pt-4">
+                  <p className="text-xs text-slate-400 italic">Status is managed by the query creator and leaders.</p>
+                </div>
+              )}
             </div>
 
             {/* Right side: Messages Thread */}

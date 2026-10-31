@@ -3610,7 +3610,7 @@ export default function App() {
   // Confidentiality guard: non-leaders cannot access leader-board, analytics, or queries
   useEffect(() => {
     if (!isLeaderOrSharan(currentUser)) {
-      if (activeTab === 'leader-board' || activeTab === 'queries' || activeTab === 'analytics') {
+      if (activeTab === 'leader-board' || activeTab === 'analytics') {
         setActiveTab(hasPatentAccess ? 'patent-filing' : 'projects');
       }
     }
@@ -5701,9 +5701,9 @@ export default function App() {
             {[
               ...(isLeaderOrSharan(currentUser) ? [
                 { id: 'leader-board', label: 'Leader Workspace', icon: CheckSquare, badge: 'Leader' },
-                { id: 'analytics', label: 'Analytics', icon: BarChart3, badge: 'Leader' },
-                { id: 'queries', label: 'Queries', icon: Database, badge: 'Leader' }
+                { id: 'analytics', label: 'Analytics', icon: BarChart3, badge: 'Leader' }
               ] : []),
+              { id: 'queries', label: 'Queries', icon: Database },
               ...(hasPatentAccess ? [
                 { id: 'patent-filing', label: 'Patent Filing', icon: FileSpreadsheet, badge: 'Patent' }
               ] : []),
@@ -5777,8 +5777,8 @@ export default function App() {
             <PatentAnalytics currentUser={currentUser} allEmployees={allEmployees} />
           )}
 
-          {/* Queries Page (Leaders only) */}
-          {activeTab === 'queries' && isLeaderOrSharan(currentUser) && (
+          {/* Queries Page */}
+          {activeTab === 'queries' && (
             <QueryManager 
               agents={allEmployees} 
               isAdmin={isAdmin} 
