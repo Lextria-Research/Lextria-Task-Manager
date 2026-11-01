@@ -24,7 +24,7 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   Search, Shield, Plus, Trash2, Edit2, CheckCircle2, Circle,
   Bell, Calendar, X, Lock, Unlock, AlertCircle, GripVertical, GripHorizontal, Building2, Layout, Users, ChevronRight, ChevronLeft, ArrowLeft, History, RotateCcw, Tag, BarChart3, Filter, SlidersHorizontal, Image, UploadCloud, Link, Clock, Download, FileSpreadsheet, ArrowUpDown, ArrowUp, ArrowDown,
-  CheckSquare, Database, Wrench, FolderKanban, Settings, Pin, Sun, Flame, Copy, Check, Sparkles, Volume2, VolumeX
+  CheckSquare, Database, Wrench, FolderKanban, Settings, Pin, Sun, Flame, Copy, Check, Sparkles, Volume2, VolumeX, ExternalLink
 } from 'lucide-react';
 import QueryManager from './QueryManager';
 import ProjectReporting from './ProjectReporting';

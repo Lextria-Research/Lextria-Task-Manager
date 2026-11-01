@@ -29,6 +29,8 @@ import {
 
 export { DEFAULT_DRAFTERS };
 
+const STORAGE_KEY = DRAFTER_WORKLOAD_STORAGE_KEY;
+
 export default function PatentAnalytics({ currentUser, allEmployees = [] }) {
   const [drafters, setDrafters] = useState(() => {
     try {

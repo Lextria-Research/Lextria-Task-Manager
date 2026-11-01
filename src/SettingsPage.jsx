@@ -5,7 +5,7 @@ import {
   Check, Key, Eye, EyeOff, Building2, Briefcase, RefreshCw, AlertCircle,
   Sparkles, CheckCircle2, Copy, X, ArrowRight, Calendar, MessageSquare, Send,
   Globe, ExternalLink, Link2, Download, Bell, HelpCircle, Volume2, VolumeX, Play,
-  Layers, Scale, FileText, DollarSign, Laptop, Users, ShieldCheck, Mail
+  Layers, Scale, FileText, DollarSign, Laptop, Users, ShieldCheck, Mail, CheckSquare
 } from 'lucide-react';
 import {
   getPatentSoundEnabled,
