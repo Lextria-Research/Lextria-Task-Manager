@@ -5,7 +5,8 @@ import {
   Check, Key, Eye, EyeOff, Building2, Briefcase, RefreshCw, AlertCircle,
   Sparkles, CheckCircle2, Copy, X, ArrowRight, Calendar, MessageSquare, Send,
   Globe, ExternalLink, Link2, Download, Bell, HelpCircle, Volume2, VolumeX, Play,
-  Layers, Scale, FileText, DollarSign, Laptop, Users, ShieldCheck, Mail, CheckSquare
+  Layers, Scale, FileText, DollarSign, Laptop, Users, ShieldCheck, Mail, CheckSquare,
+  Search, Filter, Phone, MapPin, CreditCard, Building
 } from 'lucide-react';
 import {
   getPatentSoundEnabled,
@@ -404,9 +405,207 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
   const [universalUsers, setUniversalUsers] = useState([]);
   const [loadingUniversal, setLoadingUniversal] = useState(false);
   const [universalError, setUniversalError] = useState('');
-  const [clientsList, setClientsList] = useState([]);
   const [isSyncingAll, setIsSyncingAll] = useState(false);
   const [syncStatusMsg, setSyncStatusMsg] = useState('');
+
+  // Leader sub-navigation: 'members' | 'clients'
+  const [activeLeaderSubTab, setActiveLeaderSubTab] = useState('members');
+
+  // Central Clients State (core.clients in eafciegebhuhoneypsqy)
+  const [clients, setClients] = useState([]);
+  const [loadingClients, setLoadingClients] = useState(false);
+  const [clientsError, setClientsError] = useState('');
+  const [clientSearchQuery, setClientSearchQuery] = useState('');
+  const [clientTypeFilter, setClientTypeFilter] = useState('ALL');
+
+  // Add Client Modal State
+  const [showAddClientModal, setShowAddClientModal] = useState(false);
+  const [newClientCode, setNewClientCode] = useState('');
+  const [newClientName, setNewClientName] = useState('');
+  const [newClientEntityType, setNewClientEntityType] = useState('COMPANY');
+  const [newClientEmail, setNewClientEmail] = useState('');
+  const [newClientPhone, setNewClientPhone] = useState('');
+  const [newClientGstin, setNewClientGstin] = useState('');
+  const [newClientPan, setNewClientPan] = useState('');
+  const [newClientAddress, setNewClientAddress] = useState('');
+  const [newClientPortalAccess, setNewClientPortalAccess] = useState(false);
+  const [newClientPortalPassword, setNewClientPortalPassword] = useState('');
+  const [isAddingClient, setIsAddingClient] = useState(false);
+
+  // Edit Client Modal State
+  const [editingClient, setEditingClient] = useState(null);
+  const [editClientCode, setEditClientCode] = useState('');
+  const [editClientName, setEditClientName] = useState('');
+  const [editClientEntityType, setEditClientEntityType] = useState('COMPANY');
+  const [editClientEmail, setEditClientEmail] = useState('');
+  const [editClientPhone, setEditClientPhone] = useState('');
+  const [editClientGstin, setEditClientGstin] = useState('');
+  const [editClientPan, setEditClientPan] = useState('');
+  const [editClientAddress, setEditClientAddress] = useState('');
+  const [editClientPortalAccess, setEditClientPortalAccess] = useState(false);
+  const [editClientPortalPassword, setEditClientPortalPassword] = useState('');
+  const [isUpdatingClient, setIsUpdatingClient] = useState(false);
+
+  // Fetch clients from central database / API
+  const fetchClients = useCallback(async () => {
+    if (!isLeader) return;
+    try {
+      setLoadingClients(true);
+      setClientsError('');
+      const res = await fetch('/api/clients');
+      if (res.ok) {
+        const json = await res.json();
+        setClients(json.clients || []);
+        return;
+      }
+      throw new Error(`API returned ${res.status}`);
+    } catch (err) {
+      console.warn('API /api/clients fallback to direct central Supabase:', err);
+      try {
+        const { data, error } = await centralSupabase
+          .schema('core')
+          .from('clients')
+          .select('*')
+          .order('client_name', { ascending: true });
+        if (data) setClients(data.map(c => ({ ...c, portalAccess: false })));
+        if (error) throw error;
+      } catch (fbErr) {
+        setClientsError('Failed to load central clients: ' + (err.message || 'Check connection'));
+      }
+    } finally {
+      setLoadingClients(false);
+    }
+  }, [isLeader]);
+
+  // Handle Add New Client
+  const handleAddClient = async (e) => {
+    e.preventDefault();
+    if (!newClientCode.trim() || !newClientName.trim()) {
+      alert('Client Code and Client Name are required.');
+      return;
+    }
+
+    try {
+      setIsAddingClient(true);
+      const res = await fetch('/api/clients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_code: newClientCode.trim().toUpperCase(),
+          client_name: newClientName.trim(),
+          entity_type: newClientEntityType,
+          email: newClientEmail.trim() || undefined,
+          phone: newClientPhone.trim() || undefined,
+          gstin: newClientGstin.trim() || undefined,
+          pan: newClientPan.trim() || undefined,
+          billing_address: newClientAddress.trim() || undefined,
+          portal_access: newClientPortalAccess,
+          portal_password: newClientPortalPassword.trim() || undefined,
+        })
+      });
+
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to add client');
+
+      setShowAddClientModal(false);
+      setNewClientCode('');
+      setNewClientName('');
+      setNewClientEmail('');
+      setNewClientPhone('');
+      setNewClientGstin('');
+      setNewClientPan('');
+      setNewClientAddress('');
+      setNewClientPortalAccess(false);
+      setNewClientPortalPassword('');
+
+      await fetchClients();
+      alert(`Client "${json.client?.client_name || newClientName}" registered successfully!`);
+    } catch (err) {
+      console.error('Error adding client:', err);
+      alert('Failed to register client: ' + (err.message || 'Please check connection.'));
+    } finally {
+      setIsAddingClient(false);
+    }
+  };
+
+  // Open Edit Client Modal
+  const handleOpenEditClient = (c) => {
+    setEditingClient(c);
+    setEditClientCode(c.client_code || '');
+    setEditClientName(c.client_name || '');
+    setEditClientEntityType(c.entity_type || 'COMPANY');
+    setEditClientEmail(c.email || '');
+    setEditClientPhone(c.phone || '');
+    setEditClientGstin(c.gstin || '');
+    setEditClientPan(c.pan || '');
+    setEditClientAddress(c.billing_address || '');
+    setEditClientPortalAccess(Boolean(c.portalAccess));
+    setEditClientPortalPassword('');
+  };
+
+  // Handle Update Client
+  const handleUpdateClient = async (e) => {
+    e.preventDefault();
+    if (!editingClient || !editClientName.trim()) return;
+
+    try {
+      setIsUpdatingClient(true);
+      const res = await fetch('/api/clients', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editingClient.id,
+          client_code: editClientCode.trim().toUpperCase(),
+          client_name: editClientName.trim(),
+          entity_type: editClientEntityType,
+          email: editClientEmail.trim() || undefined,
+          phone: editClientPhone.trim() || undefined,
+          gstin: editClientGstin.trim() || undefined,
+          pan: editClientPan.trim() || undefined,
+          billing_address: editClientAddress.trim() || undefined,
+          portal_access: editClientPortalAccess,
+          portal_password: editClientPortalPassword.trim() || undefined,
+        })
+      });
+
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to update client');
+
+      setEditingClient(null);
+      await fetchClients();
+      alert('Client details and portal access updated successfully!');
+    } catch (err) {
+      console.error('Error updating client:', err);
+      alert('Failed to update client: ' + (err.message || 'Please check connection.'));
+    } finally {
+      setIsUpdatingClient(false);
+    }
+  };
+
+  // Handle Delete Client
+  const handleDeleteClient = async (c) => {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete client "${c.client_code} - ${c.client_name}"?\n\nNote: Clients with active project codes/matters cannot be deleted.`
+    );
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch('/api/clients', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: c.id })
+      });
+
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to delete client');
+
+      await fetchClients();
+      alert(`Client "${c.client_name}" removed successfully.`);
+    } catch (err) {
+      console.error('Error deleting client:', err);
+      alert('Cannot delete client: ' + (err.message || 'Please check connection.'));
+    }
+  };
 
   // Add Universal Member State
   const [newName, setNewName] = useState('');
@@ -520,18 +719,9 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
     if (isLeader) {
       fetchMembers();
       fetchUniversalUsers();
-      // Load clients list for client portal dropdown
-      centralSupabase
-        .schema('core')
-        .from('clients')
-        .select('id, client_code, client_name')
-        .order('client_name')
-        .then(({ data }) => {
-          if (data) setClientsList(data);
-        })
-        .catch(console.warn);
+      fetchClients();
     }
-  }, [fetchMembers, fetchUniversalUsers, isLeader]);
+  }, [fetchMembers, fetchUniversalUsers, fetchClients, isLeader]);
 
   // Generate strong random password
   const generateRandomPassword = () => {
@@ -1534,7 +1724,44 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
               </div>
             )}
 
-            {/* Ecosystem Stats Overview */}
+            {/* Leader Sub-Tabs: Universal Team Members vs Central Clients Directory */}
+            <div className="flex items-center gap-2 border-b border-white/10 pb-2">
+              <button
+                type="button"
+                onClick={() => setActiveLeaderSubTab('members')}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  activeLeaderSubTab === 'members'
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/25 border border-blue-400/40'
+                    : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10 border border-transparent'
+                }`}
+              >
+                <Users size={15} />
+                <span>Universal Team Members</span>
+                <span className="px-1.5 py-0.5 rounded-md bg-white/20 text-[10px] font-semibold">
+                  {universalUsers.length || members.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveLeaderSubTab('clients')}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  activeLeaderSubTab === 'clients'
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/25 border border-blue-400/40'
+                    : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10 border border-transparent'
+                }`}
+              >
+                <Building2 size={15} />
+                <span>Clients Directory &amp; Portal Access</span>
+                <span className="px-1.5 py-0.5 rounded-md bg-white/20 text-[10px] font-semibold">
+                  {clients.length || 203}
+                </span>
+              </button>
+            </div>
+
+            {activeLeaderSubTab === 'members' && (
+              <>
+                {/* Ecosystem Stats Overview */}
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               <div className={`p-3.5 rounded-xl border ${cardBgClass} text-center`}>
                 <div className="text-[10px] font-semibold uppercase text-slate-400">Universal Accounts</div>
@@ -1672,7 +1899,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                     <span>Cross-Dashboard Access &amp; Permissions</span>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                     {/* 1. Task Manager */}
                     <div className="p-3 rounded-lg border border-white/5 bg-white/5 flex flex-col justify-between">
                       <div className="flex items-center justify-between mb-2">
@@ -1793,40 +2020,6 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                       >
                         <option value="FULL">Full Finance (Lead)</option>
                         <option value="EXECUTIVE">Exec (Post &amp; Petty Cash)</option>
-                      </select>
-                    </div>
-
-                    {/* 5. Client Portal */}
-                    <div className="p-3 rounded-lg border border-white/5 bg-white/5 flex flex-col justify-between">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-semibold text-cyan-300 flex items-center gap-1.5">
-                          <Building2 size={13} /> Client Portal
-                        </span>
-                        <input
-                          type="checkbox"
-                          checked={newDashAccess.client_portal?.enabled}
-                          onChange={(e) => setNewDashAccess(prev => ({
-                            ...prev,
-                            client_portal: { ...prev.client_portal, enabled: e.target.checked }
-                          }))}
-                          className="w-3.5 h-3.5 rounded accent-cyan-500 cursor-pointer"
-                        />
-                      </div>
-                      <select
-                        value={newDashAccess.client_portal?.clientId || ''}
-                        disabled={!newDashAccess.client_portal?.enabled}
-                        onChange={(e) => setNewDashAccess(prev => ({
-                          ...prev,
-                          client_portal: { ...prev.client_portal, clientId: e.target.value }
-                        }))}
-                        className={`w-full px-2 py-1 text-[11px] rounded-lg border outline-none disabled:opacity-40 ${inputBgClass}`}
-                      >
-                        <option value="">Select Client...</option>
-                        {clientsList.map(c => (
-                          <option key={c.id} value={c.id}>
-                            {c.client_code} - {c.client_name}
-                          </option>
-                        ))}
                       </select>
                     </div>
                   </div>
@@ -1999,11 +2192,6 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                                     {da.finance?.mode === 'EXECUTIVE' ? 'Finance: Exec Only' : 'Finance: Full'}
                                   </span>
                                 )}
-                                {da.client_portal?.enabled && (
-                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/25">
-                                    Client Portal
-                                  </span>
-                                )}
                               </div>
                             </td>
 
@@ -2036,8 +2224,287 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                 </div>
               )}
             </div>
+        </>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* TAB 2: CENTRAL CLIENTS DIRECTORY & CLIENT PORTAL ACCESS */}
+      {/* ------------------------------------------------------------- */}
+      {activeLeaderSubTab === 'clients' && (
+        <div className="space-y-6 animate-in fade-in">
+          {/* Clients Directory Header & Action Bar */}
+          <div className={`rounded-2xl border p-5 ${cardBgClass}`}>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <Building2 size={18} className="text-blue-400" />
+                  <span>Central Clients Directory &amp; Portal Access</span>
+                  <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-semibold border border-blue-500/30 font-mono">
+                    core.clients
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  Manage all firm clients, business entities, and their Client Portal credentials centrally.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={fetchClients}
+                  disabled={loadingClients}
+                  className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 border border-white/10"
+                  title="Reload clients from central Supabase"
+                >
+                  <RefreshCw size={13} className={loadingClients ? 'animate-spin' : ''} />
+                  <span>Refresh</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowAddClientModal(true)}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 shadow-lg shadow-blue-500/25 active:scale-[0.99]"
+                >
+                  <Plus size={14} />
+                  <span>Add New Client</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Clients Summary Stats */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t border-white/5">
+              <div className="p-3 rounded-xl bg-black/20 border border-white/5 text-center">
+                <div className="text-[10px] font-semibold uppercase text-slate-400">Total Registered</div>
+                <div className="text-lg font-bold text-white mt-0.5">{clients.length}</div>
+              </div>
+              <div className="p-3 rounded-xl bg-black/20 border border-white/5 text-center">
+                <div className="text-[10px] font-semibold uppercase text-emerald-400">Portal Active</div>
+                <div className="text-lg font-bold text-emerald-300 mt-0.5">
+                  {clients.filter(c => c.portalAccess).length}
+                </div>
+              </div>
+              <div className="p-3 rounded-xl bg-black/20 border border-white/5 text-center">
+                <div className="text-[10px] font-semibold uppercase text-purple-400">Companies</div>
+                <div className="text-lg font-bold text-purple-300 mt-0.5">
+                  {clients.filter(c => (c.entity_type || '').toUpperCase() === 'COMPANY').length}
+                </div>
+              </div>
+              <div className="p-3 rounded-xl bg-black/20 border border-white/5 text-center">
+                <div className="text-[10px] font-semibold uppercase text-cyan-400">Individuals &amp; Other</div>
+                <div className="text-lg font-bold text-cyan-300 mt-0.5">
+                  {clients.filter(c => (c.entity_type || '').toUpperCase() !== 'COMPANY').length}
+                </div>
+              </div>
+            </div>
+
+            {/* Search & Filter Toolbar */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mt-4">
+              <div className="relative flex-1 max-w-md">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                <input
+                  type="text"
+                  value={clientSearchQuery}
+                  onChange={(e) => setClientSearchQuery(e.target.value)}
+                  placeholder="Filter 203 clients by name, code (e.g. RMTPL), email, or phone..."
+                  className={`w-full pl-9 pr-4 py-2 rounded-xl text-xs border outline-none text-white placeholder:text-slate-500 ${inputBgClass}`}
+                />
+              </div>
+
+              {/* Entity Type Filter Pills */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                {['ALL', 'COMPANY', 'INDIVIDUAL', 'OTHER'].map(type => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => setClientTypeFilter(type)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer shrink-0 ${
+                      clientTypeFilter === type
+                        ? 'bg-blue-600 text-white'
+                        : 'text-slate-400 hover:text-white bg-white/5 hover:bg-white/10'
+                    }`}
+                  >
+                    {type === 'ALL' ? 'All Entities' : type.charAt(0) + type.slice(1).toLowerCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
-        )}
+
+          {/* Error Message */}
+          {clientsError && (
+            <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-center gap-2.5 text-red-300 text-xs">
+              <AlertCircle size={16} className="shrink-0" />
+              <span>{clientsError}</span>
+            </div>
+          )}
+
+          {/* Clients Table Card */}
+          <div className={`rounded-2xl border overflow-hidden ${cardBgClass}`}>
+            {loadingClients ? (
+              <div className="p-12 text-center text-slate-400 text-xs">
+                <RefreshCw size={20} className="animate-spin mx-auto mb-2 text-blue-400" />
+                <span>Loading central clients directory...</span>
+              </div>
+            ) : clients.length === 0 ? (
+              <div className="p-12 text-center text-slate-500 text-xs">
+                <Building2 size={24} className="mx-auto mb-2 opacity-40 text-blue-400" />
+                <span>No clients registered in central database yet.</span>
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[650px] overflow-y-auto">
+                <table className="w-full text-left text-xs text-slate-300">
+                  <thead className="sticky top-0 bg-[#0d1226] border-b border-white/10 uppercase tracking-wider text-[10px] text-slate-400 font-bold z-10">
+                    <tr>
+                      <th className="px-4 py-3">Client Code</th>
+                      <th className="px-4 py-3">Client Name &amp; Entity</th>
+                      <th className="px-4 py-3">Contact Email &amp; Phone</th>
+                      <th className="px-4 py-3">Tax Identifiers</th>
+                      <th className="px-4 py-3">Client Portal</th>
+                      <th className="px-4 py-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {clients
+                      .filter(c => {
+                        if (clientTypeFilter !== 'ALL') {
+                          if ((c.entity_type || 'OTHER').toUpperCase() !== clientTypeFilter) return false;
+                        }
+                        if (!clientSearchQuery.trim()) return true;
+                        const q = clientSearchQuery.toLowerCase().trim();
+                        return (
+                          (c.client_code || '').toLowerCase().includes(q) ||
+                          (c.client_name || '').toLowerCase().includes(q) ||
+                          (c.email || '').toLowerCase().includes(q) ||
+                          (c.phone || '').toLowerCase().includes(q) ||
+                          (c.gstin || '').toLowerCase().includes(q)
+                        );
+                      })
+                      .map((c) => (
+                        <tr key={c.id} className="hover:bg-white/5 transition-colors">
+                          {/* Client Code */}
+                          <td className="px-4 py-3.5">
+                            <span className="px-2.5 py-1 rounded-lg bg-blue-500/15 border border-blue-500/30 text-blue-300 font-mono font-bold text-xs inline-block">
+                              {c.client_code || '—'}
+                            </span>
+                          </td>
+
+                          {/* Client Name & Entity Type */}
+                          <td className="px-4 py-3.5">
+                            <div className="font-bold text-white text-sm">
+                              {c.client_name}
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-semibold bg-white/5 text-slate-400 border border-white/10">
+                                {c.entity_type || 'COMPANY'}
+                              </span>
+                              {c.state_code && (
+                                <span className="text-[10px] text-slate-500">
+                                  State: {c.state_code}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Contact Email & Phone */}
+                          <td className="px-4 py-3.5">
+                            {c.email ? (
+                              <div className="flex items-center gap-1.5 text-slate-300 font-medium">
+                                <Mail size={11} className="text-slate-500 shrink-0" />
+                                <span className="truncate max-w-[200px]">{c.email}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(c.email);
+                                    alert('Copied email: ' + c.email);
+                                  }}
+                                  className="text-slate-500 hover:text-blue-400 transition"
+                                  title="Copy Email"
+                                >
+                                  <Copy size={10} />
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-slate-600 italic">No email set</span>
+                            )}
+                            {c.phone && (
+                              <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-1">
+                                <Phone size={10} className="text-slate-500 shrink-0" />
+                                <span>{c.phone}</span>
+                              </div>
+                            )}
+                          </td>
+
+                          {/* GSTIN & PAN */}
+                          <td className="px-4 py-3.5 font-mono text-[11px]">
+                            {c.gstin && (
+                              <div className="text-slate-300">
+                                <span className="text-slate-500 text-[10px]">GST: </span>
+                                {c.gstin}
+                              </div>
+                            )}
+                            {c.pan && (
+                              <div className="text-slate-400 text-[10px]">
+                                <span className="text-slate-500">PAN: </span>
+                                {c.pan}
+                              </div>
+                            )}
+                            {!c.gstin && !c.pan && (
+                              <span className="text-slate-600">—</span>
+                            )}
+                          </td>
+
+                          {/* Portal Status */}
+                          <td className="px-4 py-3.5">
+                            {c.portalAccess ? (
+                              <div className="space-y-1">
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                  <ShieldCheck size={11} className="text-emerald-400" />
+                                  <span>Portal Active</span>
+                                </span>
+                                <div className="text-[10px] text-slate-400 truncate max-w-[170px]" title={c.portalEmail}>
+                                  {c.portalEmail}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-500/15 text-slate-400 border border-slate-500/25">
+                                <span>Not Provisioned</span>
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Actions */}
+                          <td className="px-4 py-3.5 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditClient(c)}
+                                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition cursor-pointer"
+                                title="Edit Client & Portal Access"
+                              >
+                                <Edit2 size={13} />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteClient(c)}
+                                className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition cursor-pointer"
+                                title="Delete Client Entity"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )}
 
       </div>
 
@@ -2248,38 +2715,6 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                       />
                     </div>
                   </div>
-                </div>
-
-                {/* Client Portal Link */}
-                <div className="pt-2 border-t border-white/10 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={editDashAccess.client_portal?.enabled}
-                      onChange={(e) => setEditDashAccess(prev => ({
-                        ...prev,
-                        client_portal: { ...prev.client_portal, enabled: e.target.checked }
-                      }))}
-                      className="w-3.5 h-3.5 rounded accent-cyan-500 cursor-pointer"
-                    />
-                    <span className="text-xs text-cyan-300 font-semibold">Client Portal Access</span>
-                  </div>
-                  <select
-                    value={editDashAccess.client_portal?.clientId || ''}
-                    disabled={!editDashAccess.client_portal?.enabled}
-                    onChange={(e) => setEditDashAccess(prev => ({
-                      ...prev,
-                      client_portal: { ...prev.client_portal, clientId: e.target.value }
-                    }))}
-                    className={`max-w-[240px] px-2 py-1 text-[11px] rounded-lg border outline-none disabled:opacity-40 ${inputBgClass}`}
-                  >
-                    <option value="">Select Client Entity...</option>
-                    {clientsList.map(c => (
-                      <option key={c.id} value={c.id}>
-                        {c.client_code} - {c.client_name}
-                      </option>
-                    ))}
-                  </select>
                 </div>
               </div>
 

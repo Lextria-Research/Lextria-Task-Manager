@@ -11,13 +11,16 @@ export default defineConfig({
       name: 'api-dev-server',
       configureServer(server) {
         server.middlewares.use(async (req, res, next) => {
-          if (req.url && req.url.startsWith('/api/users')) {
+          if (req.url && (req.url.startsWith('/api/users') || req.url.startsWith('/api/clients'))) {
             try {
-              const { default: handler } = await import('./api/users.js');
+              const handlerModule = req.url.startsWith('/api/clients')
+                ? await import('./api/clients.js')
+                : await import('./api/users.js');
+              const handler = handlerModule.default;
               
               // Parse JSON body if present
               let body = {};
-              if (req.method === 'POST' || req.method === 'DELETE') {
+              if (req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE') {
                 const buffers = [];
                 for await (const chunk of req) {
                   buffers.push(chunk);
