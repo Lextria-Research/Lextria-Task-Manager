@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase } from './supabaseClient';
+import { supabase, centralSupabase } from './supabaseClient';
 import {
   User, Lock, Shield, Sun, Moon, Camera, Trash2, Edit2, Plus, UserPlus,
   Check, Key, Eye, EyeOff, Building2, Briefcase, RefreshCw, AlertCircle,
   Sparkles, CheckCircle2, Copy, X, ArrowRight, Calendar, MessageSquare, Send,
-  Globe, ExternalLink, Link2, Download, Bell, HelpCircle, Volume2, VolumeX, Play
+  Globe, ExternalLink, Link2, Download, Bell, HelpCircle, Volume2, VolumeX, Play,
+  Layers, Scale, FileText, DollarSign, Laptop, Users, ShieldCheck, Mail
 } from 'lucide-react';
 import {
   getPatentSoundEnabled,
@@ -393,27 +394,51 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
   };
 
   // -------------------------------------------------------------
-  // LEADER EXCLUSIVE: TEAM MEMBERS MANAGEMENT
+  // LEADER EXCLUSIVE: UNIVERSAL TEAM & DASHBOARD ACCESS MANAGEMENT
   // -------------------------------------------------------------
   const [members, setMembers] = useState([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [membersError, setMembersError] = useState('');
 
-  // Add Member State
+  // Universal Users State (eafciegebhuhoneypsqy central profiles)
+  const [universalUsers, setUniversalUsers] = useState([]);
+  const [loadingUniversal, setLoadingUniversal] = useState(false);
+  const [universalError, setUniversalError] = useState('');
+  const [clientsList, setClientsList] = useState([]);
+  const [isSyncingAll, setIsSyncingAll] = useState(false);
+  const [syncStatusMsg, setSyncStatusMsg] = useState('');
+
+  // Add Universal Member State
   const [newName, setNewName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
   const [newRole, setNewRole] = useState('member');
   const [newPassword, setNewPassword] = useState('');
   const [newDepartment, setNewDepartment] = useState('Litigation');
   const [newDesignation, setNewDesignation] = useState('');
+  const [newDashAccess, setNewDashAccess] = useState({
+    task_manager: { enabled: true, role: 'member' },
+    litigator: { enabled: false, role: 'ASSOCIATE' },
+    patent: { enabled: false, role: 'DRAFTER' },
+    finance: { enabled: false, mode: 'NONE' }, // 'FULL' | 'EXECUTIVE' | 'NONE'
+    client_portal: { enabled: false, clientId: '' }
+  });
   const [isAddingMember, setIsAddingMember] = useState(false);
 
-  // Edit Member Modal
+  // Edit Universal Member Modal
   const [editingMember, setEditingMember] = useState(null);
   const [editName, setEditName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
   const [editRole, setEditRole] = useState('member');
   const [editPassword, setEditPassword] = useState('');
   const [editDepartment, setEditDepartment] = useState('General');
   const [editDesignation, setEditDesignation] = useState('');
+  const [editDashAccess, setEditDashAccess] = useState({
+    task_manager: { enabled: true, role: 'member' },
+    litigator: { enabled: false, role: 'ASSOCIATE' },
+    patent: { enabled: false, role: 'DRAFTER' },
+    finance: { enabled: false, mode: 'NONE' },
+    client_portal: { enabled: false, clientId: '' }
+  });
   const [isUpdatingMember, setIsUpdatingMember] = useState(false);
 
   // Show password map for leader convenience
@@ -422,6 +447,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
     setRevealedPasswords(prev => ({ ...prev, [memberId]: !prev[memberId] }));
   };
 
+  // Fetch local task members
   const fetchMembers = useCallback(async () => {
     if (!isLeader) return;
     try {
@@ -442,34 +468,113 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
     }
   }, [isLeader]);
 
+  // Fetch universal profiles from central Supabase / API
+  const fetchUniversalUsers = useCallback(async () => {
+    if (!isLeader) return;
+    try {
+      setLoadingUniversal(true);
+      setUniversalError('');
+      const res = await fetch('/api/users');
+      if (res.ok) {
+        const json = await res.json();
+        setUniversalUsers(json.users || []);
+        return;
+      }
+      throw new Error(`API returned ${res.status}`);
+    } catch (err) {
+      console.warn('API /api/users fetch fallback:', err);
+      try {
+        const { data: profs } = await centralSupabase
+          .schema('core')
+          .from('profiles')
+          .select('*')
+          .order('created_at', { ascending: true });
+
+        if (profs) {
+          setUniversalUsers(profs.map(p => ({
+            id: p.id,
+            email: p.email,
+            displayName: p.display_name,
+            role: p.role,
+            department: p.department,
+            active: p.active,
+            createdAt: p.created_at,
+            dashboardAccess: {
+              task_manager: { enabled: true, role: p.role === 'SUPER_ADMIN' ? 'leader' : 'member' },
+              litigator: { enabled: p.department === 'LITIGATION' || p.role === 'SUPER_ADMIN', role: p.role === 'SUPER_ADMIN' ? 'LITIGATION_HEAD' : 'ASSOCIATE' },
+              patent: { enabled: p.department === 'IP_PATENT' || p.role === 'SUPER_ADMIN', role: p.role === 'SUPER_ADMIN' ? 'ADMIN' : 'DRAFTER' },
+              finance: { enabled: p.department === 'FINANCE' || p.role === 'SUPER_ADMIN', mode: p.role === 'SUPER_ADMIN' ? 'FULL' : 'NONE' },
+              client_portal: { enabled: false, clientId: '' }
+            }
+          })));
+        }
+      } catch (fbErr) {
+        setUniversalError(err.message || 'Failed to fetch universal users.');
+      }
+    } finally {
+      setLoadingUniversal(false);
+    }
+  }, [isLeader]);
+
   useEffect(() => {
     if (isLeader) {
       fetchMembers();
+      fetchUniversalUsers();
+      // Load clients list for client portal dropdown
+      centralSupabase
+        .schema('core')
+        .from('clients')
+        .select('id, client_code, client_name')
+        .order('client_name')
+        .then(({ data }) => {
+          if (data) setClientsList(data);
+        })
+        .catch(console.warn);
     }
-  }, [fetchMembers, isLeader]);
+  }, [fetchMembers, fetchUniversalUsers, isLeader]);
 
-  // Leader adds new member
+  // Generate strong random password
+  const generateRandomPassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
+    let pass = 'Lx!';
+    for (let i = 0; i < 9; i++) {
+      pass += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return pass;
+  };
+
+  // Leader adds new universal member
   const handleAddMember = async (e) => {
     e.preventDefault();
-    if (!newName.trim() || !newPassword.trim()) return;
+    if (!newName.trim()) {
+      alert('Please enter Full Name.');
+      return;
+    }
+
+    const cleanName = newName.trim();
+    const cleanEmail = newEmail.trim() || `${cleanName.toLowerCase().replace(/[^a-z0-9]/g, '')}@lextria.in`;
+    const cleanPass = newPassword.trim() || generateRandomPassword();
 
     try {
       setIsAddingMember(true);
-      const cleanName = newName.trim();
-      const cleanPass = newPassword.trim();
 
-      const { data, error } = await supabase
-        .from('members')
-        .insert([{
-          name: cleanName,
-          role: newRole,
-          password: cleanPass
-        }])
-        .select();
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          displayName: cleanName,
+          email: cleanEmail,
+          password: cleanPass,
+          role: newRole === 'leader' ? 'SUPER_ADMIN' : 'STAFF',
+          department: newDepartment,
+          designation: newDesignation.trim(),
+          dashboardAccess: newDashAccess
+        })
+      });
 
-      if (error) throw error;
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to create universal user');
 
-      // Save extra profile metadata (department, designation)
       saveStoredProfile(cleanName, {
         department: newDepartment.trim(),
         designation: newDesignation.trim(),
@@ -477,51 +582,76 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
       });
 
       setNewName('');
+      setNewEmail('');
       setNewRole('member');
       setNewPassword('');
       setNewDesignation('');
       setNewDepartment('Litigation');
+      setNewDashAccess({
+        task_manager: { enabled: true, role: 'member' },
+        litigator: { enabled: false, role: 'ASSOCIATE' },
+        patent: { enabled: false, role: 'DRAFTER' },
+        finance: { enabled: false, mode: 'NONE' },
+        client_portal: { enabled: false, clientId: '' }
+      });
+
+      await fetchUniversalUsers();
       await fetchMembers();
+      alert(`Universal account created successfully for ${cleanName}!\nLogin Email: ${cleanEmail}\nPassword: ${cleanPass}`);
     } catch (err) {
-      console.error('Error adding member:', err);
-      alert('Failed to add member: ' + (err.message || 'Please check connection.'));
+      console.error('Error adding universal member:', err);
+      alert('Failed to add universal member: ' + (err.message || 'Please check connection.'));
     } finally {
       setIsAddingMember(false);
     }
   };
 
-  // Open Edit Member
-  const handleOpenEdit = (member) => {
-    setEditingMember(member);
-    setEditName(member.name || '');
-    setEditRole(member.role || 'member');
-    setEditPassword(member.password || '');
-    const profiles = getStoredProfiles();
-    const meta = profiles[(member.name || '').trim().toLowerCase()] || {};
-    setEditDepartment(meta.department || 'General');
-    setEditDesignation(meta.designation || '');
+  // Open Edit Universal Member
+  const handleOpenEdit = (user) => {
+    setEditingMember(user);
+    setEditName(user.displayName || user.name || '');
+    setEditEmail(user.email || '');
+    setEditRole(user.role === 'SUPER_ADMIN' || user.role === 'leader' ? 'leader' : 'member');
+    setEditPassword(user.cachedPassword || user.password || '');
+    setEditDepartment(user.department || 'Litigation');
+    setEditDesignation(user.designation || '');
+    setEditDashAccess(user.dashboardAccess || {
+      task_manager: { enabled: true, role: 'member' },
+      litigator: { enabled: false, role: 'ASSOCIATE' },
+      patent: { enabled: false, role: 'DRAFTER' },
+      finance: { enabled: false, mode: 'NONE' },
+      client_portal: { enabled: false, clientId: '' }
+    });
   };
 
-  // Update Member
+  // Update Universal Member
   const handleUpdateMember = async (e) => {
     e.preventDefault();
-    if (!editingMember || !editName.trim() || !editPassword.trim()) return;
+    if (!editingMember || !editName.trim()) return;
 
     try {
       setIsUpdatingMember(true);
       const cleanName = editName.trim();
+      const cleanEmail = editEmail.trim();
       const cleanPass = editPassword.trim();
 
-      const { error } = await supabase
-        .from('members')
-        .update({
-          name: cleanName,
-          role: editRole,
-          password: cleanPass
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: editingMember.id,
+          displayName: cleanName,
+          email: cleanEmail,
+          password: cleanPass || undefined,
+          role: editRole === 'leader' ? 'SUPER_ADMIN' : 'STAFF',
+          department: editDepartment,
+          designation: editDesignation.trim(),
+          dashboardAccess: editDashAccess
         })
-        .eq('id', editingMember.id);
+      });
 
-      if (error) throw error;
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to update user');
 
       saveStoredProfile(cleanName, {
         department: editDepartment.trim(),
@@ -530,7 +660,9 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
       });
 
       setEditingMember(null);
+      await fetchUniversalUsers();
       await fetchMembers();
+      alert('Universal user account and dashboard permissions updated successfully!');
     } catch (err) {
       console.error('Error updating member:', err);
       alert('Failed to update member: ' + (err.message || 'Please check connection.'));
@@ -539,20 +671,104 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
     }
   };
 
-  // Delete Member
+  // Delete / Deactivate Member
   const handleDeleteMember = async (id, memberName) => {
     const confirmed = window.confirm(
-      `Are you sure you want to permanently remove "${memberName || 'this member'}" from the workspace?`
+      `Are you sure you want to deactivate universal account for "${memberName || 'this member'}" across all dashboards?`
     );
     if (!confirmed) return;
 
     try {
-      const { error } = await supabase.from('members').delete().eq('id', id);
-      if (error) throw error;
+      const res = await fetch('/api/users', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: id, displayName: memberName })
+      });
+      if (!res.ok) {
+        const json = await res.json();
+        throw new Error(json.error || 'Failed to delete');
+      }
+
+      await fetchUniversalUsers();
       await fetchMembers();
     } catch (err) {
       console.error('Error removing member:', err);
       alert('Failed to remove member: ' + (err.message || 'Please check connection.'));
+    }
+  };
+
+  // One-click Sync All Legacy Members to Universal SSO
+  const handleSyncLegacyMembers = async () => {
+    const confirmed = window.confirm(
+      `This will sync and provision all ${members.length} team members from Task Manager into the Central Universal Directory (core.profiles) with @lextria.in emails and their existing passwords. Ready to proceed?`
+    );
+    if (!confirmed) return;
+
+    setIsSyncingAll(true);
+    setSyncStatusMsg('Starting synchronization...');
+    let successCount = 0;
+    let skippedCount = 0;
+
+    try {
+      const existingEmails = new Set((universalUsers || []).map(u => (u.email || '').toLowerCase()));
+      const existingNames = new Set((universalUsers || []).map(u => (u.displayName || u.name || '').toLowerCase()));
+
+      for (const member of members) {
+        const cleanName = (member.name || '').trim();
+        if (!cleanName) continue;
+
+        if (existingNames.has(cleanName.toLowerCase())) {
+          skippedCount++;
+          continue;
+        }
+
+        const cleanFirst = cleanName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const email = `${cleanFirst}@lextria.in`;
+        if (existingEmails.has(email)) {
+          skippedCount++;
+          continue;
+        }
+
+        setSyncStatusMsg(`Provisioning ${cleanName} (${email})...`);
+
+        const profiles = getStoredProfiles();
+        const meta = profiles[cleanName.toLowerCase()] || {};
+        const dept = meta.department || 'Litigation';
+        const designation = meta.designation || '';
+        const isLead = member.role === 'leader';
+
+        await fetch('/api/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            displayName: cleanName,
+            email,
+            password: member.password || 'Lextria@334',
+            role: isLead ? 'SUPER_ADMIN' : 'STAFF',
+            department: dept === 'Patent' ? 'IP_PATENT' : dept === 'Litigation' ? 'LITIGATION' : dept === 'Finance' ? 'FINANCE' : 'MANAGEMENT',
+            designation,
+            dashboardAccess: {
+              task_manager: { enabled: true, role: isLead ? 'leader' : 'member' },
+              litigator: { enabled: dept === 'Litigation' || isLead, role: isLead ? 'LITIGATION_HEAD' : 'ASSOCIATE' },
+              patent: { enabled: dept === 'Patent' || isLead, role: isLead ? 'ADMIN' : 'DRAFTER' },
+              finance: { enabled: dept === 'Finance' || isLead, mode: isLead ? 'FULL' : 'NONE' },
+              client_portal: { enabled: false, clientId: '' }
+            }
+          })
+        });
+
+        successCount++;
+      }
+
+      setSyncStatusMsg(`Successfully provisioned ${successCount} members to Universal Directory! (${skippedCount} already existed)`);
+      await fetchUniversalUsers();
+      await fetchMembers();
+      setTimeout(() => setSyncStatusMsg(''), 7000);
+    } catch (err) {
+      console.error('Sync legacy error:', err);
+      alert('Sync error: ' + err.message);
+    } finally {
+      setIsSyncingAll(false);
     }
   };
 
@@ -1271,33 +1487,94 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
             </div>
 
             {/* Leader Header Badge */}
-            <div className="flex items-center justify-between p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-300">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-2xl bg-gradient-to-r from-amber-500/10 via-blue-500/10 to-indigo-500/10 border border-amber-500/30 text-amber-300">
               <div className="flex items-center gap-2.5">
-                <Shield size={20} className="text-amber-400 shrink-0" />
+                <ShieldCheck size={22} className="text-amber-400 shrink-0" />
                 <div>
-                  <h3 className="text-sm font-bold text-amber-200">Executive Team Administration</h3>
-                  <p className="text-xs text-amber-300/80">
-                    Restricted view for Pranav Bhat and Sharan. Add new members, inspect passwords, and manage accounts.
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span>Universal Ecosystem User Administration</span>
+                    <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-semibold border border-blue-500/30">
+                      Central SSO
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-300">
+                    Manage universal login IDs, passwords, and permissions across Task Manager, Litigator, Patent, Finance, and Client Portals.
                   </p>
                 </div>
               </div>
-              <button
-                onClick={fetchMembers}
-                className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 border border-amber-500/40"
-                title="Refresh team directory"
-              >
-                <RefreshCw size={12} className={loadingMembers ? 'animate-spin' : ''} /> Refresh
-              </button>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleSyncLegacyMembers}
+                  disabled={isSyncingAll}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 border border-emerald-500/40 disabled:opacity-50"
+                  title="One-click sync existing Task Manager members into Universal Central Directory"
+                >
+                  <RefreshCw size={12} className={isSyncingAll ? 'animate-spin' : ''} />
+                  {isSyncingAll ? 'Syncing Team...' : 'Sync 27 Legacy Members'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => { fetchUniversalUsers(); fetchMembers(); }}
+                  className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 border border-amber-500/40"
+                  title="Refresh team directory"
+                >
+                  <RefreshCw size={12} className={loadingUniversal || loadingMembers ? 'animate-spin' : ''} /> Refresh
+                </button>
+              </div>
             </div>
 
-            {/* Add New Member Card */}
+            {/* Sync Status Banner */}
+            {syncStatusMsg && (
+              <div className="p-3 bg-emerald-500/15 border border-emerald-500/30 rounded-xl flex items-center gap-2 text-emerald-300 text-xs animate-in fade-in">
+                <CheckCircle2 size={16} className="shrink-0" />
+                <span>{syncStatusMsg}</span>
+              </div>
+            )}
+
+            {/* Ecosystem Stats Overview */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <div className={`p-3.5 rounded-xl border ${cardBgClass} text-center`}>
+                <div className="text-[10px] font-semibold uppercase text-slate-400">Universal Accounts</div>
+                <div className="text-lg font-bold text-white mt-1">{universalUsers.length || members.length}</div>
+              </div>
+              <div className={`p-3.5 rounded-xl border ${cardBgClass} text-center`}>
+                <div className="text-[10px] font-semibold uppercase text-blue-400">Task Manager</div>
+                <div className="text-lg font-bold text-blue-300 mt-1">
+                  {universalUsers.filter(u => u.dashboardAccess?.task_manager?.enabled !== false).length || members.length}
+                </div>
+              </div>
+              <div className={`p-3.5 rounded-xl border ${cardBgClass} text-center`}>
+                <div className="text-[10px] font-semibold uppercase text-purple-400">Litigator</div>
+                <div className="text-lg font-bold text-purple-300 mt-1">
+                  {universalUsers.filter(u => u.dashboardAccess?.litigator?.enabled).length}
+                </div>
+              </div>
+              <div className={`p-3.5 rounded-xl border ${cardBgClass} text-center`}>
+                <div className="text-[10px] font-semibold uppercase text-emerald-400">Patent Hub</div>
+                <div className="text-lg font-bold text-emerald-300 mt-1">
+                  {universalUsers.filter(u => u.dashboardAccess?.patent?.enabled).length}
+                </div>
+              </div>
+              <div className={`p-3.5 rounded-xl border ${cardBgClass} text-center`}>
+                <div className="text-[10px] font-semibold uppercase text-amber-400">Finance &amp; Exec</div>
+                <div className="text-lg font-bold text-amber-300 mt-1">
+                  {universalUsers.filter(u => u.dashboardAccess?.finance?.enabled).length}
+                </div>
+              </div>
+            </div>
+
+            {/* Add New Universal Member Card */}
             <div className={`rounded-2xl border p-6 transition-all ${cardBgClass}`}>
               <h2 className="text-base font-bold mb-4 flex items-center gap-2">
                 <UserPlus size={18} className="text-blue-400" />
-                <span>Add Team Member</span>
+                <span>Provision Universal Team Member</span>
               </h2>
 
               <form onSubmit={handleAddMember}>
+                {/* Basic Info Fields */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
                   <div>
                     <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
@@ -1305,9 +1582,14 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                     </label>
                     <input
                       type="text"
-                      placeholder="e.g. Akshay"
+                      placeholder="e.g. Akshay Sharma"
                       value={newName}
-                      onChange={(e) => setNewName(e.target.value)}
+                      onChange={(e) => {
+                        setNewName(e.target.value);
+                        if (!newEmail && e.target.value) {
+                          setNewEmail(`${e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '')}@lextria.in`);
+                        }
+                      }}
                       required
                       className={`w-full px-3 py-2 text-xs rounded-xl border outline-none ${inputBgClass}`}
                     />
@@ -1315,29 +1597,38 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
 
                   <div>
                     <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
-                      Role
+                      Universal Login Email <span className="text-red-400">*</span>
                     </label>
-                    <select
-                      value={newRole}
-                      onChange={(e) => setNewRole(e.target.value)}
+                    <input
+                      type="email"
+                      placeholder="e.g. akshay@lextria.in"
+                      value={newEmail}
+                      onChange={(e) => setNewEmail(e.target.value)}
+                      required
                       className={`w-full px-3 py-2 text-xs rounded-xl border outline-none ${inputBgClass}`}
-                    >
-                      <option value="member">Member</option>
-                      <option value="leader">Leader</option>
-                    </select>
+                    />
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
-                      Initial Password <span className="text-red-400">*</span>
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
+                        Password <span className="text-red-400">*</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setNewPassword(generateRandomPassword())}
+                        className="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer font-medium"
+                      >
+                        Auto-Gen
+                      </button>
+                    </div>
                     <input
                       type="text"
-                      placeholder="e.g. lex123"
+                      placeholder="e.g. Lx!9aB7#kQ"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
                       required
-                      className={`w-full px-3 py-2 text-xs rounded-xl border outline-none ${inputBgClass}`}
+                      className={`w-full px-3 py-2 text-xs rounded-xl border outline-none font-mono ${inputBgClass}`}
                     />
                   </div>
 
@@ -1354,6 +1645,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                       <option value="Compliance">Compliance</option>
                       <option value="Patent">Patent</option>
                       <option value="Trademark">Trademark</option>
+                      <option value="Finance">Finance</option>
                       <option value="Corporate">Corporate</option>
                       <option value="General">General</option>
                     </select>
@@ -1365,7 +1657,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                     </label>
                     <input
                       type="text"
-                      placeholder="e.g. Associate"
+                      placeholder="e.g. Senior Associate"
                       value={newDesignation}
                       onChange={(e) => setNewDesignation(e.target.value)}
                       className={`w-full px-3 py-2 text-xs rounded-xl border outline-none ${inputBgClass}`}
@@ -1373,130 +1665,304 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                   </div>
                 </div>
 
+                {/* Dashboard Access Control Matrix */}
+                <div className="mb-5 p-4 rounded-xl bg-black/25 border border-white/10">
+                  <div className="text-xs font-bold text-slate-200 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                    <Layers size={14} className="text-blue-400" />
+                    <span>Cross-Dashboard Access &amp; Permissions</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+                    {/* 1. Task Manager */}
+                    <div className="p-3 rounded-lg border border-white/5 bg-white/5 flex flex-col justify-between">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-blue-300 flex items-center gap-1.5">
+                          <CheckSquare size={13} /> Task Manager
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={newDashAccess.task_manager?.enabled}
+                          onChange={(e) => setNewDashAccess(prev => ({
+                            ...prev,
+                            task_manager: { ...prev.task_manager, enabled: e.target.checked }
+                          }))}
+                          className="w-3.5 h-3.5 rounded accent-blue-500 cursor-pointer"
+                        />
+                      </div>
+                      <select
+                        value={newDashAccess.task_manager?.role || 'member'}
+                        disabled={!newDashAccess.task_manager?.enabled}
+                        onChange={(e) => setNewDashAccess(prev => ({
+                          ...prev,
+                          task_manager: { ...prev.task_manager, role: e.target.value }
+                        }))}
+                        className={`w-full px-2 py-1 text-[11px] rounded-lg border outline-none disabled:opacity-40 ${inputBgClass}`}
+                      >
+                        <option value="member">Member</option>
+                        <option value="leader">Leader</option>
+                      </select>
+                    </div>
+
+                    {/* 2. Litigator */}
+                    <div className="p-3 rounded-lg border border-white/5 bg-white/5 flex flex-col justify-between">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
+                          <Scale size={13} /> Litigator
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={newDashAccess.litigator?.enabled}
+                          onChange={(e) => setNewDashAccess(prev => ({
+                            ...prev,
+                            litigator: { ...prev.litigator, enabled: e.target.checked }
+                          }))}
+                          className="w-3.5 h-3.5 rounded accent-purple-500 cursor-pointer"
+                        />
+                      </div>
+                      <select
+                        value={newDashAccess.litigator?.role || 'ASSOCIATE'}
+                        disabled={!newDashAccess.litigator?.enabled}
+                        onChange={(e) => setNewDashAccess(prev => ({
+                          ...prev,
+                          litigator: { ...prev.litigator, role: e.target.value }
+                        }))}
+                        className={`w-full px-2 py-1 text-[11px] rounded-lg border outline-none disabled:opacity-40 ${inputBgClass}`}
+                      >
+                        <option value="ASSOCIATE">Associate</option>
+                        <option value="LITIGATION_HEAD">Litigation Head</option>
+                        <option value="INTERN">Intern</option>
+                      </select>
+                    </div>
+
+                    {/* 3. Patent Dashboard */}
+                    <div className="p-3 rounded-lg border border-white/5 bg-white/5 flex flex-col justify-between">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-emerald-300 flex items-center gap-1.5">
+                          <FileText size={13} /> Patent Hub
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={newDashAccess.patent?.enabled}
+                          onChange={(e) => setNewDashAccess(prev => ({
+                            ...prev,
+                            patent: { ...prev.patent, enabled: e.target.checked }
+                          }))}
+                          className="w-3.5 h-3.5 rounded accent-emerald-500 cursor-pointer"
+                        />
+                      </div>
+                      <select
+                        value={newDashAccess.patent?.role || 'DRAFTER'}
+                        disabled={!newDashAccess.patent?.enabled}
+                        onChange={(e) => setNewDashAccess(prev => ({
+                          ...prev,
+                          patent: { ...prev.patent, role: e.target.value }
+                        }))}
+                        className={`w-full px-2 py-1 text-[11px] rounded-lg border outline-none disabled:opacity-40 ${inputBgClass}`}
+                      >
+                        <option value="DRAFTER">Drafter</option>
+                        <option value="FILER">Filer</option>
+                        <option value="AUDITOR">Auditor</option>
+                        <option value="ADMIN">Admin</option>
+                      </select>
+                    </div>
+
+                    {/* 4. Finance & Office Exec */}
+                    <div className="p-3 rounded-lg border border-white/5 bg-white/5 flex flex-col justify-between">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                          <DollarSign size={13} /> Finance
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={newDashAccess.finance?.enabled}
+                          onChange={(e) => setNewDashAccess(prev => ({
+                            ...prev,
+                            finance: { ...prev.finance, enabled: e.target.checked }
+                          }))}
+                          className="w-3.5 h-3.5 rounded accent-amber-500 cursor-pointer"
+                        />
+                      </div>
+                      <select
+                        value={newDashAccess.finance?.mode || 'FULL'}
+                        disabled={!newDashAccess.finance?.enabled}
+                        onChange={(e) => setNewDashAccess(prev => ({
+                          ...prev,
+                          finance: { ...prev.finance, mode: e.target.value }
+                        }))}
+                        className={`w-full px-2 py-1 text-[11px] rounded-lg border outline-none disabled:opacity-40 ${inputBgClass}`}
+                      >
+                        <option value="FULL">Full Finance (Lead)</option>
+                        <option value="EXECUTIVE">Exec (Post &amp; Petty Cash)</option>
+                      </select>
+                    </div>
+
+                    {/* 5. Client Portal */}
+                    <div className="p-3 rounded-lg border border-white/5 bg-white/5 flex flex-col justify-between">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-cyan-300 flex items-center gap-1.5">
+                          <Building2 size={13} /> Client Portal
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={newDashAccess.client_portal?.enabled}
+                          onChange={(e) => setNewDashAccess(prev => ({
+                            ...prev,
+                            client_portal: { ...prev.client_portal, enabled: e.target.checked }
+                          }))}
+                          className="w-3.5 h-3.5 rounded accent-cyan-500 cursor-pointer"
+                        />
+                      </div>
+                      <select
+                        value={newDashAccess.client_portal?.clientId || ''}
+                        disabled={!newDashAccess.client_portal?.enabled}
+                        onChange={(e) => setNewDashAccess(prev => ({
+                          ...prev,
+                          client_portal: { ...prev.client_portal, clientId: e.target.value }
+                        }))}
+                        className={`w-full px-2 py-1 text-[11px] rounded-lg border outline-none disabled:opacity-40 ${inputBgClass}`}
+                      >
+                        <option value="">Select Client...</option>
+                        {clientsList.map(c => (
+                          <option key={c.id} value={c.id}>
+                            {c.client_code} - {c.client_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="flex justify-end">
                   <button
                     type="submit"
                     disabled={isAddingMember}
-                    className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs shadow-md transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold text-xs shadow-md transition cursor-pointer flex items-center gap-2 disabled:opacity-50"
                   >
                     <Plus size={14} />
-                    {isAddingMember ? 'Creating Account...' : 'Create Account'}
+                    {isAddingMember ? 'Creating Universal Account...' : 'Provision Universal Account'}
                   </button>
                 </div>
               </form>
             </div>
 
-            {/* Team Members Directory Card */}
+            {/* Universal Team Members Directory Card */}
             <div className={`rounded-2xl border overflow-hidden transition-all ${cardBgClass}`}>
               <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between">
                 <div>
                   <h2 className="text-base font-bold flex items-center gap-2">
-                    <span>Active Team Directory</span>
+                    <span>Universal Ecosystem Directory</span>
                     <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                      {members.length} {members.length === 1 ? 'Account' : 'Accounts'}
+                      {universalUsers.length || members.length} Active Accounts
                     </span>
                   </h2>
                   <p className={`text-xs mt-0.5 ${subTextClass}`}>
-                    All accounts and passwords visible to leaders to guarantee zero emergency lockout.
+                    Unified single login accounts functioning across all firm dashboards.
                   </p>
                 </div>
               </div>
 
-              {loadingMembers ? (
+              {loadingUniversal ? (
                 <div className="p-8 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
-                  <RefreshCw size={14} className="animate-spin text-blue-400" /> Loading team members...
+                  <RefreshCw size={14} className="animate-spin text-blue-400" /> Loading Universal Team Directory...
                 </div>
-              ) : members.length === 0 ? (
+              ) : (universalUsers.length === 0 && members.length === 0) ? (
                 <div className="p-8 text-center text-xs text-slate-500">
-                  No member records found.
+                  No member records found. Click &quot;Sync 27 Legacy Members&quot; above to provision your team!
                 </div>
               ) : (
                 <div className="divide-y divide-white/5 overflow-x-auto">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-white/5 text-slate-400 font-semibold uppercase text-[10px] tracking-wider">
                       <tr>
-                        <th className="px-4 py-3">Member</th>
-                        <th className="px-4 py-3">Role</th>
-                        <th className="px-4 py-3">Department</th>
-                        <th className="px-4 py-3">Designation</th>
-                        <th className="px-4 py-3">Password (Emergency Access)</th>
+                        <th className="px-4 py-3">Member &amp; Login Email</th>
+                        <th className="px-4 py-3">Department &amp; Title</th>
+                        <th className="px-4 py-3">Universal Password</th>
+                        <th className="px-4 py-3">Dashboard Permissions</th>
                         <th className="px-4 py-3 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
-                      {members.map((member) => {
-                        const profiles = getStoredProfiles();
-                        const meta = profiles[(member.name || '').trim().toLowerCase()] || {};
-                        const isPassRevealed = Boolean(revealedPasswords[member.id]);
-                        const isYou = member.name?.toLowerCase() === currentUserName.toLowerCase();
+                      {(universalUsers.length > 0 ? universalUsers : members.map(m => ({
+                        id: m.id,
+                        displayName: m.name,
+                        email: `${(m.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')}@lextria.in`,
+                        role: m.role === 'leader' ? 'SUPER_ADMIN' : 'STAFF',
+                        department: 'Litigation',
+                        cachedPassword: m.password,
+                        dashboardAccess: {
+                          task_manager: { enabled: true, role: m.role || 'member' },
+                          litigator: { enabled: false, role: 'ASSOCIATE' },
+                          patent: { enabled: false, role: 'DRAFTER' },
+                          finance: { enabled: false, mode: 'NONE' },
+                          client_portal: { enabled: false, clientId: '' }
+                        }
+                      }))).map((user) => {
+                        const displayName = user.displayName || user.name || 'Member';
+                        const email = user.email || `${displayName.toLowerCase().replace(/[^a-z0-9]/g, '')}@lextria.in`;
+                        const pass = user.cachedPassword || user.password || '';
+                        const isPassRevealed = Boolean(revealedPasswords[user.id]);
+                        const isYou = displayName.toLowerCase() === currentUserName.toLowerCase() || email.toLowerCase() === (currentUser?.email || '').toLowerCase();
+                        const da = user.dashboardAccess || {};
 
                         return (
-                          <tr key={member.id} className="hover:bg-white/5 transition-colors">
-                            {/* Member info with avatar */}
+                          <tr key={user.id} className="hover:bg-white/5 transition-colors">
+                            {/* Member info with avatar & email */}
                             <td className="px-4 py-3.5">
                               <div className="flex items-center gap-2.5">
-                                {meta.photoUrl ? (
-                                  <img
-                                    src={meta.photoUrl}
-                                    alt={member.name}
-                                    className="w-8 h-8 rounded-lg object-cover border border-white/10 shrink-0"
-                                  />
-                                ) : (
-                                  <div className="w-8 h-8 rounded-lg bg-blue-600/30 text-blue-300 font-bold flex items-center justify-center shrink-0 border border-white/10">
-                                    {(member.name || 'U').substring(0, 2).toUpperCase()}
-                                  </div>
-                                )}
+                                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600/40 to-indigo-600/40 text-blue-300 font-bold flex items-center justify-center shrink-0 border border-white/10 text-xs">
+                                  {displayName.substring(0, 2).toUpperCase()}
+                                </div>
                                 <div>
                                   <div className="font-bold text-white flex items-center gap-1.5">
-                                    <span>{member.name}</span>
+                                    <span>{displayName}</span>
                                     {isYou && (
                                       <span className="text-[10px] text-blue-400 font-normal">(you)</span>
                                     )}
+                                  </div>
+                                  <div className="text-[11px] text-slate-400 flex items-center gap-1">
+                                    <Mail size={11} className="text-slate-500" />
+                                    <span>{email}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(email);
+                                        alert('Email copied: ' + email);
+                                      }}
+                                      className="text-slate-500 hover:text-blue-400 transition"
+                                      title="Copy Universal Login Email"
+                                    >
+                                      <Copy size={10} />
+                                    </button>
                                   </div>
                                 </div>
                               </div>
                             </td>
 
-                            {/* Role */}
-                            <td className="px-4 py-3.5">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize ${
-                                member.role === 'leader'
-                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                                  : 'bg-blue-500/10 text-blue-300 border border-blue-500/20'
-                              }`}>
-                                {member.role || 'member'}
-                              </span>
-                            </td>
-
-                            {/* Department */}
+                            {/* Department & Designation */}
                             <td className="px-4 py-3.5 text-slate-300">
-                              {meta.department || 'General'}
+                              <div className="font-medium text-white">{user.department || 'General'}</div>
+                              <div className="text-[11px] text-slate-400">{user.designation || 'Staff Member'}</div>
                             </td>
 
-                            {/* Designation */}
-                            <td className="px-4 py-3.5 text-slate-300">
-                              {meta.designation || '—'}
-                            </td>
-
-                            {/* Current Password with copy & reveal */}
+                            {/* Universal Password with copy & reveal */}
                             <td className="px-4 py-3.5">
-                              <div className="flex items-center gap-1.5 bg-black/30 border border-white/10 rounded-lg px-2.5 py-1 w-fit font-mono text-[11px]">
+                              <div className="flex items-center gap-1.5 bg-black/40 border border-white/10 rounded-lg px-2.5 py-1 w-fit font-mono text-[11px]">
                                 <Key size={12} className="text-amber-400 shrink-0" />
                                 <span className="select-all">
-                                  {isPassRevealed ? (member.password || '—') : '••••••••'}
+                                  {isPassRevealed ? (pass || '••••••••') : '••••••••'}
                                 </span>
                                 <button
                                   type="button"
-                                  onClick={() => toggleRevealPassword(member.id)}
+                                  onClick={() => toggleRevealPassword(user.id)}
                                   className="text-slate-400 hover:text-white ml-1 transition cursor-pointer"
                                   title={isPassRevealed ? 'Hide Password' : 'Show Password'}
                                 >
                                   {isPassRevealed ? <EyeOff size={12} /> : <Eye size={12} />}
                                 </button>
-                                {member.password && (
+                                {pass && (
                                   <button
                                     type="button"
-                                    onClick={() => copyPasswordToClipboard(member.password)}
+                                    onClick={() => copyPasswordToClipboard(pass)}
                                     className="text-slate-400 hover:text-blue-400 ml-0.5 transition cursor-pointer"
                                     title="Copy Password"
                                   >
@@ -1506,22 +1972,57 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                               </div>
                             </td>
 
+                            {/* Dashboard Permissions Badges */}
+                            <td className="px-4 py-3.5">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {da.task_manager?.enabled !== false && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-500/15 text-blue-300 border border-blue-500/25">
+                                    Tasks: {da.task_manager?.role || (user.role === 'SUPER_ADMIN' ? 'Leader' : 'Member')}
+                                  </span>
+                                )}
+                                {da.litigator?.enabled && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/25">
+                                    Litigator: {da.litigator?.role || 'Assoc'}
+                                  </span>
+                                )}
+                                {da.patent?.enabled && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
+                                    Patent: {da.patent?.role || 'Drafter'}
+                                  </span>
+                                )}
+                                {da.finance?.enabled && (
+                                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                                    da.finance?.mode === 'EXECUTIVE'
+                                      ? 'bg-orange-500/15 text-orange-300 border-orange-500/25'
+                                      : 'bg-amber-500/15 text-amber-300 border-amber-500/25'
+                                  }`}>
+                                    {da.finance?.mode === 'EXECUTIVE' ? 'Finance: Exec Only' : 'Finance: Full'}
+                                  </span>
+                                )}
+                                {da.client_portal?.enabled && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/25">
+                                    Client Portal
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
                             {/* Actions */}
                             <td className="px-4 py-3.5 text-right">
                               <div className="flex items-center justify-end gap-1.5">
                                 <button
                                   type="button"
-                                  onClick={() => handleOpenEdit(member)}
+                                  onClick={() => handleOpenEdit(user)}
                                   className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition cursor-pointer"
-                                  title="Edit Member"
+                                  title="Edit Universal Permissions"
                                 >
                                   <Edit2 size={13} />
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => handleDeleteMember(member.id, member.name)}
+                                  onClick={() => handleDeleteMember(user.id, displayName)}
                                   className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition cursor-pointer"
-                                  title="Remove Member"
+                                  title="Deactivate Universal Account"
                                 >
                                   <Trash2 size={13} />
                                 </button>
@@ -1541,14 +2042,14 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
       </div>
 
       {/* ------------------------------------------------------------- */}
-      {/* EDIT MEMBER MODAL (LEADER ONLY) */}
+      {/* EDIT UNIVERSAL MEMBER MODAL (LEADER ONLY) */}
       {/* ------------------------------------------------------------- */}
       {editingMember && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
-          <div className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl relative ${cardBgClass}`}>
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className={`w-full max-w-xl rounded-2xl border p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto ${cardBgClass}`}>
             <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-4">
               <h3 className="font-bold text-base text-white flex items-center gap-2">
-                <Edit2 size={16} className="text-blue-400" /> Edit Member Credentials
+                <Edit2 size={16} className="text-blue-400" /> Edit Universal Account &amp; Dashboard Access
               </h3>
               <button
                 type="button"
@@ -1560,65 +2061,226 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
             </div>
 
             <form onSubmit={handleUpdateMember} className="space-y-4 text-xs">
-              <div>
-                <label className="block font-semibold uppercase text-slate-300 mb-1">Name</label>
-                <input
-                  type="text"
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  required
-                  className={`w-full px-3 py-2 rounded-xl border outline-none ${inputBgClass}`}
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold uppercase text-slate-300 mb-1">Full Name</label>
+                  <input
+                    type="text"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    required
+                    className={`w-full px-3 py-2 rounded-xl border outline-none ${inputBgClass}`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold uppercase text-slate-300 mb-1">Universal Login Email</label>
+                  <input
+                    type="email"
+                    value={editEmail}
+                    onChange={(e) => setEditEmail(e.target.value)}
+                    required
+                    className={`w-full px-3 py-2 rounded-xl border outline-none ${inputBgClass}`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold uppercase text-slate-300 mb-1">
+                    Password (leave empty to keep current)
+                  </label>
+                  <input
+                    type="text"
+                    value={editPassword}
+                    onChange={(e) => setEditPassword(e.target.value)}
+                    placeholder="Enter new password to change"
+                    className={`w-full px-3 py-2 rounded-xl border outline-none font-mono ${inputBgClass}`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold uppercase text-slate-300 mb-1">Department</label>
+                  <select
+                    value={editDepartment}
+                    onChange={(e) => setEditDepartment(e.target.value)}
+                    className={`w-full px-3 py-2 rounded-xl border outline-none ${inputBgClass}`}
+                  >
+                    <option value="Litigation">Litigation</option>
+                    <option value="Compliance">Compliance</option>
+                    <option value="Patent">Patent</option>
+                    <option value="Trademark">Trademark</option>
+                    <option value="Finance">Finance</option>
+                    <option value="Corporate">Corporate</option>
+                    <option value="General">General</option>
+                  </select>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block font-semibold uppercase text-slate-300 mb-1">Designation</label>
+                  <input
+                    type="text"
+                    value={editDesignation}
+                    onChange={(e) => setEditDesignation(e.target.value)}
+                    placeholder="e.g. Senior Associate"
+                    className={`w-full px-3 py-2 rounded-xl border outline-none ${inputBgClass}`}
+                  />
+                </div>
               </div>
 
-              <div>
-                <label className="block font-semibold uppercase text-slate-300 mb-1">Role</label>
-                <select
-                  value={editRole}
-                  onChange={(e) => setEditRole(e.target.value)}
-                  className={`w-full px-3 py-2 rounded-xl border outline-none ${inputBgClass}`}
-                >
-                  <option value="member">Member</option>
-                  <option value="leader">Leader</option>
-                </select>
-              </div>
+              {/* Edit Dashboard Access Matrix */}
+              <div className="p-3.5 rounded-xl bg-black/35 border border-white/10 space-y-3">
+                <div className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                  <Layers size={13} className="text-blue-400" />
+                  <span>Dashboard Access Permissions</span>
+                </div>
 
-              <div>
-                <label className="block font-semibold uppercase text-slate-300 mb-1">Password</label>
-                <input
-                  type="text"
-                  value={editPassword}
-                  onChange={(e) => setEditPassword(e.target.value)}
-                  required
-                  className={`w-full px-3 py-2 rounded-xl border outline-none ${inputBgClass}`}
-                />
-              </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {/* Task Manager */}
+                  <div className="p-2.5 rounded-lg border border-white/5 bg-white/5 flex items-center justify-between">
+                    <span className="text-xs text-blue-300 font-semibold">Task Manager</span>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={editDashAccess.task_manager?.role || 'member'}
+                        disabled={!editDashAccess.task_manager?.enabled}
+                        onChange={(e) => setEditDashAccess(prev => ({
+                          ...prev,
+                          task_manager: { ...prev.task_manager, role: e.target.value }
+                        }))}
+                        className={`px-2 py-1 text-[11px] rounded-lg border outline-none disabled:opacity-40 ${inputBgClass}`}
+                      >
+                        <option value="member">Member</option>
+                        <option value="leader">Leader</option>
+                      </select>
+                      <input
+                        type="checkbox"
+                        checked={editDashAccess.task_manager?.enabled}
+                        onChange={(e) => setEditDashAccess(prev => ({
+                          ...prev,
+                          task_manager: { ...prev.task_manager, enabled: e.target.checked }
+                        }))}
+                        className="w-3.5 h-3.5 rounded accent-blue-500 cursor-pointer"
+                      />
+                    </div>
+                  </div>
 
-              <div>
-                <label className="block font-semibold uppercase text-slate-300 mb-1">Department</label>
-                <select
-                  value={editDepartment}
-                  onChange={(e) => setEditDepartment(e.target.value)}
-                  className={`w-full px-3 py-2 rounded-xl border outline-none ${inputBgClass}`}
-                >
-                  <option value="Litigation">Litigation</option>
-                  <option value="Compliance">Compliance</option>
-                  <option value="Patent">Patent</option>
-                  <option value="Trademark">Trademark</option>
-                  <option value="Corporate">Corporate</option>
-                  <option value="General">General</option>
-                </select>
-              </div>
+                  {/* Litigator */}
+                  <div className="p-2.5 rounded-lg border border-white/5 bg-white/5 flex items-center justify-between">
+                    <span className="text-xs text-purple-300 font-semibold">Litigator</span>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={editDashAccess.litigator?.role || 'ASSOCIATE'}
+                        disabled={!editDashAccess.litigator?.enabled}
+                        onChange={(e) => setEditDashAccess(prev => ({
+                          ...prev,
+                          litigator: { ...prev.litigator, role: e.target.value }
+                        }))}
+                        className={`px-2 py-1 text-[11px] rounded-lg border outline-none disabled:opacity-40 ${inputBgClass}`}
+                      >
+                        <option value="ASSOCIATE">Associate</option>
+                        <option value="LITIGATION_HEAD">Head</option>
+                        <option value="INTERN">Intern</option>
+                      </select>
+                      <input
+                        type="checkbox"
+                        checked={editDashAccess.litigator?.enabled}
+                        onChange={(e) => setEditDashAccess(prev => ({
+                          ...prev,
+                          litigator: { ...prev.litigator, enabled: e.target.checked }
+                        }))}
+                        className="w-3.5 h-3.5 rounded accent-purple-500 cursor-pointer"
+                      />
+                    </div>
+                  </div>
 
-              <div>
-                <label className="block font-semibold uppercase text-slate-300 mb-1">Designation</label>
-                <input
-                  type="text"
-                  value={editDesignation}
-                  onChange={(e) => setEditDesignation(e.target.value)}
-                  placeholder="e.g. Associate"
-                  className={`w-full px-3 py-2 rounded-xl border outline-none ${inputBgClass}`}
-                />
+                  {/* Patent */}
+                  <div className="p-2.5 rounded-lg border border-white/5 bg-white/5 flex items-center justify-between">
+                    <span className="text-xs text-emerald-300 font-semibold">Patent Hub</span>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={editDashAccess.patent?.role || 'DRAFTER'}
+                        disabled={!editDashAccess.patent?.enabled}
+                        onChange={(e) => setEditDashAccess(prev => ({
+                          ...prev,
+                          patent: { ...prev.patent, role: e.target.value }
+                        }))}
+                        className={`px-2 py-1 text-[11px] rounded-lg border outline-none disabled:opacity-40 ${inputBgClass}`}
+                      >
+                        <option value="DRAFTER">Drafter</option>
+                        <option value="FILER">Filer</option>
+                        <option value="AUDITOR">Auditor</option>
+                        <option value="ADMIN">Admin</option>
+                      </select>
+                      <input
+                        type="checkbox"
+                        checked={editDashAccess.patent?.enabled}
+                        onChange={(e) => setEditDashAccess(prev => ({
+                          ...prev,
+                          patent: { ...prev.patent, enabled: e.target.checked }
+                        }))}
+                        className="w-3.5 h-3.5 rounded accent-emerald-500 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Finance */}
+                  <div className="p-2.5 rounded-lg border border-white/5 bg-white/5 flex items-center justify-between">
+                    <span className="text-xs text-amber-300 font-semibold">Finance</span>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={editDashAccess.finance?.mode || 'FULL'}
+                        disabled={!editDashAccess.finance?.enabled}
+                        onChange={(e) => setEditDashAccess(prev => ({
+                          ...prev,
+                          finance: { ...prev.finance, mode: e.target.value }
+                        }))}
+                        className={`px-2 py-1 text-[11px] rounded-lg border outline-none disabled:opacity-40 ${inputBgClass}`}
+                      >
+                        <option value="FULL">Full Finance</option>
+                        <option value="EXECUTIVE">Exec Only</option>
+                      </select>
+                      <input
+                        type="checkbox"
+                        checked={editDashAccess.finance?.enabled}
+                        onChange={(e) => setEditDashAccess(prev => ({
+                          ...prev,
+                          finance: { ...prev.finance, enabled: e.target.checked }
+                        }))}
+                        className="w-3.5 h-3.5 rounded accent-amber-500 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Client Portal Link */}
+                <div className="pt-2 border-t border-white/10 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={editDashAccess.client_portal?.enabled}
+                      onChange={(e) => setEditDashAccess(prev => ({
+                        ...prev,
+                        client_portal: { ...prev.client_portal, enabled: e.target.checked }
+                      }))}
+                      className="w-3.5 h-3.5 rounded accent-cyan-500 cursor-pointer"
+                    />
+                    <span className="text-xs text-cyan-300 font-semibold">Client Portal Access</span>
+                  </div>
+                  <select
+                    value={editDashAccess.client_portal?.clientId || ''}
+                    disabled={!editDashAccess.client_portal?.enabled}
+                    onChange={(e) => setEditDashAccess(prev => ({
+                      ...prev,
+                      client_portal: { ...prev.client_portal, clientId: e.target.value }
+                    }))}
+                    className={`max-w-[240px] px-2 py-1 text-[11px] rounded-lg border outline-none disabled:opacity-40 ${inputBgClass}`}
+                  >
+                    <option value="">Select Client Entity...</option>
+                    {clientsList.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.client_code} - {c.client_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
@@ -1634,7 +2296,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                   disabled={isUpdatingMember}
                   className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold transition cursor-pointer disabled:opacity-50"
                 >
-                  {isUpdatingMember ? 'Updating...' : 'Save Member'}
+                  {isUpdatingMember ? 'Saving...' : 'Update Universal Permissions'}
                 </button>
               </div>
             </form>
