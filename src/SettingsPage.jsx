@@ -445,6 +445,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
   const [editClientPortalAccess, setEditClientPortalAccess] = useState(false);
   const [editClientPortalPassword, setEditClientPortalPassword] = useState('');
   const [isUpdatingClient, setIsUpdatingClient] = useState(false);
+  const [showClientPass, setShowClientPass] = useState(false);
 
   // Fetch clients from central database / API
   const fetchClients = useCallback(async () => {
@@ -2732,6 +2733,461 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                   className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold transition cursor-pointer disabled:opacity-50"
                 >
                   {isUpdatingMember ? 'Saving...' : 'Update Universal Permissions'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* ADD NEW CLIENT MODAL (LEADER ONLY) */}
+      {/* ------------------------------------------------------------- */}
+      {showAddClientModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className={`w-full max-w-2xl rounded-2xl border p-6 shadow-2xl relative max-h-[92vh] overflow-y-auto ${cardBgClass}`}>
+            <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-5">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                  <Building2 size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-white">Register New Client Entity</h3>
+                  <p className="text-xs text-slate-400">Adds client to central database (core.clients) with optional portal access.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddClientModal(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddClient} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                    Client Code <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. INFY"
+                    value={newClientCode}
+                    onChange={(e) => setNewClientCode(e.target.value.toUpperCase())}
+                    className={`w-full px-3 py-2 text-xs rounded-xl border outline-none font-mono uppercase ${inputBgClass}`}
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">Unique 2-8 letter code</p>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                    Client / Company Name <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Infosys Limited"
+                    value={newClientName}
+                    onChange={(e) => setNewClientName(e.target.value)}
+                    className={`w-full px-3 py-2 text-xs rounded-xl border outline-none ${inputBgClass}`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                    Entity Type
+                  </label>
+                  <select
+                    value={newClientEntityType}
+                    onChange={(e) => setNewClientEntityType(e.target.value)}
+                    className={`w-full px-3 py-2 text-xs rounded-xl border outline-none cursor-pointer ${inputBgClass}`}
+                  >
+                    <option value="COMPANY">Company / Corporate</option>
+                    <option value="INDIVIDUAL">Individual / Natural Person</option>
+                    <option value="STARTUP">Recognized Startup</option>
+                    <option value="SMALL_ENTITY">Small Entity (MSME)</option>
+                    <option value="EDUCATIONAL_INSTITUTION">Educational Institution</option>
+                    <option value="OTHER">Other Entity</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                    Primary Email
+                  </label>
+                  <input
+                    type="email"
+                    placeholder="client@company.com"
+                    value={newClientEmail}
+                    onChange={(e) => setNewClientEmail(e.target.value)}
+                    className={`w-full px-3 py-2 text-xs rounded-xl border outline-none ${inputBgClass}`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                    Primary Phone
+                  </label>
+                  <input
+                    type="tel"
+                    placeholder="+91 98765 43210"
+                    value={newClientPhone}
+                    onChange={(e) => setNewClientPhone(e.target.value)}
+                    className={`w-full px-3 py-2 text-xs rounded-xl border outline-none ${inputBgClass}`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                    GSTIN (Tax ID)
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={15}
+                    placeholder="e.g. 29AAAAA0000A1Z5"
+                    value={newClientGstin}
+                    onChange={(e) => setNewClientGstin(e.target.value.toUpperCase())}
+                    className={`w-full px-3 py-2 text-xs rounded-xl border outline-none font-mono uppercase ${inputBgClass}`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                    PAN Number
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={10}
+                    placeholder="e.g. ABCDE1234F"
+                    value={newClientPan}
+                    onChange={(e) => setNewClientPan(e.target.value.toUpperCase())}
+                    className={`w-full px-3 py-2 text-xs rounded-xl border outline-none font-mono uppercase ${inputBgClass}`}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                  Billing Address
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Street, City, State, PIN Code"
+                  value={newClientAddress}
+                  onChange={(e) => setNewClientAddress(e.target.value)}
+                  className={`w-full px-3 py-2 text-xs rounded-xl border outline-none resize-none ${inputBgClass}`}
+                />
+              </div>
+
+              {/* Client Portal Provisioning Section */}
+              <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/20 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck size={16} className="text-blue-400" />
+                    <div>
+                      <div className="text-xs font-bold text-white">Client Portal Access Account</div>
+                      <div className="text-[10px] text-slate-400">Allows client to log into unified portal to view matters &amp; invoices.</div>
+                    </div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={newClientPortalAccess}
+                      onChange={(e) => setNewClientPortalAccess(e.target.checked)}
+                      className="w-4 h-4 rounded accent-blue-500 cursor-pointer"
+                    />
+                  </label>
+                </div>
+
+                {newClientPortalAccess && (
+                  <div className="pt-2 border-t border-blue-500/15 space-y-3 animate-in fade-in">
+                    <div>
+                      <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                        Portal Login Email <span className="text-red-400">*</span>
+                      </label>
+                      <input
+                        type="email"
+                        required={newClientPortalAccess}
+                        placeholder="Login email for client portal"
+                        value={newClientEmail}
+                        onChange={(e) => setNewClientEmail(e.target.value)}
+                        className={`w-full px-3 py-2 text-xs rounded-xl border outline-none ${inputBgClass}`}
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-300">
+                          Initial Portal Password <span className="text-red-400">*</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setNewClientPortalPassword(generateRandomPassword())}
+                          className="text-[10px] text-blue-400 hover:text-blue-300 font-semibold cursor-pointer"
+                        >
+                          Auto-Gen
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <input
+                          type={showClientPass ? 'text' : 'password'}
+                          required={newClientPortalAccess}
+                          placeholder="Temporary password (min 6 characters)"
+                          value={newClientPortalPassword}
+                          onChange={(e) => setNewClientPortalPassword(e.target.value)}
+                          className={`w-full px-3 py-2 pr-9 text-xs rounded-xl border outline-none font-mono ${inputBgClass}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowClientPass(!showClientPass)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
+                        >
+                          {showClientPass ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setShowAddClientModal(false)}
+                  className="px-4 py-2 rounded-xl border border-white/10 text-slate-300 hover:bg-white/5 transition cursor-pointer text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isAddingClient}
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold text-xs shadow-md shadow-blue-500/25 transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Plus size={14} />
+                  <span>{isAddingClient ? 'Registering Client...' : 'Register Client'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* EDIT CLIENT MODAL (LEADER ONLY) */}
+      {/* ------------------------------------------------------------- */}
+      {editingClient && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className={`w-full max-w-2xl rounded-2xl border p-6 shadow-2xl relative max-h-[92vh] overflow-y-auto ${cardBgClass}`}>
+            <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-5">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                  <Edit2 size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-white">Edit Client: {editingClient.client_name}</h3>
+                  <p className="text-xs text-slate-400">Client Code: <span className="font-mono text-blue-300">{editingClient.client_code}</span></p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingClient(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateClient} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                    Client Code
+                  </label>
+                  <input
+                    type="text"
+                    value={editClientCode}
+                    onChange={(e) => setEditClientCode(e.target.value.toUpperCase())}
+                    className={`w-full px-3 py-2 text-xs rounded-xl border outline-none font-mono uppercase ${inputBgClass}`}
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                    Client / Company Name <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editClientName}
+                    onChange={(e) => setEditClientName(e.target.value)}
+                    className={`w-full px-3 py-2 text-xs rounded-xl border outline-none ${inputBgClass}`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                    Entity Type
+                  </label>
+                  <select
+                    value={editClientEntityType}
+                    onChange={(e) => setEditClientEntityType(e.target.value)}
+                    className={`w-full px-3 py-2 text-xs rounded-xl border outline-none cursor-pointer ${inputBgClass}`}
+                  >
+                    <option value="COMPANY">Company / Corporate</option>
+                    <option value="INDIVIDUAL">Individual / Natural Person</option>
+                    <option value="STARTUP">Recognized Startup</option>
+                    <option value="SMALL_ENTITY">Small Entity (MSME)</option>
+                    <option value="EDUCATIONAL_INSTITUTION">Educational Institution</option>
+                    <option value="OTHER">Other Entity</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                    Primary Email
+                  </label>
+                  <input
+                    type="email"
+                    value={editClientEmail}
+                    onChange={(e) => setEditClientEmail(e.target.value)}
+                    className={`w-full px-3 py-2 text-xs rounded-xl border outline-none ${inputBgClass}`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                    Primary Phone
+                  </label>
+                  <input
+                    type="tel"
+                    value={editClientPhone}
+                    onChange={(e) => setEditClientPhone(e.target.value)}
+                    className={`w-full px-3 py-2 text-xs rounded-xl border outline-none ${inputBgClass}`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                    GSTIN (Tax ID)
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={15}
+                    value={editClientGstin}
+                    onChange={(e) => setEditClientGstin(e.target.value.toUpperCase())}
+                    className={`w-full px-3 py-2 text-xs rounded-xl border outline-none font-mono uppercase ${inputBgClass}`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                    PAN Number
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={10}
+                    value={editClientPan}
+                    onChange={(e) => setEditClientPan(e.target.value.toUpperCase())}
+                    className={`w-full px-3 py-2 text-xs rounded-xl border outline-none font-mono uppercase ${inputBgClass}`}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                  Billing Address
+                </label>
+                <textarea
+                  rows={2}
+                  value={editClientAddress}
+                  onChange={(e) => setEditClientAddress(e.target.value)}
+                  className={`w-full px-3 py-2 text-xs rounded-xl border outline-none resize-none ${inputBgClass}`}
+                />
+              </div>
+
+              {/* Client Portal Section */}
+              <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/20 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck size={16} className="text-blue-400" />
+                    <div>
+                      <div className="text-xs font-bold text-white">Client Portal Access</div>
+                      <div className="text-[10px] text-slate-400">
+                        {editingClient.portalAccess ? 'Client portal account is currently active.' : 'Portal account not provisioned for this client.'}
+                      </div>
+                    </div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editClientPortalAccess}
+                      onChange={(e) => setEditClientPortalAccess(e.target.checked)}
+                      className="w-4 h-4 rounded accent-blue-500 cursor-pointer"
+                    />
+                  </label>
+                </div>
+
+                {editClientPortalAccess && (
+                  <div className="pt-2 border-t border-blue-500/15 space-y-3 animate-in fade-in">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-300">
+                          Reset / Set Portal Password (leave empty to keep current)
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setEditClientPortalPassword(generateRandomPassword())}
+                          className="text-[10px] text-blue-400 hover:text-blue-300 font-semibold cursor-pointer"
+                        >
+                          Auto-Gen
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <input
+                          type={showClientPass ? 'text' : 'password'}
+                          placeholder="Enter new password to change"
+                          value={editClientPortalPassword}
+                          onChange={(e) => setEditClientPortalPassword(e.target.value)}
+                          className={`w-full px-3 py-2 pr-9 text-xs rounded-xl border outline-none font-mono ${inputBgClass}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowClientPass(!showClientPass)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
+                        >
+                          {showClientPass ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setEditingClient(null)}
+                  className="px-4 py-2 rounded-xl border border-white/10 text-slate-300 hover:bg-white/5 transition cursor-pointer text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdatingClient}
+                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs shadow-md transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {isUpdatingClient ? 'Saving Changes...' : 'Save Client Details'}
                 </button>
               </div>
             </form>
