@@ -86,6 +86,14 @@ export function validateStateTransition({
     return { valid: true };
   }
 
+  // PAYMENT -> ACK: All team members, and specifically Prathvi and Prashanth, have access to confirm payment for any and all cards
+  if (fromStatus === PATENT_STATUSES.PAYMENT && toStatus === PATENT_STATUSES.ACK) {
+    if (!payload.payment_reference || !payload.payment_reference.trim()) {
+      return { valid: false, status: 400, error: 'Payment reference is strictly required to confirm payment.' };
+    }
+    return { valid: true };
+  }
+
   // Non-SuperAdmin must have at least one module role
   if (!actorRoles || actorRoles.length === 0) {
     return { valid: false, status: 403, error: 'Actor does not hold any Patent Workflow module role.' };
@@ -437,8 +445,15 @@ export async function executeReassign({
   auditorRoles,
   dbClient
 }) {
-  if (!hasPatentRole(actorRoles, PATENT_ROLES.SUPER_ADMIN)) {
-    return { success: false, status: 403, error: 'Only SUPER_ADMIN can reassign filings.' };
+  const isSuperAdmin = hasPatentRole(actorRoles, PATENT_ROLES.SUPER_ADMIN);
+  // Re-direct feature: an auditor can re-direct the audit of a card to themselves if the other auditor is busy
+  const isAuditorRedirect = Boolean(
+    newAuditorId &&
+    (isMemberMatch(actorId, null, newAuditorId) || String(actorId) === String(newAuditorId))
+  );
+
+  if (!isSuperAdmin && !isAuditorRedirect) {
+    return { success: false, status: 403, error: 'Only SUPER_ADMIN or an Auditor re-directing to themselves can reassign filings.' };
   }
 
   if (!reason || !reason.trim()) {
@@ -484,7 +499,7 @@ export async function executeReassign({
     to_status: filing.status,
     actor_id: actorId,
     timestamp: nowIso,
-    note: `Reassigned by Super Admin. Reason: ${reason.trim()}`
+    note: isSuperAdmin ? `Reassigned by Super Admin. Reason: ${reason.trim()}` : `Re-directed audit. Reason: ${reason.trim()}`
   };
 
   if (dbClient) {

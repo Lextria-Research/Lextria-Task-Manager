@@ -254,17 +254,30 @@ export function buildFilingTransitionNotifications({
     }
   }
 
-  // 4. AUDIT -> PAYMENT (approved by Auditor)
+  // 4. -> PAYMENT (Auditor and Assignee both get notification chime sound)
   else if (toStatus === 'PAYMENT') {
-    if (filing.assignee_id && !isActorAssignee) {
+    if (filing.assignee_id) {
       notifications.push({
-        id: `notif-${Date.now()}-payment-${Math.random().toString(36).slice(2, 7)}`,
+        id: `notif-${Date.now()}-payment-assignee-${Math.random().toString(36).slice(2, 7)}`,
         recipient_id: filing.assignee_id,
         filing_id: filing.id,
         code: filing.code,
         type: 'STAGE_PAYMENT',
-        role_type: 'filer', // Air horn sound
-        message: `${filing.code} approved by Auditor (${filing.auditor_name || 'Auditor'}) and moved to Payment.`,
+        role_type: 'filer', // Notification chime for Assignee
+        message: `${filing.code} moved to Payment stage.`,
+        read: false,
+        created_at: nowIso
+      });
+    }
+    if (filing.auditor_id) {
+      notifications.push({
+        id: `notif-${Date.now()}-payment-auditor-${Math.random().toString(36).slice(2, 7)}`,
+        recipient_id: filing.auditor_id,
+        filing_id: filing.id,
+        code: filing.code,
+        type: 'STAGE_PAYMENT_AUDITOR',
+        role_type: 'auditor', // Notification chime for Auditor
+        message: `${filing.code} moved to Payment stage.`,
         read: false,
         created_at: nowIso
       });

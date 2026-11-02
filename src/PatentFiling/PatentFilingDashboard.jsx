@@ -9,7 +9,9 @@ import {
   Archive,
   CheckCircle2,
   AlertCircle,
-  X
+  X,
+  User,
+  Layers
 } from 'lucide-react';
 import { PATENT_ROLES, hasPatentRole } from '../patent/patentStateMachine.js';
 import { fetchAllPatentRoleRecords, isMemberMatch } from '../patent/patentRoles.js';
@@ -56,6 +58,7 @@ export default function PatentFilingDashboard({
   const [personFilter, setPersonFilter] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [priorityFilter, setPriorityFilter] = useState('ALL');
+  const [codeScopeFilter, setCodeScopeFilter] = useState('ALL');
   const [showClosedArchive, setShowClosedArchive] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('CONNECTED');
 
@@ -593,6 +596,34 @@ export default function PatentFilingDashboard({
           )}
         </div>
 
+        {/* Middle: Toggle Switch (My Codes vs All Codes) */}
+        <div className="flex items-center bg-[#050920] p-1 rounded-xl border border-white/10 shadow-inner shrink-0">
+          <button
+            type="button"
+            onClick={() => setCodeScopeFilter('MINE')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              codeScopeFilter === 'MINE'
+                ? 'bg-brand-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.6)] font-bold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <User size={13} />
+            <span>My Codes</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setCodeScopeFilter('ALL')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              codeScopeFilter === 'ALL'
+                ? 'bg-brand-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.6)] font-bold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Layers size={13} />
+            <span>All Codes</span>
+          </button>
+        </div>
+
         {/* Right: Dropdown Filters */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Person Filter */}
@@ -649,6 +680,7 @@ export default function PatentFilingDashboard({
           currentUser={currentUser}
           userRoles={userRoles}
           showClosedArchive={showClosedArchive}
+          codeScopeFilter={codeScopeFilter}
           onDeleteFiling={handleDeleteFiling}
           onEditFiling={(filing) => setEditingFiling(filing)}
         />

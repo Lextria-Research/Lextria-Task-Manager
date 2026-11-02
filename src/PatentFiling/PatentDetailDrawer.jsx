@@ -14,7 +14,8 @@ import {
   ShieldAlert,
   Trash2,
   Copy,
-  Edit3
+  Edit3,
+  ArrowRightLeft
 } from 'lucide-react';
 import {
   PATENT_ROLES,
@@ -86,6 +87,15 @@ export default function PatentDetailDrawer({
     (currentUser?.name && filing.auditor_name && filing.auditor_name.toLowerCase().includes(currentUser.name.toLowerCase()));
   const isAckChecker = hasPatentRole(userRoles, PATENT_ROLES.ACK_CHECKER);
 
+  // Auditor takeover feature:
+  // Current user is an auditor, is not currently assigned as auditor on this card, and is NOT the assignee
+  const isAuditorUser = hasPatentRole(userRoles, PATENT_ROLES.AUDITOR) ||
+    isLeader ||
+    ['Prathvi', 'Chaitra', 'Kaushal', 'Karthik'].some(n =>
+      currentUser?.name && currentUser.name.toLowerCase().includes(n.toLowerCase())
+    );
+  const isOtherAuditorCard = isAuditorUser && !isAuditor && !isAssignee;
+
   const fallbackData = getFilingEventsAndRounds(filing.id);
   const events = historyData?.events || fallbackData.events;
   const rounds = historyData?.rounds || fallbackData.rounds;
@@ -100,6 +110,23 @@ export default function PatentDetailDrawer({
       }
     } catch (e) {
       setActionError(e.message || 'Action failed.');
+    } finally {
+      setIsActing(false);
+    }
+  };
+
+  const handleRedirectAudit = async () => {
+    const myName = currentUser?.name || 'You';
+    if (!window.confirm(`Re-direct audit for ${filing.code} to yourself (${myName})?`)) return;
+    setIsActing(true);
+    setActionError('');
+    try {
+      const res = await onReassign(filing.assignee_id, currentUser.id, `Re-directed audit to ${myName} (auditor takeover)`);
+      if (res && res.error) {
+        setActionError(res.error);
+      }
+    } catch (err) {
+      setActionError(err.message || 'Failed to re-direct audit.');
     } finally {
       setIsActing(false);
     }
@@ -201,6 +228,18 @@ export default function PatentDetailDrawer({
           </div>
 
           <div className="flex items-center gap-2">
+            {isOtherAuditorCard && (
+              <button
+                type="button"
+                disabled={isActing}
+                onClick={handleRedirectAudit}
+                className="text-xs px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 font-semibold transition cursor-pointer flex items-center gap-1.5"
+                title="Re-direct audit of this filing to yourself"
+              >
+                <ArrowRightLeft size={12} />
+                <span>Re-direct</span>
+              </button>
+            )}
             {isSuperAdmin && onEditFiling && (
               <button
                 type="button"
@@ -385,8 +424,21 @@ export default function PatentDetailDrawer({
                   </div>
                 </div>
               ) : (
-                <div className="text-xs text-slate-400 italic">
-                  Under audit review by {filing.auditor_name}.
+                <div className="space-y-2">
+                  <div className="text-xs text-slate-400 italic">
+                    Under audit review by {filing.auditor_name}.
+                  </div>
+                  {isOtherAuditorCard && (
+                    <button
+                      type="button"
+                      disabled={isActing}
+                      onClick={handleRedirectAudit}
+                      className="w-full bg-amber-600/80 hover:bg-amber-600 text-white font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer shadow-lg"
+                    >
+                      <ArrowRightLeft size={14} />
+                      <span>Re-direct Audit to Me ({currentUser?.name || 'You'})</span>
+                    </button>
+                  )}
                 </div>
               )
             )}
@@ -421,34 +473,31 @@ export default function PatentDetailDrawer({
               )
             )}
 
-            {/* 5. PAYMENT -> Confirm Payment (Any module user) */}
+            {/* 5. PAYMENT -> Confirm Payment (All users / Prathvi & Prashanth) */}
             {filing.status === PATENT_STATUSES.PAYMENT && (
-              userRoles.length > 0 ? (
-                <div className="space-y-2">
-                  <label className="block text-[11px] font-semibold text-slate-300">
-                    Official Payment Reference <span className="text-red-400">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={paymentRefInput}
-                    onChange={e => setPaymentRefInput(e.target.value)}
-                    placeholder="e.g. IPO-CH-2026-99214 or Bank UTR"
-                    className="w-full glass-input text-xs font-mono font-bold"
-                  />
-                  <button
-                    disabled={isActing || !paymentRefInput.trim()}
-                    onClick={() => handleAction(PATENT_STATUSES.ACK, { payment_reference: paymentRefInput }, `Payment confirmed: ${paymentRefInput.trim()}`)}
-                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50"
-                  >
-                    <CreditCard size={15} />
-                    <span>Confirm Payment & Proceed to Ack</span>
-                  </button>
-                </div>
-              ) : (
-                <div className="text-xs text-slate-400 italic">
-                  Pending payment confirmation.
-                </div>
-              )
+              <div className="space-y-2">
+                <label className="block text-[11px] font-semibold text-slate-300">
+                  Official Payment Reference (Optional - defaults to 'Payment Done')
+                </label>
+                <input
+                  type="text"
+                  value={paymentRefInput}
+                  onChange={e => setPaymentRefInput(e.target.value)}
+                  placeholder="e.g. IPO-CH-2026-99214 or Bank UTR (defaults to Payment Done)"
+                  className="w-full glass-input text-xs font-mono font-bold"
+                />
+                <button
+                  disabled={isActing}
+                  onClick={() => {
+                    const ref = paymentRefInput.trim() || 'Payment Done';
+                    handleAction(PATENT_STATUSES.ACK, { payment_reference: ref }, `Payment confirmed: ${ref}`);
+                  }}
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer shadow-lg"
+                >
+                  <CheckCircle2 size={15} />
+                  <span>Done for Payment & Proceed to Ack</span>
+                </button>
+              </div>
             )}
 
             {/* 6. ACK -> Ack mail sent / Close (ACK_CHECKER only) */}

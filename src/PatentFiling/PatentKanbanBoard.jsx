@@ -74,6 +74,7 @@ export default function PatentKanbanBoard({
   currentUser,
   userRoles = [],
   showClosedArchive = false,
+  codeScopeFilter = 'ALL',
   onDeleteFiling,
   onEditFiling
 }) {
@@ -82,13 +83,14 @@ export default function PatentKanbanBoard({
     (currentUser?.role && currentUser.role.toLowerCase() === 'leader') ||
     isLeaderOrSharan(currentUser);
 
-  // Filter filings based on role-scoped view:
-  // "Merge the all code and my code tab. the members shall see only their codes, and the leaders shall see all the codes assigned."
+  // Filter filings based on role-scoped view and toggle switch:
+  // 1. Toggle switch 'My Codes' vs 'All Codes'
+  // 2. All team members have access to Payment folder cards
   const filterByRoleScope = (filing) => {
     // If viewing Closed archive
     if (showClosedArchive) {
       if (filing.status !== PATENT_STATUSES.CLOSED) return false;
-      if (isLeader) return true;
+      if (codeScopeFilter === 'ALL' || isLeader) return true;
       const isMine = isMemberMatch(currentUser?.id, currentUser?.name, filing.assignee_id, filing.assignee_name);
       const isAuditedByMe = isMemberMatch(currentUser?.id, currentUser?.name, filing.auditor_id, filing.auditor_name);
       return isMine || isAuditedByMe;
@@ -96,12 +98,17 @@ export default function PatentKanbanBoard({
 
     if (filing.status === PATENT_STATUSES.CLOSED) return false;
 
-    // Leaders see all codes assigned
-    if (isLeader) {
+    // Requirement 3: All must have access to payment folder so that they can send it to ac stage
+    if (filing.status === PATENT_STATUSES.PAYMENT) {
       return true;
     }
 
-    // Regular members see only their assigned codes
+    // Toggle switch: 'All Codes' shows all codes for everyone
+    if (codeScopeFilter === 'ALL') {
+      return true;
+    }
+
+    // When 'My Codes' is toggled:
     const isMine = isMemberMatch(currentUser?.id, currentUser?.name, filing.assignee_id, filing.assignee_name);
     const isAuditedByMe = isMemberMatch(currentUser?.id, currentUser?.name, filing.auditor_id, filing.auditor_name);
     const isAckChecker = hasPatentRole(userRoles, PATENT_ROLES.ACK_CHECKER);

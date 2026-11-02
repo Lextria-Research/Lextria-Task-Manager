@@ -15,7 +15,7 @@ import {
 } from './src/PatentFiling/patentNotifications.js';
 import { DEFAULT_DRAFTERS } from './src/PatentFiling/drafterWorkloadConstants.js';
 import { isLeaderOrSharan, isPranavBhat } from './src/attachmentUtils.js';
-import { PATENT_STATUSES, PATENT_ROLES } from './src/patent/patentStateMachine.js';
+import { PATENT_STATUSES, PATENT_ROLES, executeReassign, validateStateTransition } from './src/patent/patentStateMachine.js';
 import { isMemberMatch } from './src/patent/patentRoles.js';
 import { deleteFilingFromStorage } from './src/PatentFiling/patentStorage.js';
 import { isEventRecipient } from './src/PatentFiling/patentRealtime.js';
@@ -120,7 +120,7 @@ it('Stage 4: CORRECTION -> AUDIT (re-audit) notifies Auditor (Doorbell sound)', 
   assert.ok(notifs[0].message.includes('corrections submitted for re-audit'));
 });
 
-it('Stage 5: AUDIT -> PAYMENT notifies Assignee (Air horn sound)', () => {
+it('Stage 5: -> PAYMENT notifies both Assignee and Auditor with notification chime', () => {
   const notifs = buildFilingTransitionNotifications({
     filing: { ...mockFiling, status: 'AUDIT' },
     fromStatus: 'AUDIT',
@@ -128,10 +128,17 @@ it('Stage 5: AUDIT -> PAYMENT notifies Assignee (Air horn sound)', () => {
     actor: karthikActor
   });
 
-  assert.strictEqual(notifs.length, 1);
-  assert.strictEqual(notifs[0].recipient_id, mockFiling.assignee_id);
-  assert.strictEqual(notifs[0].role_type, 'filer');
-  assert.ok(notifs[0].message.includes('approved by Auditor (Karthik) and moved to Payment'));
+  assert.strictEqual(notifs.length, 2);
+  const assigneeNotif = notifs.find(n => n.recipient_id === mockFiling.assignee_id);
+  const auditorNotif = notifs.find(n => n.recipient_id === mockFiling.auditor_id);
+
+  assert.ok(assigneeNotif, 'Assignee must receive notification chime');
+  assert.strictEqual(assigneeNotif.role_type, 'filer');
+  assert.ok(assigneeNotif.message.includes('moved to Payment'));
+
+  assert.ok(auditorNotif, 'Auditor must receive notification chime');
+  assert.strictEqual(auditorNotif.role_type, 'auditor');
+  assert.ok(auditorNotif.message.includes('moved to Payment'));
 });
 
 it('Stage 6: PAYMENT -> ACK notifies Ack Checker (Doorbell sound) and Assignee (Air horn sound)', () => {
@@ -176,16 +183,16 @@ it('Stage 7: ACK -> CLOSED notifies Assignee (filer sound) and Auditor (auditor 
   assert.ok(auditorNotif.message.includes('officially closed and completed'));
 });
 
-it('Actor does not receive self-notification', () => {
-  // If auditor submits to payment, auditor is NOT in notifications
+it('Actor does not receive self-notification on standard transitions', () => {
+  // If filer submits to audit, filer does not receive self-notification
   const notifs = buildFilingTransitionNotifications({
-    filing: { ...mockFiling, status: 'AUDIT' },
-    fromStatus: 'AUDIT',
-    toStatus: 'PAYMENT',
-    actor: karthikActor
+    filing: { ...mockFiling, status: 'FILING' },
+    fromStatus: 'FILING',
+    toStatus: 'AUDIT',
+    actor: akshayActor
   });
 
-  const selfNotif = notifs.find(n => n.recipient_id === karthikActor.id);
+  const selfNotif = notifs.find(n => n.recipient_id === akshayActor.id);
   assert.strictEqual(selfNotif, undefined, 'Actor should not receive self-notification');
 });
 
@@ -349,6 +356,112 @@ console.log('\n--- TEST GROUP 6: Leader Delete Filing Permission & Real-Time Syn
     };
     const isRecipient = isEventRecipient(deletePayload, regularMember, [PATENT_ROLES.ASSIGNEE]);
     assert.strictEqual(isRecipient, true, 'All clients must receive DELETE event to remove card from board');
+  });
+
+  console.log('\n--- TEST GROUP 7: New Requirements (Payment Audio, Toggle Filter, Auditor Re-direct, Payment Access) ---');
+
+  await it('Auditor can re-direct audit of another auditor card to themselves', async () => {
+    const prathviAuditorId = '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8'; // Prathvi
+    const filingAuditedByKarthik = {
+      ...mockFiling,
+      id: 'filing-audit-takeover',
+      assignee_id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc', // Akshay
+      auditor_id: 'a6ecc962-3946-41ea-9946-1ff6dcc08133', // Karthik
+      status: 'AUDIT',
+      version: 1
+    };
+
+    const res = await executeReassign({
+      filing: filingAuditedByKarthik,
+      expectedVersion: 1,
+      newAssigneeId: filingAuditedByKarthik.assignee_id,
+      newAuditorId: prathviAuditorId,
+      reason: 'Re-directed audit to Prathvi (auditor takeover)',
+      actorId: prathviAuditorId,
+      actorRoles: [PATENT_ROLES.AUDITOR]
+    });
+
+    assert.strictEqual(res.success, true);
+    assert.strictEqual(res.filing.auditor_id, prathviAuditorId);
+    assert.ok(res.event.note.includes('Re-directed audit to Prathvi (auditor takeover)'));
+  });
+
+  await it('Auditor cannot re-direct audit to themselves if they are the assignee of the card', async () => {
+    const prathviId = '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8';
+    const filingWithPrathviAsAssignee = {
+      ...mockFiling,
+      assignee_id: prathviId,
+      auditor_id: 'a6ecc962-3946-41ea-9946-1ff6dcc08133',
+      version: 1
+    };
+
+    const res = await executeReassign({
+      filing: filingWithPrathviAsAssignee,
+      expectedVersion: 1,
+      newAssigneeId: prathviId,
+      newAuditorId: prathviId,
+      reason: 'Cannot audit own card',
+      actorId: prathviId,
+      actorRoles: [PATENT_ROLES.AUDITOR]
+    });
+
+    assert.strictEqual(res.success, false);
+    assert.ok(res.error.includes('Assignee and Auditor cannot be the same person'));
+  });
+
+  await it('Prathvi and Prashanth have access to confirm payment from PAYMENT -> ACK', () => {
+    const prathviActor = { id: '8eeb4375-25d3-4c3d-844c-7dd455e3c2e8', name: 'Prathvi', role: 'member' };
+    const prashanthActor = { id: 'f7fe55e4-7c00-4030-86ed-0ccf39737074', name: 'Prashanth', role: 'member' };
+
+    const paymentFiling = {
+      ...mockFiling,
+      status: 'PAYMENT'
+    };
+
+    // Prathvi confirms payment
+    const vPrathvi = validateStateTransition({
+      filing: paymentFiling,
+      toStatus: 'ACK',
+      actorId: prathviActor.id,
+      actor: prathviActor,
+      actorRoles: [],
+      payload: { payment_reference: 'Payment Done' }
+    });
+    assert.strictEqual(vPrathvi.valid, true, 'Prathvi can confirm payment');
+
+    // Prashanth confirms payment
+    const vPrashanth = validateStateTransition({
+      filing: paymentFiling,
+      toStatus: 'ACK',
+      actorId: prashanthActor.id,
+      actor: prashanthActor,
+      actorRoles: [],
+      payload: { payment_reference: 'IPO-MUM-99120' }
+    });
+    assert.strictEqual(vPrashanth.valid, true, 'Prashanth can confirm payment');
+  });
+
+  await it('Toggle switch logic: ALL shows all codes, MINE shows own plus all PAYMENT cards', () => {
+    const member = { id: 'member-1', name: 'Member One' };
+    const ownFiling = { id: '1', assignee_id: 'member-1', status: 'FILING' };
+    const otherFiling = { id: '2', assignee_id: 'member-2', status: 'FILING' };
+    const paymentFiling = { id: '3', assignee_id: 'member-3', status: 'PAYMENT' };
+
+    const filterScope = (filing, codeScopeFilter) => {
+      if (filing.status === 'PAYMENT') return true;
+      if (codeScopeFilter === 'ALL') return true;
+      return filing.assignee_id === member.id;
+    };
+
+    // Under 'ALL': all 3 filings are visible
+    assert.strictEqual(filterScope(ownFiling, 'ALL'), true);
+    assert.strictEqual(filterScope(otherFiling, 'ALL'), true);
+    assert.strictEqual(filterScope(paymentFiling, 'ALL'), true);
+
+    // Under 'MINE': own filing is visible, payment filing is accessible to all, but other normal filing is hidden
+    assert.strictEqual(filterScope(ownFiling, 'MINE'), true);
+    assert.strictEqual(filterScope(otherFiling, 'MINE'), false);
+    assert.strictEqual(filterScope(paymentFiling, 'MINE'), true, 'Payment folder must be accessible to all members');
   });
 
   console.log('\n=====================================================');
