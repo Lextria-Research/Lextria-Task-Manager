@@ -75,12 +75,13 @@ export default async function handler(req, res) {
           active: p.active,
           createdAt: p.created_at,
           cachedPassword: matchedTm?.password || meta.temp_password || '',
-          dashboardAccess: meta.dashboard_access || {
-            task_manager: { enabled: true, role: p.role === 'SUPER_ADMIN' ? 'leader' : 'member' },
-            litigator: { enabled: p.department === 'LITIGATION' || p.role === 'SUPER_ADMIN', role: p.role === 'SUPER_ADMIN' ? 'LITIGATION_HEAD' : 'ASSOCIATE' },
-            patent: { enabled: p.department === 'IP_PATENT' || p.role === 'SUPER_ADMIN', role: p.role === 'SUPER_ADMIN' ? 'ADMIN' : 'DRAFTER' },
-            finance: { enabled: p.department === 'FINANCE' || p.role === 'SUPER_ADMIN', mode: p.role === 'SUPER_ADMIN' ? 'FULL' : 'NONE' },
-            client_portal: { enabled: false, clientId: null },
+          dashboardAccess: {
+            task_manager: meta.dashboard_access?.task_manager || { enabled: true, role: p.role === 'SUPER_ADMIN' ? 'leader' : 'member' },
+            litigator: meta.dashboard_access?.litigator || { enabled: p.department === 'LITIGATION' || p.role === 'SUPER_ADMIN', role: p.role === 'SUPER_ADMIN' ? 'LITIGATION_HEAD' : 'ASSOCIATE' },
+            soft_ip: meta.dashboard_access?.soft_ip || meta.dashboard_access?.ip_ledger || { enabled: p.department === 'IP_SOFT' || p.role === 'SUPER_ADMIN', role: p.role === 'SUPER_ADMIN' ? 'HEAD' : 'ASSOCIATE' },
+            patent: meta.dashboard_access?.patent || { enabled: p.department === 'IP_PATENT' || p.role === 'SUPER_ADMIN', role: p.role === 'SUPER_ADMIN' ? 'ADMIN' : 'DRAFTER' },
+            finance: meta.dashboard_access?.finance || { enabled: p.department === 'FINANCE' || p.role === 'SUPER_ADMIN', mode: p.role === 'SUPER_ADMIN' ? 'FULL' : 'NONE' },
+            client_portal: meta.dashboard_access?.client_portal || { enabled: false, clientId: null },
           },
         };
       });

@@ -5,7 +5,7 @@ import {
   Check, Key, Eye, EyeOff, Building2, Briefcase, RefreshCw, AlertCircle,
   Sparkles, CheckCircle2, Copy, X, ArrowRight, Calendar, MessageSquare, Send,
   Globe, ExternalLink, Link2, Download, Bell, HelpCircle, Volume2, VolumeX, Play,
-  Layers, Scale, FileText, DollarSign, Laptop, Users, ShieldCheck, Mail, CheckSquare,
+  Layers, Scale, FileText, DollarSign, Laptop, Users, ShieldCheck, Mail, CheckSquare, Bookmark,
   Search, Filter, Phone, MapPin, CreditCard, Building
 } from 'lucide-react';
 import {
@@ -681,6 +681,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
   const [newDashAccess, setNewDashAccess] = useState({
     task_manager: { enabled: true, role: 'member' },
     litigator: { enabled: false, role: 'ASSOCIATE' },
+    soft_ip: { enabled: false, role: 'ASSOCIATE' },
     patent: { enabled: false, role: 'DRAFTER' },
     finance: { enabled: false, mode: 'NONE' }, // 'FULL' | 'EXECUTIVE' | 'NONE'
     client_portal: { enabled: false, clientId: '' }
@@ -698,6 +699,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
   const [editDashAccess, setEditDashAccess] = useState({
     task_manager: { enabled: true, role: 'member' },
     litigator: { enabled: false, role: 'ASSOCIATE' },
+    soft_ip: { enabled: false, role: 'ASSOCIATE' },
     patent: { enabled: false, role: 'DRAFTER' },
     finance: { enabled: false, mode: 'NONE' },
     client_portal: { enabled: false, clientId: '' }
@@ -844,6 +846,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
       setNewDashAccess({
         task_manager: { enabled: true, role: 'member' },
         litigator: { enabled: false, role: 'ASSOCIATE' },
+        soft_ip: { enabled: false, role: 'ASSOCIATE' },
         patent: { enabled: false, role: 'DRAFTER' },
         finance: { enabled: false, mode: 'NONE' },
         client_portal: { enabled: false, clientId: '' }
@@ -869,12 +872,13 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
     setEditPassword(user.cachedPassword || user.password || '');
     setEditDepartment(user.department || 'Litigation');
     setEditDesignation(user.designation || '');
-    setEditDashAccess(user.dashboardAccess || {
-      task_manager: { enabled: true, role: 'member' },
-      litigator: { enabled: false, role: 'ASSOCIATE' },
-      patent: { enabled: false, role: 'DRAFTER' },
-      finance: { enabled: false, mode: 'NONE' },
-      client_portal: { enabled: false, clientId: '' }
+    setEditDashAccess({
+      task_manager: user.dashboardAccess?.task_manager || { enabled: true, role: 'member' },
+      litigator: user.dashboardAccess?.litigator || { enabled: false, role: 'ASSOCIATE' },
+      soft_ip: user.dashboardAccess?.soft_ip || user.dashboardAccess?.ip_ledger || { enabled: false, role: 'ASSOCIATE' },
+      patent: user.dashboardAccess?.patent || { enabled: false, role: 'DRAFTER' },
+      finance: user.dashboardAccess?.finance || { enabled: false, mode: 'NONE' },
+      client_portal: user.dashboardAccess?.client_portal || { enabled: false, clientId: '' }
     });
   };
 
@@ -1963,7 +1967,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                     <span>Cross-Dashboard Access &amp; Permissions</span>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                     {/* 1. Task Manager */}
                     <div className="p-3 rounded-lg border border-white/5 bg-white/5 flex flex-col justify-between">
                       <div className="flex items-center justify-between mb-2">
@@ -2022,6 +2026,37 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                         <option value="ASSOCIATE">Associate</option>
                         <option value="LITIGATION_HEAD">Litigation Head</option>
                         <option value="INTERN">Intern</option>
+                      </select>
+                    </div>
+
+                    {/* 3. Soft IP Ledger */}
+                    <div className="p-3 rounded-lg border border-white/5 bg-white/5 flex flex-col justify-between">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-cyan-300 flex items-center gap-1.5">
+                          <Bookmark size={13} /> Soft IP Ledger
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={newDashAccess.soft_ip?.enabled}
+                          onChange={(e) => setNewDashAccess(prev => ({
+                            ...prev,
+                            soft_ip: { ...prev.soft_ip, enabled: e.target.checked }
+                          }))}
+                          className="w-3.5 h-3.5 rounded accent-cyan-500 cursor-pointer"
+                        />
+                      </div>
+                      <select
+                        value={newDashAccess.soft_ip?.role || 'ASSOCIATE'}
+                        disabled={!newDashAccess.soft_ip?.enabled}
+                        onChange={(e) => setNewDashAccess(prev => ({
+                          ...prev,
+                          soft_ip: { ...prev.soft_ip, role: e.target.value }
+                        }))}
+                        className={`w-full px-2 py-1 text-[11px] rounded-lg border outline-none disabled:opacity-40 ${inputBgClass}`}
+                      >
+                        <option value="ASSOCIATE">Associate</option>
+                        <option value="HEAD">IP Head</option>
+                        <option value="VIEWER">Viewer</option>
                       </select>
                     </div>
 
@@ -2240,6 +2275,11 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                                 {da.litigator?.enabled && (
                                   <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/25">
                                     Litigator: {da.litigator?.role || 'Assoc'}
+                                  </span>
+                                )}
+                                {(da.soft_ip?.enabled || da.ip_ledger?.enabled) && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/25">
+                                    Soft IP: {da.soft_ip?.role || da.ip_ledger?.role || 'Assoc'}
                                   </span>
                                 )}
                                 {da.patent?.enabled && (
@@ -2718,6 +2758,35 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                           litigator: { ...prev.litigator, enabled: e.target.checked }
                         }))}
                         className="w-3.5 h-3.5 rounded accent-purple-500 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Soft IP Ledger */}
+                  <div className="p-2.5 rounded-lg border border-white/5 bg-white/5 flex items-center justify-between">
+                    <span className="text-xs text-cyan-300 font-semibold">Soft IP Ledger</span>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={editDashAccess.soft_ip?.role || 'ASSOCIATE'}
+                        disabled={!editDashAccess.soft_ip?.enabled}
+                        onChange={(e) => setEditDashAccess(prev => ({
+                          ...prev,
+                          soft_ip: { ...prev.soft_ip, role: e.target.value }
+                        }))}
+                        className={`px-2 py-1 text-[11px] rounded-lg border outline-none disabled:opacity-40 ${inputBgClass}`}
+                      >
+                        <option value="ASSOCIATE">Associate</option>
+                        <option value="HEAD">IP Head</option>
+                        <option value="VIEWER">Viewer</option>
+                      </select>
+                      <input
+                        type="checkbox"
+                        checked={editDashAccess.soft_ip?.enabled}
+                        onChange={(e) => setEditDashAccess(prev => ({
+                          ...prev,
+                          soft_ip: { ...prev.soft_ip, enabled: e.target.checked }
+                        }))}
+                        className="w-3.5 h-3.5 rounded accent-cyan-500 cursor-pointer"
                       />
                     </div>
                   </div>
