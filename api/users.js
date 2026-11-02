@@ -167,6 +167,24 @@ export default async function handler(req, res) {
       const isFinanceLead = dashboardAccess?.finance?.mode === 'FULL' || role === 'SUPER_ADMIN';
       const coreRole = role || (dashboardAccess?.finance?.mode === 'EXECUTIVE' ? 'OFFICE_EXEC' : 'STAFF');
 
+      const CANONICAL_DEPT_MAP = {
+        'Trademark': 'IP_SOFT',
+        'Soft IP': 'IP_SOFT',
+        'IP_SOFT': 'IP_SOFT',
+        'Patent': 'IP_PATENT',
+        'IP_PATENT': 'IP_PATENT',
+        'Litigation': 'LITIGATION',
+        'LITIGATION': 'LITIGATION',
+        'Finance': 'FINANCE',
+        'FINANCE': 'FINANCE',
+        'General Management': 'MANAGEMENT',
+        'MANAGEMENT': 'MANAGEMENT',
+        'Compliance': 'OFFICE',
+        'Office': 'OFFICE',
+        'OFFICE': 'OFFICE',
+      };
+      const canonicalDept = CANONICAL_DEPT_MAP[department] || (department ? department.toUpperCase() : 'MANAGEMENT');
+
       const { data: profile, error: profErr } = await centralAdmin
         .schema('core')
         .from('profiles')
@@ -175,7 +193,7 @@ export default async function handler(req, res) {
           email: cleanEmail,
           display_name: cleanName,
           role: coreRole,
-          department: department || 'MANAGEMENT',
+          department: canonicalDept,
           is_finance_lead: isFinanceLead,
           active: true,
         })
