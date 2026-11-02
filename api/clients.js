@@ -1,7 +1,3 @@
-// api/clients.js
-// Vercel Serverless Function for Central Client Directory & Portal Access Management
-// Connects to Lextria Central Supabase (eafciegebhuhoneypsqy) to manage core.clients and Client Portal Auth.
-
 import { createClient } from '@supabase/supabase-js';
 
 const centralUrl = process.env.SUPABASE_URL || process.env.VITE_CENTRAL_SUPABASE_URL || 'https://eafciegebhuhoneypsqy.supabase.co';
@@ -61,7 +57,7 @@ export default async function handler(req, res) {
         return {
           ...c,
           portalAccess: Boolean(portal),
-          portalEmail: portal?.email || c.email || '',
+          portalEmail: portal?.email || c.email || (c.client_code ? `${c.client_code.toLowerCase()}@client.lextria.in` : ''),
           portalUserId: portal?.authUserId || null,
           portalLastSignIn: portal?.lastSignIn || null,
         };
@@ -75,7 +71,7 @@ export default async function handler(req, res) {
   }
 
   // -------------------------------------------------------------
-  // POST: Add new client to core.clients
+  // POST: Add new client to core.clients + Auto-create Portal
   // -------------------------------------------------------------
   if (req.method === 'POST') {
     try {
@@ -89,7 +85,8 @@ export default async function handler(req, res) {
         pan,
         billing_address,
         state_code,
-        portal_access = false,
+        portal_access = true, // Default to true: automatic portal creation!
+        portal_email,
         portal_password,
       } = req.body || {};
 
@@ -115,7 +112,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: `Client Code "${cleanCode}" is already in use.` });
       }
 
-      // Insert new client
+      // Insert new client into core.clients
       const { data: newClient, error: insErr } = await centralAdmin
         .schema('core')
         .from('clients')
@@ -135,15 +132,17 @@ export default async function handler(req, res) {
 
       if (insErr) throw insErr;
 
-      // Provision Client Portal user if enabled
+      // Automatically provision Client Portal user if portal_access is enabled
       let portalUser = null;
-      if (portal_access) {
-        const portalEmail = (email?.trim() || `${cleanCode.toLowerCase()}@client.lextria.in`).toLowerCase();
-        const pass = portal_password?.trim() || `LextriaPortal!${cleanCode}`;
+      let portalError = null;
+
+      if (portal_access !== false) {
+        const portalLoginEmail = (portal_email?.trim() || email?.trim() || `${cleanCode.toLowerCase()}@client.lextria.in`).toLowerCase();
+        const pass = portal_password?.trim() || `LextriaPortal!${cleanCode}2026`;
 
         try {
           const { data: authRes, error: aErr } = await centralAdmin.auth.admin.createUser({
-            email: portalEmail,
+            email: portalLoginEmail,
             password: pass,
             email_confirm: true,
             user_metadata: {
@@ -157,8 +156,54 @@ export default async function handler(req, res) {
 
           if (!aErr && authRes?.user) {
             portalUser = authRes.user;
+
+            // Upsert in core.profiles
+            await centralAdmin
+              .schema('core')
+              .from('profiles')
+              .upsert({
+                id: authRes.user.id,
+                email: portalLoginEmail,
+                display_name: cleanName,
+                role: 'CLIENT',
+                active: true,
+              }, { onConflict: 'id' });
+          } else if (aErr) {
+            portalError = aErr.message;
+            console.warn('Supabase auth create warning:', aErr.message);
+
+            // If user already exists with this email, link and update password
+            const { data: searchData } = await centralAdmin.auth.admin.listUsers();
+            const existingAuth = (searchData?.users || []).find(u => u.email?.toLowerCase() === portalLoginEmail.toLowerCase());
+            if (existingAuth) {
+              await centralAdmin.auth.admin.updateUserById(existingAuth.id, {
+                password: pass,
+                user_metadata: {
+                  ...existingAuth.user_metadata,
+                  role: 'CLIENT',
+                  client_id: newClient.id,
+                  client_code: cleanCode,
+                  client_name: cleanName,
+                  portal_access: true,
+                }
+              });
+
+              await centralAdmin
+                .schema('core')
+                .from('profiles')
+                .upsert({
+                  id: existingAuth.id,
+                  email: portalLoginEmail,
+                  display_name: cleanName,
+                  role: 'CLIENT',
+                  active: true,
+                }, { onConflict: 'id' });
+
+              portalUser = existingAuth;
+            }
           }
         } catch (authCreateErr) {
+          portalError = authCreateErr.message;
           console.warn('Failed to provision client portal credentials:', authCreateErr);
         }
       }
@@ -168,7 +213,8 @@ export default async function handler(req, res) {
         client: {
           ...newClient,
           portalAccess: Boolean(portalUser),
-          portalEmail: portalUser?.email || newClient.email || '',
+          portalEmail: portalUser?.email || newClient.email || `${cleanCode.toLowerCase()}@client.lextria.in`,
+          portalError: portalError || undefined,
         },
       });
     } catch (err) {
@@ -178,7 +224,7 @@ export default async function handler(req, res) {
   }
 
   // -------------------------------------------------------------
-  // PUT: Update an existing client in core.clients
+  // PUT: Update an existing client + Edit Portal Login & Password
   // -------------------------------------------------------------
   if (req.method === 'PUT') {
     try {
@@ -194,6 +240,7 @@ export default async function handler(req, res) {
         billing_address,
         state_code,
         portal_access,
+        portal_email,
         portal_password,
       } = req.body || {};
 
@@ -224,21 +271,33 @@ export default async function handler(req, res) {
 
       if (upErr) throw upErr;
 
-      // Handle portal access changes if portal_access is specified
-      if (portal_access !== undefined) {
-        try {
-          // Find existing auth user for this client
-          const { data: authList } = await centralAdmin.auth.admin.listUsers();
-          const existingUser = (authList?.users || []).find(
-            u => u.user_metadata?.client_id === id
-          );
+      // Handle portal access and credential changes
+      let updatedPortalUser = null;
+      try {
+        const { data: authList } = await centralAdmin.auth.admin.listUsers();
+        let existingUser = (authList?.users || []).find(
+          u => u.user_metadata?.client_id === id
+        );
 
-          if (portal_access && !existingUser) {
-            // Create new auth user
-            const portalEmail = (email?.trim() || `${updatedClient.client_code.toLowerCase()}@client.lextria.in`).toLowerCase();
-            const pass = portal_password?.trim() || `LextriaPortal!${updatedClient.client_code}`;
-            await centralAdmin.auth.admin.createUser({
-              email: portalEmail,
+        const targetPortalEmail = (
+          portal_email?.trim() ||
+          existingUser?.email ||
+          updatedClient.email ||
+          `${updatedClient.client_code.toLowerCase()}@client.lextria.in`
+        ).toLowerCase();
+
+        if (!existingUser && targetPortalEmail) {
+          existingUser = (authList?.users || []).find(
+            u => u.email?.toLowerCase() === targetPortalEmail
+          );
+        }
+
+        if (portal_access) {
+          if (!existingUser) {
+            // Provision new portal user
+            const pass = portal_password?.trim() || `LextriaPortal!${updatedClient.client_code}2026`;
+            const { data: newAuth, error: newAuthErr } = await centralAdmin.auth.admin.createUser({
+              email: targetPortalEmail,
               password: pass,
               email_confirm: true,
               user_metadata: {
@@ -249,21 +308,75 @@ export default async function handler(req, res) {
                 portal_access: true,
               },
             });
-          } else if (portal_access && existingUser && portal_password?.trim()) {
-            // Update password
-            await centralAdmin.auth.admin.updateUserById(existingUser.id, {
-              password: portal_password.trim(),
-            });
-          } else if (!portal_access && existingUser) {
-            // Remove / deactivate portal credentials
-            await centralAdmin.auth.admin.deleteUser(existingUser.id);
+
+            if (newAuth?.user) {
+              updatedPortalUser = newAuth.user;
+              await centralAdmin
+                .schema('core')
+                .from('profiles')
+                .upsert({
+                  id: newAuth.user.id,
+                  email: targetPortalEmail,
+                  display_name: updatedClient.client_name,
+                  role: 'CLIENT',
+                  active: true,
+                }, { onConflict: 'id' });
+            }
+          } else {
+            // Update existing portal user's credentials and metadata
+            const authUpdates = {
+              user_metadata: {
+                ...existingUser.user_metadata,
+                role: 'CLIENT',
+                client_id: id,
+                client_code: updatedClient.client_code,
+                client_name: updatedClient.client_name,
+                portal_access: true,
+              }
+            };
+            if (portal_password?.trim()) {
+              authUpdates.password = portal_password.trim();
+            }
+            if (targetPortalEmail && targetPortalEmail !== existingUser.email?.toLowerCase()) {
+              authUpdates.email = targetPortalEmail;
+            }
+
+            const { data: updRes } = await centralAdmin.auth.admin.updateUserById(existingUser.id, authUpdates);
+            updatedPortalUser = updRes?.user || existingUser;
+
+            // Sync email and name to core.profiles
+            await centralAdmin
+              .schema('core')
+              .from('profiles')
+              .upsert({
+                id: existingUser.id,
+                email: authUpdates.email || existingUser.email,
+                display_name: updatedClient.client_name,
+                role: 'CLIENT',
+                active: true,
+              }, { onConflict: 'id' });
           }
-        } catch (portalUpdateErr) {
-          console.warn('Error managing client portal credentials:', portalUpdateErr);
+        } else if (portal_access === false && existingUser) {
+          // Deactivate / delete portal access
+          await centralAdmin.auth.admin.deleteUser(existingUser.id);
+          await centralAdmin
+            .schema('core')
+            .from('profiles')
+            .delete()
+            .eq('id', existingUser.id);
         }
+      } catch (portalUpdateErr) {
+        console.warn('Error managing client portal credentials:', portalUpdateErr);
       }
 
-      return res.status(200).json({ success: true, client: updatedClient });
+      return res.status(200).json({
+        success: true,
+        client: {
+          ...updatedClient,
+          portalAccess: Boolean(portal_access),
+          portalEmail: updatedPortalUser?.email || (portal_email?.trim() || updatedClient.email || ''),
+        }
+      });
     } catch (err) {
       console.error('Error updating client:', err);
       return res.status(500).json({ error: err.message });
@@ -302,6 +415,11 @@ export default async function handler(req, res) {
         );
         if (existingUser) {
           await centralAdmin.auth.admin.deleteUser(existingUser.id);
+          await centralAdmin
+            .schema('core')
+            .from('profiles')
+            .delete()
+            .eq('id', existingUser.id);
         }
       } catch (authDelErr) {
         console.warn('Client portal auth delete warning:', authDelErr);

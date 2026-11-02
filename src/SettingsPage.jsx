@@ -418,7 +418,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
   const [clientSearchQuery, setClientSearchQuery] = useState('');
   const [clientTypeFilter, setClientTypeFilter] = useState('ALL');
 
-  // Add Client Modal State
+  // Add Client Modal State (Portal auto-enabled by default)
   const [showAddClientModal, setShowAddClientModal] = useState(false);
   const [newClientCode, setNewClientCode] = useState('');
   const [newClientName, setNewClientName] = useState('');
@@ -428,8 +428,9 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
   const [newClientGstin, setNewClientGstin] = useState('');
   const [newClientPan, setNewClientPan] = useState('');
   const [newClientAddress, setNewClientAddress] = useState('');
-  const [newClientPortalAccess, setNewClientPortalAccess] = useState(false);
-  const [newClientPortalPassword, setNewClientPortalPassword] = useState('');
+  const [newClientPortalAccess, setNewClientPortalAccess] = useState(true);
+  const [newClientPortalEmail, setNewClientPortalEmail] = useState('');
+  const [newClientPortalPassword, setNewClientPortalPassword] = useState('LextriaPortal!2026');
   const [isAddingClient, setIsAddingClient] = useState(false);
 
   // Edit Client Modal State
@@ -443,9 +444,39 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
   const [editClientPan, setEditClientPan] = useState('');
   const [editClientAddress, setEditClientAddress] = useState('');
   const [editClientPortalAccess, setEditClientPortalAccess] = useState(false);
+  const [editClientPortalEmail, setEditClientPortalEmail] = useState('');
   const [editClientPortalPassword, setEditClientPortalPassword] = useState('');
   const [isUpdatingClient, setIsUpdatingClient] = useState(false);
   const [showClientPass, setShowClientPass] = useState(false);
+
+  // Helper when opening Add Client Modal
+  const handleOpenAddClient = () => {
+    setNewClientCode('');
+    setNewClientName('');
+    setNewClientEntityType('COMPANY');
+    setNewClientEmail('');
+    setNewClientPhone('');
+    setNewClientGstin('');
+    setNewClientPan('');
+    setNewClientAddress('');
+    setNewClientPortalAccess(true);
+    setNewClientPortalEmail('');
+    setNewClientPortalPassword('LextriaPortal!2026');
+    setShowClientPass(false);
+    setShowAddClientModal(true);
+  };
+
+  // Automatically suggest portal login email and password as client code is typed
+  const handleNewClientCodeChange = (code) => {
+    const upper = code.toUpperCase();
+    setNewClientCode(upper);
+    if (!newClientPortalEmail || newClientPortalEmail.endsWith('@client.lextria.in')) {
+      setNewClientPortalEmail(upper ? `${upper.toLowerCase()}@client.lextria.in` : '');
+    }
+    if (!newClientPortalPassword || newClientPortalPassword.startsWith('LextriaPortal!')) {
+      setNewClientPortalPassword(upper ? `LextriaPortal!${upper}2026` : 'LextriaPortal!2026');
+    }
+  };
 
   // Fetch clients from central database / API
   const fetchClients = useCallback(async () => {
@@ -486,13 +517,22 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
       return;
     }
 
+    const cleanCode = newClientCode.trim().toUpperCase();
+    const portalEmail = newClientPortalEmail.trim() || newClientEmail.trim() || `${cleanCode.toLowerCase()}@client.lextria.in`;
+    const portalPass = newClientPortalPassword.trim() || `LextriaPortal!${cleanCode}2026`;
+
+    if (newClientPortalAccess && (!portalEmail || !portalPass)) {
+      alert('Please enter Portal Login Email and Password for the client portal account.');
+      return;
+    }
+
     try {
       setIsAddingClient(true);
       const res = await fetch('/api/clients', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          client_code: newClientCode.trim().toUpperCase(),
+          client_code: cleanCode,
           client_name: newClientName.trim(),
           entity_type: newClientEntityType,
           email: newClientEmail.trim() || undefined,
@@ -501,7 +541,8 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
           pan: newClientPan.trim() || undefined,
           billing_address: newClientAddress.trim() || undefined,
           portal_access: newClientPortalAccess,
-          portal_password: newClientPortalPassword.trim() || undefined,
+          portal_email: portalEmail,
+          portal_password: portalPass,
         })
       });
 
@@ -516,11 +557,17 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
       setNewClientGstin('');
       setNewClientPan('');
       setNewClientAddress('');
-      setNewClientPortalAccess(false);
+      setNewClientPortalAccess(true);
+      setNewClientPortalEmail('');
       setNewClientPortalPassword('');
 
       await fetchClients();
-      alert(`Client "${json.client?.client_name || newClientName}" registered successfully!`);
+
+      let msg = `Client "${json.client?.client_name || newClientName}" registered successfully!`;
+      if (newClientPortalAccess) {
+        msg += `\n\nClient Portal Provisioned:\nLogin Email: ${portalEmail}\nPassword: ${portalPass}`;
+      }
+      alert(msg);
     } catch (err) {
       console.error('Error adding client:', err);
       alert('Failed to register client: ' + (err.message || 'Please check connection.'));
@@ -529,7 +576,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
     }
   };
 
-  // Open Edit Client Modal
+  // Open Edit Client Modal (Pre-populate portal login email & current status)
   const handleOpenEditClient = (c) => {
     setEditingClient(c);
     setEditClientCode(c.client_code || '');
@@ -541,13 +588,20 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
     setEditClientPan(c.pan || '');
     setEditClientAddress(c.billing_address || '');
     setEditClientPortalAccess(Boolean(c.portalAccess));
+    setEditClientPortalEmail(c.portalEmail || c.email || (c.client_code ? `${c.client_code.toLowerCase()}@client.lextria.in` : ''));
     setEditClientPortalPassword('');
+    setShowClientPass(false);
   };
 
-  // Handle Update Client
+  // Handle Update Client Details + Edit Portal Email & Password
   const handleUpdateClient = async (e) => {
     e.preventDefault();
     if (!editingClient || !editClientName.trim()) return;
+
+    if (editClientPortalAccess && !editClientPortalEmail.trim()) {
+      alert('Client Portal Login Email is required when portal access is enabled.');
+      return;
+    }
 
     try {
       setIsUpdatingClient(true);
@@ -565,6 +619,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
           pan: editClientPan.trim() || undefined,
           billing_address: editClientAddress.trim() || undefined,
           portal_access: editClientPortalAccess,
+          portal_email: editClientPortalEmail.trim() || undefined,
           portal_password: editClientPortalPassword.trim() || undefined,
         })
       });
@@ -574,7 +629,15 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
 
       setEditingClient(null);
       await fetchClients();
-      alert('Client details and portal access updated successfully!');
+
+      let msg = 'Client profile updated successfully!';
+      if (editClientPortalAccess) {
+        msg += `\n\nClient Portal Credentials:\nLogin Email: ${editClientPortalEmail.trim()}`;
+        if (editClientPortalPassword.trim()) {
+          msg += `\nPassword updated to: ${editClientPortalPassword.trim()}`;
+        }
+      }
+      alert(msg);
     } catch (err) {
       console.error('Error updating client:', err);
       alert('Failed to update client: ' + (err.message || 'Please check connection.'));
@@ -2263,7 +2326,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
 
                 <button
                   type="button"
-                  onClick={() => setShowAddClientModal(true)}
+                  onClick={handleOpenAddClient}
                   className="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 shadow-lg shadow-blue-500/25 active:scale-[0.99]"
                 >
                   <Plus size={14} />
@@ -2776,7 +2839,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                     required
                     placeholder="e.g. INFY"
                     value={newClientCode}
-                    onChange={(e) => setNewClientCode(e.target.value.toUpperCase())}
+                    onChange={(e) => handleNewClientCodeChange(e.target.value)}
                     className={`w-full px-3 py-2 text-xs rounded-xl border outline-none font-mono uppercase ${inputBgClass}`}
                   />
                   <p className="text-[10px] text-slate-400 mt-1">Unique 2-8 letter code</p>
@@ -2887,13 +2950,16 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
               </div>
 
               {/* Client Portal Provisioning Section */}
-              <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/20 space-y-3">
+              <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/30 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <ShieldCheck size={16} className="text-blue-400" />
+                    <ShieldCheck size={18} className="text-blue-400" />
                     <div>
-                      <div className="text-xs font-bold text-white">Client Portal Access Account</div>
-                      <div className="text-[10px] text-slate-400">Allows client to log into unified portal to view matters &amp; invoices.</div>
+                      <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <span>Client Portal Login Credentials</span>
+                        <span className="px-1.5 py-0.5 rounded text-[9px] bg-blue-500/20 text-blue-300 font-semibold uppercase">Auto-Provisioned</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400">Allows client to securely log into the Client Portal to view live matters &amp; invoices.</div>
                     </div>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
@@ -2907,7 +2973,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                 </div>
 
                 {newClientPortalAccess && (
-                  <div className="pt-2 border-t border-blue-500/15 space-y-3 animate-in fade-in">
+                  <div className="pt-2 border-t border-blue-500/20 space-y-3 animate-in fade-in">
                     <div>
                       <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
                         Portal Login Email <span className="text-red-400">*</span>
@@ -2915,9 +2981,9 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                       <input
                         type="email"
                         required={newClientPortalAccess}
-                        placeholder="Login email for client portal"
-                        value={newClientEmail}
-                        onChange={(e) => setNewClientEmail(e.target.value)}
+                        placeholder="Login email for client portal (e.g. client@client.lextria.in)"
+                        value={newClientPortalEmail}
+                        onChange={(e) => setNewClientPortalEmail(e.target.value)}
                         className={`w-full px-3 py-2 text-xs rounded-xl border outline-none ${inputBgClass}`}
                       />
                     </div>
@@ -3117,14 +3183,21 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
               </div>
 
               {/* Client Portal Section */}
-              <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/20 space-y-3">
+              <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/30 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <ShieldCheck size={16} className="text-blue-400" />
+                    <ShieldCheck size={18} className="text-blue-400" />
                     <div>
-                      <div className="text-xs font-bold text-white">Client Portal Access</div>
+                      <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <span>Client Portal Login Credentials</span>
+                        {editClientPortalAccess ? (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/20 text-emerald-300 font-semibold uppercase">Active Account</span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] bg-slate-500/20 text-slate-400 font-semibold uppercase">Disabled</span>
+                        )}
+                      </div>
                       <div className="text-[10px] text-slate-400">
-                        {editingClient.portalAccess ? 'Client portal account is currently active.' : 'Portal account not provisioned for this client.'}
+                        {editClientPortalAccess ? 'Client portal account is active. Edit login email or set a new password below.' : 'Enable portal access to provision credentials for this client.'}
                       </div>
                     </div>
                   </div>
@@ -3139,11 +3212,25 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                 </div>
 
                 {editClientPortalAccess && (
-                  <div className="pt-2 border-t border-blue-500/15 space-y-3 animate-in fade-in">
+                  <div className="pt-2 border-t border-blue-500/20 space-y-3 animate-in fade-in">
+                    <div>
+                      <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
+                        Portal Login Email <span className="text-red-400">*</span>
+                      </label>
+                      <input
+                        type="email"
+                        required={editClientPortalAccess}
+                        placeholder="Login email for client portal"
+                        value={editClientPortalEmail}
+                        onChange={(e) => setEditClientPortalEmail(e.target.value)}
+                        className={`w-full px-3 py-2 text-xs rounded-xl border outline-none ${inputBgClass}`}
+                      />
+                    </div>
+
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-300">
-                          Reset / Set Portal Password (leave empty to keep current)
+                          Reset / Update Portal Password
                         </label>
                         <button
                           type="button"
@@ -3156,7 +3243,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                       <div className="relative">
                         <input
                           type={showClientPass ? 'text' : 'password'}
-                          placeholder="Enter new password to change"
+                          placeholder="Leave empty to keep existing password, or enter new password"
                           value={editClientPortalPassword}
                           onChange={(e) => setEditClientPortalPassword(e.target.value)}
                           className={`w-full px-3 py-2 pr-9 text-xs rounded-xl border outline-none font-mono ${inputBgClass}`}
@@ -3169,6 +3256,9 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                           {showClientPass ? <EyeOff size={14} /> : <Eye size={14} />}
                         </button>
                       </div>
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        Enter a new password here to immediately change the client's login credential in Supabase Auth.
+                      </p>
                     </div>
                   </div>
                 )}
