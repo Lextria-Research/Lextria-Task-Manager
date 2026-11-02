@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { supabase, centralSupabase } from './supabaseClient';
-import { Lock, User, AlertCircle, Loader2, ShieldCheck, Mail } from 'lucide-react';
+import { Lock, User, AlertCircle, Loader2, ShieldCheck, Mail, Eye, EyeOff } from 'lucide-react';
 
 export default function LoginPage({ onLogin }) {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
