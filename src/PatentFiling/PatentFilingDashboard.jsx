@@ -471,6 +471,41 @@ export default function PatentFilingDashboard({
   // Delete handler for Leaders with Optimistic UI & Rollback
   const handleDeleteFiling = async (filingToDelete) => {
     if (!filingToDelete || !filingToDelete.id) return;
+    const fId = filingToDelete.id;
+    const fCode = filingToDelete.code;
+
+    const originalFilings = filings;
+    const originalSelected = selectedFiling;
+
+    // Optimistically remove from state
+    setFilings(prev => prev.filter(f => f.id !== fId));
+    if (selectedFiling?.id === fId) {
+      setSelectedFiling(null);
+    }
+
+    const res = await deleteFilingFromStorage({
+      filingId: fId,
+      code: fCode,
+      actor: currentUser,
+      actorRoles: userRoles
+    });
+
+    if (res.success) {
+      setNotification({
+        type: 'success',
+        message: `Filing ${fCode} has been deleted.`
+      });
+    } else {
+      // Rollback on failure
+      setFilings(originalFilings);
+      setSelectedFiling(originalSelected);
+      setNotification({
+        type: 'error',
+        message: res.error || 'Failed to delete filing.'
+      });
+    }
+  };
+
   // Quick Done handler for MISC tasks
   const handleQuickDone = async (filing) => {
     if (!filing) return;
@@ -512,41 +547,6 @@ export default function PatentFilingDashboard({
       setNotification({
         type: 'error',
         message: res.error || 'Failed to complete task.'
-      });
-    }
-  };
-
-    const fId = filingToDelete.id;
-    const fCode = filingToDelete.code;
-
-    const originalFilings = filings;
-    const originalSelected = selectedFiling;
-
-    // Optimistically remove from state
-    setFilings(prev => prev.filter(f => f.id !== fId));
-    if (selectedFiling?.id === fId) {
-      setSelectedFiling(null);
-    }
-
-    const res = await deleteFilingFromStorage({
-      filingId: fId,
-      code: fCode,
-      actor: currentUser,
-      actorRoles: userRoles
-    });
-
-    if (res.success) {
-      setNotification({
-        type: 'success',
-        message: `Filing ${fCode} has been deleted.`
-      });
-    } else {
-      // Rollback on failure
-      setFilings(originalFilings);
-      setSelectedFiling(originalSelected);
-      setNotification({
-        type: 'error',
-        message: res.error || 'Failed to delete filing.'
       });
     }
   };
