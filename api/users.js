@@ -179,11 +179,18 @@ export default async function handler(req, res) {
         'FINANCE': 'FINANCE',
         'General Management': 'MANAGEMENT',
         'MANAGEMENT': 'MANAGEMENT',
+        'General': 'MANAGEMENT',
+        'Corporate': 'MANAGEMENT',
         'Compliance': 'OFFICE',
         'Office': 'OFFICE',
         'OFFICE': 'OFFICE',
       };
-      const canonicalDept = CANONICAL_DEPT_MAP[department] || (department ? department.toUpperCase() : 'MANAGEMENT');
+      const rawDept = (department || '').trim();
+      let canonicalDept = CANONICAL_DEPT_MAP[rawDept] || CANONICAL_DEPT_MAP[rawDept.toUpperCase()];
+      const ALLOWED_DEPTS = ['MANAGEMENT', 'FINANCE', 'LITIGATION', 'OFFICE', 'IP_PATENT', 'IP_SOFT'];
+      if (!canonicalDept || !ALLOWED_DEPTS.includes(canonicalDept)) {
+        canonicalDept = 'MANAGEMENT';
+      }
 
       const { data: profile, error: profErr } = await centralAdmin
         .schema('core')
