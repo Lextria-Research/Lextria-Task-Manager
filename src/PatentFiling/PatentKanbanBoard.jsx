@@ -1,8 +1,9 @@
 // src/PatentFiling/PatentKanbanBoard.jsx
-// Dedicated 6-column Kanban Board for Patent Filing Workflow
+// Dedicated 7-column Kanban Board for Patent Filing Workflow with standalone MISC stage
 
 import React from 'react';
 import {
+  ListTodo,
   Inbox,
   FileEdit,
   Search,
@@ -18,6 +19,14 @@ import { isLeaderOrSharan } from '../attachmentUtils.js';
 import PatentFilingCard from './PatentFilingCard.jsx';
 
 export const KANBAN_COLUMNS = [
+  {
+    id: PATENT_STATUSES.MISC,
+    label: 'MISC',
+    icon: ListTodo,
+    color: 'from-fuchsia-600 to-pink-600',
+    borderColor: 'border-fuchsia-500/30',
+    badgeBg: 'bg-fuchsia-500/20 text-fuchsia-300'
+  },
   {
     id: PATENT_STATUSES.ASSIGNED,
     label: 'Assigned',
@@ -76,7 +85,8 @@ export default function PatentKanbanBoard({
   showClosedArchive = false,
   codeScopeFilter = 'ALL',
   onDeleteFiling,
-  onEditFiling
+  onEditFiling,
+  onMarkDone
 }) {
   const isSuperAdmin = hasPatentRole(userRoles, PATENT_ROLES.SUPER_ADMIN);
   const isLeader = isSuperAdmin ||
@@ -86,6 +96,7 @@ export default function PatentKanbanBoard({
   // Filter filings based on role-scoped view and toggle switch:
   // 1. Toggle switch 'My Codes' vs 'All Codes'
   // 2. All team members have access to Payment folder cards
+  // 3. MISC tasks visible to assigned member, creator, and leaders
   const filterByRoleScope = (filing) => {
     // If viewing Closed archive
     if (showClosedArchive) {
@@ -109,6 +120,13 @@ export default function PatentKanbanBoard({
     }
 
     // When 'My Codes' is toggled:
+    if (filing.status === PATENT_STATUSES.MISC) {
+      if (isLeader) return true;
+      const isMine = isMemberMatch(currentUser?.id, currentUser?.name, filing.assignee_id, filing.assignee_name);
+      const isCreator = isMemberMatch(currentUser?.id, currentUser?.name, filing.created_by, filing.created_by_name);
+      return isMine || isCreator;
+    }
+
     const isMine = isMemberMatch(currentUser?.id, currentUser?.name, filing.assignee_id, filing.assignee_name);
     const isAuditedByMe = isMemberMatch(currentUser?.id, currentUser?.name, filing.auditor_id, filing.auditor_name);
     const isAckChecker = hasPatentRole(userRoles, PATENT_ROLES.ACK_CHECKER);
@@ -151,6 +169,7 @@ export default function PatentKanbanBoard({
                 isSuperAdmin={isSuperAdmin}
                 onDelete={onDeleteFiling}
                 onEdit={onEditFiling}
+                onMarkDone={onMarkDone}
               />
             ))}
           </div>
@@ -159,9 +178,9 @@ export default function PatentKanbanBoard({
     );
   }
 
-  // Render 6 Kanban Columns
+  // Render 7 Kanban Columns (MISC + 6 Pipeline Stages)
   return (
-    <div className="grid grid-cols-6 gap-3.5 items-start min-w-[1360px]">
+    <div className="grid grid-cols-7 gap-3.5 items-start min-w-[1580px]">
       {KANBAN_COLUMNS.map(col => {
         const columnFilings = scopedFilings.filter(f => f.status === col.id);
         const Icon = col.icon;
@@ -192,7 +211,7 @@ export default function PatentKanbanBoard({
             <div className="p-3 flex flex-col gap-3 min-h-[500px] max-h-[calc(100vh-270px)] overflow-y-auto custom-scrollbar">
               {columnFilings.length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-center p-6 text-slate-500 border border-dashed border-white/5 rounded-2xl">
-                  <span className="text-xs italic">No codes</span>
+                  <span className="text-xs italic">No items</span>
                 </div>
               ) : (
                 columnFilings.map(filing => (
@@ -203,7 +222,10 @@ export default function PatentKanbanBoard({
                     currentUser={currentUser}
                     userRoles={userRoles}
                     isLeader={isLeader}
+                    isSuperAdmin={isSuperAdmin}
                     onDelete={onDeleteFiling}
+                    onEdit={onEditFiling}
+                    onMarkDone={onMarkDone}
                   />
                 ))
               )}

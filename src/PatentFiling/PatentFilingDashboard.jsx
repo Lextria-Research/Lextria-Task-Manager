@@ -18,6 +18,7 @@ import { fetchAllPatentRoleRecords, isMemberMatch } from '../patent/patentRoles.
 import PatentKanbanBoard from './PatentKanbanBoard.jsx';
 import PatentDetailDrawer from './PatentDetailDrawer.jsx';
 import NewFilingModal from './NewFilingModal.jsx';
+import NewMiscTaskModal from './NewMiscTaskModal.jsx';
 import EditFilingModal from './EditFilingModal.jsx';
 import {
   loadFilingsFromStorage,
@@ -64,12 +65,15 @@ export default function PatentFilingDashboard({
 
   // Modals & Drawers
   const [showNewFilingModal, setShowNewFilingModal] = useState(false);
+  const [showNewTaskModal, setShowNewTaskModal] = useState(false);
   const [editingFiling, setEditingFiling] = useState(null);
   const [selectedFiling, setSelectedFiling] = useState(null);
   const [notification, setNotification] = useState(null);
   const [patentRoleRecords, setPatentRoleRecords] = useState(null);
 
-  const isSuperAdmin = hasPatentRole(userRoles, PATENT_ROLES.SUPER_ADMIN);
+  const isSuperAdmin = hasPatentRole(userRoles, PATENT_ROLES.SUPER_ADMIN) ||
+    (currentUser?.name && currentUser.name.toLowerCase().includes('mounisha')) ||
+    (currentUser?.role && ['admin', 'super admin'].includes(currentUser.role.toLowerCase()));
 
   // Auto-dismiss toast notification
   useEffect(() => {
@@ -466,6 +470,51 @@ export default function PatentFilingDashboard({
   // Delete handler for Leaders with Optimistic UI & Rollback
   const handleDeleteFiling = async (filingToDelete) => {
     if (!filingToDelete || !filingToDelete.id) return;
+  // Quick Done handler for MISC tasks
+  const handleQuickDone = async (filing) => {
+    if (!filing) return;
+    const originalFilings = filings;
+    const originalSelected = selectedFiling;
+    const optimisticFiling = {
+      ...filing,
+      status: PATENT_STATUSES.CLOSED,
+      version: (filing.version || 1) + 1,
+      updated_at: new Date().toISOString()
+    };
+    setFilings(prev => prev.map(f => f.id === filing.id ? optimisticFiling : f));
+    if (selectedFiling?.id === filing.id) {
+      setSelectedFiling(optimisticFiling);
+    }
+    const res = await executeTransitionInStorage({
+      filing,
+      toStatus: PATENT_STATUSES.CLOSED,
+      actor: currentUser,
+      actorRoles: userRoles,
+      note: 'Task marked as completed',
+      payload: {},
+      allMembers: allEmployees
+    });
+    if (res.success) {
+      setFilings(prev => prev.map(f => f.id === res.filing.id ? { ...f, ...res.filing } : f));
+      if (selectedFiling?.id === res.filing.id) {
+        setSelectedFiling(res.filing);
+      }
+      setNotification({
+        type: 'success',
+        message: `Task ${filing.code} (${filing.task_title || filing.title || 'Task'}) marked as Completed!`
+      });
+    } else {
+      setFilings(originalFilings);
+      if (originalSelected?.id === filing.id) {
+        setSelectedFiling(originalSelected);
+      }
+      setNotification({
+        type: 'error',
+        message: res.error || 'Failed to complete task.'
+      });
+    }
+  };
+
     const fId = filingToDelete.id;
     const fCode = filingToDelete.code;
 
@@ -529,7 +578,7 @@ export default function PatentFilingDashboard({
                 Patent Filing Workflow
               </h1>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-500/20 text-brand-300 border border-brand-500/30 uppercase tracking-wider">
-                6-Stage Pipeline
+                Workflow Pipeline
               </span>
               {connectionStatus === 'RECONNECTING' && (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[11px] font-semibold animate-pulse">
@@ -559,15 +608,26 @@ export default function PatentFilingDashboard({
             <span>{showClosedArchive ? 'Return to Board' : 'Closed Archive'}</span>
           </button>
 
-          {/* "+ New Filing" Button for SUPER_ADMIN */}
+          {/* Action Buttons for Super Admin Mounisha: + New Filing & + New Task */}
           {isSuperAdmin && (
-            <button
-              onClick={() => setShowNewFilingModal(true)}
-              className="glass-button text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-[0_0_20px_rgba(37,99,235,0.4)]"
-            >
-              <Plus size={15} />
-              <span>+ New Filing</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowNewFilingModal(true)}
+                className="glass-button text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-[0_0_20px_rgba(37,99,235,0.4)]"
+                title="Create a new patent filing"
+              >
+                <Plus size={15} />
+                <span>+ New Filing</span>
+              </button>
+              <button
+                onClick={() => setShowNewTaskModal(true)}
+                className="glass-button text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer bg-gradient-to-r from-fuchsia-600 to-pink-600 hover:from-fuchsia-500 hover:to-pink-500 text-white shadow-[0_0_20px_rgba(217,70,239,0.4)]"
+                title="Assign a miscellaneous standalone task directly to anyone"
+              >
+                <ListTodo size={15} />
+                <span>+ New Task</span>
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -683,8 +743,18 @@ export default function PatentFilingDashboard({
           codeScopeFilter={codeScopeFilter}
           onDeleteFiling={handleDeleteFiling}
           onEditFiling={(filing) => setEditingFiling(filing)}
+          onMarkDone={handleQuickDone}
         />
       </div>
+
+      {/* "+ New Task" Modal (MISC Tasks) */}
+      <NewMiscTaskModal
+        isOpen={showNewTaskModal}
+        onClose={() => setShowNewTaskModal(false)}
+        onSubmit={handleCreateFiling}
+        allMembers={allEmployees}
+        filings={filings}
+      />
 
       {/* "+ New Filing" Modal */}
       <NewFilingModal

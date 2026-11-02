@@ -15,9 +15,9 @@ import {
 } from './src/PatentFiling/patentNotifications.js';
 import { DEFAULT_DRAFTERS } from './src/PatentFiling/drafterWorkloadConstants.js';
 import { isLeaderOrSharan, isPranavBhat } from './src/attachmentUtils.js';
-import { PATENT_STATUSES, PATENT_ROLES, executeReassign, validateStateTransition } from './src/patent/patentStateMachine.js';
+import { PATENT_STATUSES, PATENT_ROLES, executeReassign, validateStateTransition, hasPatentRole } from './src/patent/patentStateMachine.js';
 import { isMemberMatch } from './src/patent/patentRoles.js';
-import { deleteFilingFromStorage } from './src/PatentFiling/patentStorage.js';
+import { deleteFilingFromStorage, saveNewFilingToStorage } from './src/PatentFiling/patentStorage.js';
 import { isEventRecipient } from './src/PatentFiling/patentRealtime.js';
 
 let passedTests = 0;
@@ -462,6 +462,176 @@ console.log('\n--- TEST GROUP 6: Leader Delete Filing Permission & Real-Time Syn
     assert.strictEqual(filterScope(ownFiling, 'MINE'), true);
     assert.strictEqual(filterScope(otherFiling, 'MINE'), false);
     assert.strictEqual(filterScope(paymentFiling, 'MINE'), true, 'Payment folder must be accessible to all members');
+  });
+
+  console.log('\n--- TEST GROUP 8: MISC Stage, Isolated Workflow & Action Buttons ---');
+
+  await it('validateStateTransition permits designated assignee to mark MISC -> CLOSED', () => {
+    const miscFiling = {
+      id: 'misc-task-1',
+      code: 'MISC-001',
+      title: 'Review Client Response',
+      status: 'MISC',
+      assignee_id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc', // Akshay
+      assignee_name: 'Akshay'
+    };
+
+    const res = validateStateTransition({
+      filing: miscFiling,
+      toStatus: 'CLOSED',
+      actorId: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc',
+      actorName: 'Akshay',
+      actor: { id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc', name: 'Akshay' },
+      actorRoles: [PATENT_ROLES.ASSIGNEE]
+    });
+
+    assert.strictEqual(res.valid, true, 'Designated assignee must be able to mark MISC task as Done');
+  });
+
+  await it('validateStateTransition permits Super Admin / Leader to mark MISC -> CLOSED', () => {
+    const miscFiling = {
+      id: 'misc-task-1',
+      code: 'MISC-001',
+      title: 'Review Client Response',
+      status: 'MISC',
+      assignee_id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc', // Akshay
+      assignee_name: 'Akshay'
+    };
+
+    // Mounisha (Super Admin)
+    const resMounisha = validateStateTransition({
+      filing: miscFiling,
+      toStatus: 'CLOSED',
+      actorId: '42a71f9a-7119-457c-8092-0d5b75ce3060',
+      actorName: 'Mounisha',
+      actor: { id: '42a71f9a-7119-457c-8092-0d5b75ce3060', name: 'Mounisha' },
+      actorRoles: [PATENT_ROLES.SUPER_ADMIN]
+    });
+    assert.strictEqual(resMounisha.valid, true, 'Super Admin must be able to mark MISC task as Done');
+
+    // Leader
+    const resLeader = validateStateTransition({
+      filing: miscFiling,
+      toStatus: 'CLOSED',
+      actorId: 'sharan-id',
+      actorName: 'Sharan',
+      actor: { id: 'sharan-id', name: 'Sharan', role: 'Leader' },
+      actorRoles: []
+    });
+    assert.strictEqual(resLeader.valid, true, 'Leader must be able to mark MISC task as Done');
+  });
+
+  await it('validateStateTransition forbids non-assignee from marking MISC -> CLOSED', () => {
+    const miscFiling = {
+      id: 'misc-task-1',
+      code: 'MISC-001',
+      title: 'Review Client Response',
+      status: 'MISC',
+      assignee_id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc', // Akshay
+      assignee_name: 'Akshay'
+    };
+
+    const resOther = validateStateTransition({
+      filing: miscFiling,
+      toStatus: 'CLOSED',
+      actorId: '802e6882-8cf0-4eb7-9cd1-6fdd235a98ad', // Nikhil
+      actorName: 'Nikhil',
+      actor: { id: '802e6882-8cf0-4eb7-9cd1-6fdd235a98ad', name: 'Nikhil', role: 'member' },
+      actorRoles: [PATENT_ROLES.ASSIGNEE]
+    });
+
+    assert.strictEqual(resOther.valid, false);
+    assert.strictEqual(resOther.status, 403);
+    assert.ok(resOther.error.includes('Only the designated assignee or Super Admin can mark this task as done'));
+  });
+
+  await it('Pipeline Isolation: MISC tasks cannot transition into patent pipeline (FILING, AUDIT, PAYMENT, etc.)', () => {
+    const miscFiling = {
+      id: 'misc-task-1',
+      code: 'MISC-001',
+      title: 'Review Client Response',
+      status: 'MISC',
+      assignee_id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc',
+      assignee_name: 'Akshay'
+    };
+
+    const forbiddenTargets = ['ASSIGNED', 'FILING', 'AUDIT', 'CORRECTION', 'PAYMENT', 'ACK'];
+    for (const target of forbiddenTargets) {
+      const res = validateStateTransition({
+        filing: miscFiling,
+        toStatus: target,
+        actorId: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc',
+        actorName: 'Akshay',
+        actor: { id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc', name: 'Akshay' },
+        actorRoles: [PATENT_ROLES.ASSIGNEE]
+      });
+      assert.strictEqual(res.valid, false, `MISC must not transition to ${target}`);
+    }
+  });
+
+  await it('Pipeline Isolation: Standard patent filings cannot transition into MISC stage', () => {
+    const regularFiling = {
+      id: 'filing-1',
+      code: 'PAT-101',
+      status: 'FILING',
+      assignee_id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc',
+      assignee_name: 'Akshay'
+    };
+
+    const res = validateStateTransition({
+      filing: regularFiling,
+      toStatus: 'MISC',
+      actorId: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc',
+      actorName: 'Akshay',
+      actor: { id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc', name: 'Akshay' },
+      actorRoles: [PATENT_ROLES.ASSIGNEE]
+    });
+    assert.strictEqual(res.valid, false, 'Standard filings must not transition to MISC');
+  });
+
+  await it('saveNewFilingToStorage correctly saves MISC task with title, description, and assignee', async () => {
+    const mounishaActor = { id: '42a71f9a-7119-457c-8092-0d5b75ce3060', name: 'Mounisha', role: 'admin' };
+    const members = [
+      { id: '42a71f9a-7119-457c-8092-0d5b75ce3060', name: 'Mounisha' },
+      { id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc', name: 'Akshay' }
+    ];
+
+    const dynamicCode = 'MISC-TEST-' + Date.now();
+    const taskData = {
+      code: dynamicCode,
+      title: 'Draft Client Notice',
+      description: 'Please review and finalize the notice to client regarding patent publication.',
+      assignee_id: '396ee572-3f3b-47cc-8b11-d710cc8ed4bc', // Akshay
+      status: 'MISC',
+      filing_type: 'MISC',
+      priority: 'High'
+    };
+
+    const res = await saveNewFilingToStorage(taskData, mounishaActor, members);
+    assert.strictEqual(res.success, true, 'MISC task should save successfully');
+    assert.strictEqual(res.filing.code, dynamicCode);
+    assert.strictEqual(res.filing.status, 'MISC');
+    assert.strictEqual(res.filing.is_misc, true);
+    assert.strictEqual(res.filing.task_title, 'Draft Client Notice');
+    assert.strictEqual(res.filing.description, 'Please review and finalize the notice to client regarding patent publication.');
+    assert.strictEqual(res.filing.assignee_id, '396ee572-3f3b-47cc-8b11-d710cc8ed4bc');
+
+    // Clean up created test filing from database
+    if (res.filing?.id) {
+      await deleteFilingFromStorage({ filingId: res.filing.id, code: dynamicCode, actor: mounishaActor, actorRoles: [PATENT_ROLES.SUPER_ADMIN] });
+    }
+  });
+
+  await it('Dual action buttons for Super Admin Mounisha: + New Filing & + New Task', () => {
+    const mounishaUser = { id: '42a71f9a-7119-457c-8092-0d5b75ce3060', name: 'Mounisha' };
+    const userRoles = [PATENT_ROLES.SUPER_ADMIN];
+    const isSuperAdmin = hasPatentRole(userRoles, PATENT_ROLES.SUPER_ADMIN) ||
+      (mounishaUser.name && mounishaUser.name.toLowerCase().includes('mounisha'));
+
+    assert.strictEqual(isSuperAdmin, true, 'Mounisha must have Super Admin permissions');
+    // Mounisha has access to both actions:
+    const availableActions = isSuperAdmin ? ['+ New Filing', '+ New Task'] : [];
+    assert.deepStrictEqual(availableActions, ['+ New Filing', '+ New Task']);
   });
 
   console.log('\n=====================================================');

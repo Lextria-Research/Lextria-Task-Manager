@@ -293,11 +293,42 @@ export default function PatentDetailDrawer({
             </div>
           )}
 
+          {/* If MISC task has description, render full description */}
+          {(filing.status === PATENT_STATUSES.MISC || filing.is_misc) && (filing.description || (filing.title && filing.title.includes('\n---\n'))) && (
+            <div className="p-4 rounded-2xl bg-fuchsia-950/25 border border-fuchsia-500/30 space-y-2">
+              <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-fuchsia-300">
+                <ListTodo size={14} />
+                <span>Task Description / Instructions</span>
+              </div>
+              <p className="text-xs text-slate-200 leading-relaxed whitespace-pre-wrap">
+                {filing.description || filing.title.split('\n---\n')[1]}
+              </p>
+            </div>
+          )}
+
           {/* Action Execution Station (Role Guarded) */}
           <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
               Permitted Next Actions
             </h3>
+
+            {/* 0. MISC -> Mark Done (Assignee or Leader only) */}
+            {filing.status === PATENT_STATUSES.MISC && (
+              (isAssignee || isLeader || isSuperAdmin) ? (
+                <button
+                  disabled={isActing}
+                  onClick={() => handleAction(PATENT_STATUSES.CLOSED, {}, 'Task marked completed by assignee')}
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-3 rounded-xl flex items-center justify-center gap-2 cursor-pointer shadow-[0_0_20px_rgba(16,185,129,0.3)] transition"
+                >
+                  <CheckCircle2 size={16} />
+                  <span>Done — Mark Task Completed</span>
+                </button>
+              ) : (
+                <div className="text-xs text-slate-400 italic">
+                  Task assigned to {filing.assignee_name}. Only the assignee or leader can mark this task as done.
+                </div>
+              )
+            )}
 
             {/* 1. ASSIGNED -> Accept (Assignee only) */}
             {filing.status === PATENT_STATUSES.ASSIGNED && (
@@ -570,60 +601,81 @@ export default function PatentDetailDrawer({
           </div>
 
           {/* Key Metadata Table */}
-          <div className="grid grid-cols-2 gap-3 text-xs">
-            {filing.temp_code && (
-              <div className="col-span-2 p-3 rounded-xl bg-purple-950/25 border border-purple-500/30 flex items-center justify-between">
-                <div>
-                  <span className="text-[10px] text-purple-300 block mb-0.5 font-bold uppercase tracking-wider">
-                    Application Temp Code
-                  </span>
-                  <span className="font-mono font-bold text-white text-sm tracking-wide">
-                    {filing.temp_code}
-                  </span>
+          {filing.status === PATENT_STATUSES.MISC || filing.is_misc ? (
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <span className="text-[10px] text-slate-400 block mb-0.5">Assigned To</span>
+                <span className="font-semibold text-white">{filing.assignee_name || 'Unassigned'}</span>
+              </div>
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <span className="text-[10px] text-slate-400 block mb-0.5">Assigned By</span>
+                <span className="font-semibold text-white">Mounisha</span>
+              </div>
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <span className="text-[10px] text-slate-400 block mb-0.5">Priority</span>
+                <span className="font-semibold text-amber-300">{filing.priority || 'Medium'}</span>
+              </div>
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <span className="text-[10px] text-slate-400 block mb-0.5">Due Date</span>
+                <span className="font-semibold text-white">{filing.hard_deadline || 'No due date'}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              {filing.temp_code && (
+                <div className="col-span-2 p-3 rounded-xl bg-purple-950/25 border border-purple-500/30 flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] text-purple-300 block mb-0.5 font-bold uppercase tracking-wider">
+                      Application Temp Code
+                    </span>
+                    <span className="font-mono font-bold text-white text-sm tracking-wide">
+                      {filing.temp_code}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(filing.temp_code);
+                      setCopiedTempCode(true);
+                      setTimeout(() => setCopiedTempCode(false), 2000);
+                    }}
+                    className="text-xs px-2.5 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-500/40 flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Copy size={12} />
+                    <span>{copiedTempCode ? 'Copied!' : 'Copy'}</span>
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(filing.temp_code);
-                    setCopiedTempCode(true);
-                    setTimeout(() => setCopiedTempCode(false), 2000);
-                  }}
-                  className="text-xs px-2.5 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-500/40 flex items-center gap-1.5 transition cursor-pointer"
-                >
-                  <Copy size={12} />
-                  <span>{copiedTempCode ? 'Copied!' : 'Copy'}</span>
-                </button>
-              </div>
-            )}
-            <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-              <span className="text-[10px] text-slate-400 block mb-0.5">Assignee</span>
-              <span className="font-semibold text-white">{filing.assignee_name || 'Unassigned'}</span>
-            </div>
-            <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-              <span className="text-[10px] text-slate-400 block mb-0.5">Auditor</span>
-              <span className="font-semibold text-white">{filing.auditor_name || 'Unassigned'}</span>
-            </div>
-            <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-              <span className="text-[10px] text-slate-400 block mb-0.5">Est. Filing Time</span>
-              <span className="font-semibold text-white">{filing.est_filing_minutes || 0} mins</span>
-            </div>
-            <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-              <span className="text-[10px] text-slate-400 block mb-0.5">Est. Audit Time</span>
-              <span className="font-semibold text-white">{filing.est_audit_minutes || 0} mins</span>
-            </div>
-            {filing.hard_deadline && (
+              )}
               <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-                <span className="text-[10px] text-slate-400 block mb-0.5">Hard Deadline</span>
-                <span className="font-semibold text-amber-300">{filing.hard_deadline}</span>
+                <span className="text-[10px] text-slate-400 block mb-0.5">Assignee</span>
+                <span className="font-semibold text-white">{filing.assignee_name || 'Unassigned'}</span>
               </div>
-            )}
-            {filing.payment_reference && (
               <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-                <span className="text-[10px] text-slate-400 block mb-0.5">Payment Ref</span>
-                <span className="font-mono font-bold text-emerald-300">{filing.payment_reference}</span>
+                <span className="text-[10px] text-slate-400 block mb-0.5">Auditor</span>
+                <span className="font-semibold text-white">{filing.auditor_name || 'Unassigned'}</span>
               </div>
-            )}
-          </div>
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <span className="text-[10px] text-slate-400 block mb-0.5">Est. Filing Time</span>
+                <span className="font-semibold text-white">{filing.est_filing_minutes || 0} mins</span>
+              </div>
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <span className="text-[10px] text-slate-400 block mb-0.5">Est. Audit Time</span>
+                <span className="font-semibold text-white">{filing.est_audit_minutes || 0} mins</span>
+              </div>
+              {filing.hard_deadline && (
+                <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                  <span className="text-[10px] text-slate-400 block mb-0.5">Hard Deadline</span>
+                  <span className="font-semibold text-amber-300">{filing.hard_deadline}</span>
+                </div>
+              )}
+              {filing.payment_reference && (
+                <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                  <span className="text-[10px] text-slate-400 block mb-0.5">Payment Ref</span>
+                  <span className="font-mono font-bold text-emerald-300">{filing.payment_reference}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Correction Rounds Section */}
           <div className="space-y-3">

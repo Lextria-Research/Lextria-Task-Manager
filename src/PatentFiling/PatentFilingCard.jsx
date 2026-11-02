@@ -1,9 +1,21 @@
 // src/PatentFiling/PatentFilingCard.jsx
 // Dedicated Kanban Card for Patent Filing Workflow matching Tasks design tokens
+// Supports both standard 6-stage Patent Filings and isolated MISC tasks.
 
-import { Clock, Calendar, RotateCcw, Flame, Trash2, Edit3 } from 'lucide-react';
+import { Clock, Calendar, RotateCcw, Flame, Trash2, Edit3, CheckCircle2, ListTodo } from 'lucide-react';
+import { PATENT_STATUSES } from '../patent/patentStateMachine.js';
 
-export default function PatentFilingCard({ filing, onClick, currentUser, onDelete, isLeader, isSuperAdmin, onEdit }) {
+export default function PatentFilingCard({
+  filing,
+  onClick,
+  currentUser,
+  onDelete,
+  isLeader,
+  isSuperAdmin,
+  onEdit,
+  onMarkDone
+}) {
+  const isMisc = filing.status === PATENT_STATUSES.MISC || filing.is_misc || filing.filing_type === 'MISC';
   const isUrgent = filing.priority === 'Urgent' || filing.priority === 'High';
   const todayStr = new Date().toISOString().split('T')[0];
   const isOverdue = filing.hard_deadline && filing.hard_deadline < todayStr && filing.status !== 'CLOSED';
@@ -35,6 +47,9 @@ export default function PatentFilingCard({ filing, onClick, currentUser, onDelet
   const isUserAuditor = String(filing.auditor_id) === String(currentUser?.id) ||
     (currentUser?.name && filing.auditor_name && filing.auditor_name.toLowerCase().includes(currentUser.name.toLowerCase()));
 
+  const displayTitle = isMisc ? (filing.task_title || filing.title || filing.code) : (filing.filing_type || 'Patent Filing');
+  const displayDescription = isMisc ? (filing.description || (filing.title && filing.title.includes('\n---\n') ? filing.title.split('\n---\n')[1] : '')) : '';
+
   return (
     <div
       onClick={() => onClick(filing)}
@@ -43,13 +58,19 @@ export default function PatentFilingCard({ filing, onClick, currentUser, onDelet
           ? 'border-rose-500/50 bg-rose-500/[0.06] shadow-[0_0_15px_rgba(244,63,94,0.15)]'
           : isUrgent
             ? 'border-amber-500/35 bg-amber-500/[0.03]'
-            : 'border-white/10'
+            : isMisc
+              ? 'border-fuchsia-500/30 hover:border-fuchsia-400/50'
+              : 'border-white/10'
       }`}
     >
-      {/* Top Row: Code + Small Delete Button (Leader Only) + Priority */}
+      {/* Top Row: Code + Small Edit/Delete Buttons + Priority */}
       <div className="flex items-center justify-between gap-2 w-full">
         <div className="flex items-center gap-1.5 shrink-0">
-          <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-lg bg-brand-500/15 text-brand-300 border border-brand-500/30 tracking-wide shrink-0">
+          <span className={`font-mono text-xs font-bold px-2 py-0.5 rounded-lg border tracking-wide shrink-0 ${
+            isMisc
+              ? 'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40'
+              : 'bg-brand-500/15 text-brand-300 border-brand-500/30'
+          }`}>
             {filing.code}
           </span>
           {isSuperAdmin && onEdit && (
@@ -70,12 +91,12 @@ export default function PatentFilingCard({ filing, onClick, currentUser, onDelet
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                if (window.confirm(`Are you sure you want to delete filing "${filing.code}"? This will permanently remove it from the workflow.`)) {
+                if (window.confirm(`Are you sure you want to delete "${filing.code}"? This will permanently remove it from the workflow.`)) {
                   onDelete(filing);
                 }
               }}
               className="opacity-0 group-hover:opacity-100 transition p-1 hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 rounded-lg shrink-0 cursor-pointer"
-              title="Delete filing (Leader only)"
+              title="Delete (Leader only)"
             >
               <Trash2 size={12} />
             </button>
@@ -99,70 +120,109 @@ export default function PatentFilingCard({ filing, onClick, currentUser, onDelet
         </span>
       </div>
 
-      {/* Prominent Filing Type Title */}
-      <div className="pt-0.5 flex items-center justify-between gap-1.5">
-        <h4 className="text-xs font-semibold text-slate-100 tracking-tight leading-snug truncate" title={filing.filing_type}>
-          {filing.filing_type || 'Patent Filing'}
-        </h4>
-        {filing.temp_code && (
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-300 border border-purple-500/30 font-mono font-bold tracking-wide shrink-0 truncate max-w-[130px]"
-            title={`Application Temp Code: ${filing.temp_code}`}
-          >
-            Temp: {filing.temp_code}
-          </span>
+      {/* Title / Description */}
+      <div className="pt-0.5 flex flex-col gap-1">
+        <div className="flex items-center justify-between gap-1.5">
+          <h4 className="text-xs font-semibold text-slate-100 tracking-tight leading-snug line-clamp-2" title={displayTitle}>
+            {displayTitle}
+          </h4>
+          {!isMisc && filing.temp_code && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-300 border border-purple-500/30 font-mono font-bold tracking-wide shrink-0 truncate max-w-[130px]"
+              title={`Application Temp Code: ${filing.temp_code}`}
+            >
+              Temp: {filing.temp_code}
+            </span>
+          )}
+        </div>
+
+        {/* If MISC task has description, render preview */}
+        {isMisc && displayDescription && (
+          <p className="text-[11px] text-slate-300 bg-white/[0.03] p-2 rounded-xl border border-white/5 line-clamp-2 leading-relaxed">
+            {displayDescription}
+          </p>
         )}
       </div>
 
-      {/* Personnel Row: Filer -> Reviewer (Clean & Uncrowded) */}
-      <div className="flex items-center justify-between gap-1.5 py-1.5 px-2.5 rounded-xl bg-white/[0.03] border border-white/5 text-[11px]">
-        {/* Filer */}
-        <div className="flex items-center gap-1.5 min-w-0" title={`Assignee (Filer): ${filing.assignee_name || 'Unassigned'}`}>
-          <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${
-            isUserAssignee ? 'bg-indigo-500 ring-2 ring-indigo-400/50' : 'bg-indigo-600/70 border border-indigo-400/30'
-          }`}>
-            {getInitials(filing.assignee_name)}
+      {/* Personnel Row */}
+      {isMisc ? (
+        // MISC: Clean Assignee & Assigner display
+        <div className="flex items-center justify-between gap-1.5 py-1.5 px-2.5 rounded-xl bg-white/[0.03] border border-white/5 text-[11px]">
+          <div className="flex items-center gap-1.5 min-w-0" title={`Assignee: ${filing.assignee_name || 'Unassigned'}`}>
+            <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${
+              isUserAssignee ? 'bg-fuchsia-500 ring-2 ring-fuchsia-400/50' : 'bg-fuchsia-600/70 border border-fuchsia-400/30'
+            }`}>
+              {getInitials(filing.assignee_name)}
+            </div>
+            <div className="flex flex-col min-w-0">
+              <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider leading-none">Assigned To</span>
+              <span className="text-slate-200 font-medium truncate max-w-[100px] text-[11px] leading-tight">
+                {filing.assignee_name || 'Assignee'}
+              </span>
+            </div>
           </div>
-          <div className="flex flex-col min-w-0">
-            <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider leading-none">Filer</span>
-            <span className="text-slate-200 font-medium truncate max-w-[65px] text-[11px] leading-tight">
-              {filing.assignee_name || 'Assignee'}
+
+          <div className="flex flex-col items-end text-right min-w-0">
+            <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider leading-none">Assigned By</span>
+            <span className="text-slate-300 font-medium truncate max-w-[75px] text-[11px] leading-tight">
+              Mounisha
             </span>
           </div>
         </div>
-
-        {/* Direction Arrow */}
-        <span className="text-slate-500 text-[11px] font-bold shrink-0">&rarr;</span>
-
-        {/* Auditor */}
-        <div className="flex items-center gap-1.5 min-w-0 justify-end" title={`Auditor (Reviewer): ${filing.auditor_name || 'Unassigned'}`}>
-          <div className="flex flex-col min-w-0 items-end text-right">
-            <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider leading-none">Reviewer</span>
-            <span className="text-slate-200 font-medium truncate max-w-[65px] text-[11px] leading-tight">
-              {filing.auditor_name || 'Auditor'}
-            </span>
+      ) : (
+        // Regular Filing: Filer -> Reviewer
+        <div className="flex items-center justify-between gap-1.5 py-1.5 px-2.5 rounded-xl bg-white/[0.03] border border-white/5 text-[11px]">
+          <div className="flex items-center gap-1.5 min-w-0" title={`Assignee (Filer): ${filing.assignee_name || 'Unassigned'}`}>
+            <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${
+              isUserAssignee ? 'bg-indigo-500 ring-2 ring-indigo-400/50' : 'bg-indigo-600/70 border border-indigo-400/30'
+            }`}>
+              {getInitials(filing.assignee_name)}
+            </div>
+            <div className="flex flex-col min-w-0">
+              <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider leading-none">Filer</span>
+              <span className="text-slate-200 font-medium truncate max-w-[65px] text-[11px] leading-tight">
+                {filing.assignee_name || 'Assignee'}
+              </span>
+            </div>
           </div>
-          <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${
-            isUserAuditor ? 'bg-purple-500 ring-2 ring-purple-400/50' : 'bg-purple-600/70 border border-purple-400/30'
-          }`}>
-            {getInitials(filing.auditor_name)}
+
+          <span className="text-slate-500 text-[11px] font-bold shrink-0">&rarr;</span>
+
+          <div className="flex items-center gap-1.5 min-w-0 justify-end" title={`Auditor (Reviewer): ${filing.auditor_name || 'Unassigned'}`}>
+            <div className="flex flex-col min-w-0 items-end text-right">
+              <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider leading-none">Reviewer</span>
+              <span className="text-slate-200 font-medium truncate max-w-[65px] text-[11px] leading-tight">
+                {filing.auditor_name || 'Auditor'}
+              </span>
+            </div>
+            <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${
+              isUserAuditor ? 'bg-purple-500 ring-2 ring-purple-400/50' : 'bg-purple-600/70 border border-purple-400/30'
+            }`}>
+              {getInitials(filing.auditor_name)}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Bottom Row: Estimated Time + Correction Count + Deadline */}
+      {/* Bottom Row */}
       <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-white/5">
-        {/* Estimated Time */}
-        <div 
-          className="flex items-center gap-1 font-medium text-slate-300"
-          title={`Total Estimate: ${formatMins(totalEstMinutes)}`}
-        >
-          <Clock size={11} className="text-brand-400 shrink-0" />
-          <span>{formatMins(totalEstMinutes)}</span>
-        </div>
+        {isMisc ? (
+          <div className="flex items-center gap-1 font-medium text-fuchsia-300">
+            <ListTodo size={11} className="text-fuchsia-400 shrink-0" />
+            <span>Standalone Task</span>
+          </div>
+        ) : (
+          <div 
+            className="flex items-center gap-1 font-medium text-slate-300"
+            title={`Total Estimate: ${formatMins(totalEstMinutes)}`}
+          >
+            <Clock size={11} className="text-brand-400 shrink-0" />
+            <span>{formatMins(totalEstMinutes)}</span>
+          </div>
+        )}
 
-        {/* Correction Badge */}
-        {filing.correction_count > 0 && (
+        {/* Correction Badge (Filings only) */}
+        {!isMisc && filing.correction_count > 0 && (
           <span className="flex items-center gap-1 font-bold text-[10px] px-1.5 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
             <RotateCcw size={10} />
             <span>R{filing.correction_count}</span>
@@ -179,13 +239,28 @@ export default function PatentFilingCard({ filing, onClick, currentUser, onDelet
                   ? 'bg-amber-500/20 text-amber-200 border border-amber-500/40'
                   : 'text-slate-300'
             }`}
-            title={`Statutory Deadline: ${filing.hard_deadline}`}
+            title={`Deadline: ${filing.hard_deadline}`}
           >
             <Calendar size={11} className={isOverdue ? 'text-rose-400' : isDueToday ? 'text-amber-400' : 'text-slate-400'} />
             <span>{filing.hard_deadline}</span>
           </div>
         )}
       </div>
+
+      {/* Quick "Mark Done" Button for Assignee / Leader when card is in MISC */}
+      {filing.status === PATENT_STATUSES.MISC && (isUserAssignee || isLeader || isSuperAdmin) && onMarkDone && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onMarkDone(filing);
+          }}
+          className="w-full mt-0.5 py-1.5 px-2.5 rounded-xl bg-emerald-600/80 hover:bg-emerald-600 text-white font-bold text-[11px] flex items-center justify-center gap-1.5 transition cursor-pointer shadow-md"
+        >
+          <CheckCircle2 size={13} />
+          <span>Mark Done</span>
+        </button>
+      )}
     </div>
   );
 }

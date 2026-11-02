@@ -348,33 +348,51 @@ export function buildFilingTransitionNotifications({
     }
   }
 
-  // 6. ACK -> CLOSED (closed by ACK_CHECKER)
+  // 6. ACK -> CLOSED or MISC -> CLOSED
   else if (toStatus === 'CLOSED') {
-    if (filing.assignee_id && !isActorAssignee) {
-      notifications.push({
-        id: `notif-${Date.now()}-closed-assignee-${Math.random().toString(36).slice(2, 7)}`,
-        recipient_id: filing.assignee_id,
-        filing_id: filing.id,
-        code: filing.code,
-        type: 'STAGE_CLOSED',
-        role_type: 'filer', // Air horn sound
-        message: `${filing.code} – ${filing.filing_type} has been officially closed and completed!`,
-        read: false,
-        created_at: nowIso
-      });
-    }
-    if (filing.auditor_id && !isActorAuditor) {
-      notifications.push({
-        id: `notif-${Date.now()}-closed-auditor-${Math.random().toString(36).slice(2, 7)}`,
-        recipient_id: filing.auditor_id,
-        filing_id: filing.id,
-        code: filing.code,
-        type: 'STAGE_CLOSED',
-        role_type: 'auditor', // Doorbell sound
-        message: `${filing.code} – ${filing.filing_type} has been officially closed and completed!`,
-        read: false,
-        created_at: nowIso
-      });
+    if (fromStatus === 'MISC') {
+      // MISC task completed by assignee: notify Super Admin Mounisha
+      const mounishaUuid = '42a71f9a-7119-457c-8092-0d5b75ce3060';
+      if (!isMemberMatch(actorId, actorName, mounishaUuid, 'Mounisha')) {
+        notifications.push({
+          id: `notif-${Date.now()}-closed-misc-${Math.random().toString(36).slice(2, 7)}`,
+          recipient_id: mounishaUuid,
+          filing_id: filing.id,
+          code: filing.code,
+          type: 'STAGE_CLOSED',
+          role_type: 'auditor', // Doorbell sound
+          message: `${filing.code} – "${filing.task_title || filing.title || 'Task'}" has been marked Completed by ${actorName || 'Assignee'}!`,
+          read: false,
+          created_at: nowIso
+        });
+      }
+    } else {
+      if (filing.assignee_id && !isActorAssignee) {
+        notifications.push({
+          id: `notif-${Date.now()}-closed-assignee-${Math.random().toString(36).slice(2, 7)}`,
+          recipient_id: filing.assignee_id,
+          filing_id: filing.id,
+          code: filing.code,
+          type: 'STAGE_CLOSED',
+          role_type: 'filer', // Air horn sound
+          message: `${filing.code} – ${filing.filing_type} has been officially closed and completed!`,
+          read: false,
+          created_at: nowIso
+        });
+      }
+      if (filing.auditor_id && !isActorAuditor) {
+        notifications.push({
+          id: `notif-${Date.now()}-closed-auditor-${Math.random().toString(36).slice(2, 7)}`,
+          recipient_id: filing.auditor_id,
+          filing_id: filing.id,
+          code: filing.code,
+          type: 'STAGE_CLOSED',
+          role_type: 'auditor', // Doorbell sound
+          message: `${filing.code} – ${filing.filing_type} has been officially closed and completed!`,
+          read: false,
+          created_at: nowIso
+        });
+      }
     }
   }
 

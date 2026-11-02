@@ -155,8 +155,27 @@ export async function loadFilingsFromStorage(allMembers = []) {
         const a = allMembers.find(m => String(m.id) === String(f.assignee_id));
         const u = allMembers.find(m => String(m.id) === String(f.auditor_id));
         const c = cachedMap.get(f.id);
+
+        const isMisc = f.filing_type === 'MISC' || f.status === 'MISC' || (f.code && f.code.startsWith('MISC-'));
+        let currentStatus = f.status;
+        if (isMisc && currentStatus === 'ASSIGNED') {
+          currentStatus = PATENT_STATUSES.MISC;
+        }
+
+        let taskTitle = f.title || f.code;
+        let taskDesc = f.temp_code || '';
+        if (f.title && f.title.includes('\n---\n')) {
+          const parts = f.title.split('\n---\n');
+          taskTitle = parts[0];
+          taskDesc = f.temp_code || parts.slice(1).join('\n---\n');
+        }
+
         return {
           ...f,
+          status: currentStatus,
+          is_misc: isMisc,
+          task_title: taskTitle,
+          description: taskDesc,
           temp_code: f.temp_code || c?.temp_code || null,
           assignee_name: a ? a.name : (f.assignee_name || getKnownMemberName(f.assignee_id, 'Assignee')),
           auditor_name: u ? u.name : (f.auditor_name || getKnownMemberName(f.auditor_id, 'Auditor')),
@@ -177,7 +196,13 @@ export async function loadFilingsFromStorage(allMembers = []) {
   // Fallback to local cache only if Supabase call failed
   const cached = getLocalCache(LOCAL_STORAGE_KEY, []);
   if (Array.isArray(cached)) {
-    return cached;
+    return cached.map(f => {
+      const isMisc = f.filing_type === 'MISC' || f.status === 'MISC' || (f.code && f.code.startsWith('MISC-'));
+      if (isMisc && f.status === 'ASSIGNED') {
+        return { ...f, status: PATENT_STATUSES.MISC, is_misc: true };
+      }
+      return f;
+    });
   }
 
   return [];
@@ -187,36 +212,61 @@ export async function loadFilingsFromStorage(allMembers = []) {
  * Creates a new filing and persists it to Supabase and local cache.
  */
 export async function saveNewFilingToStorage(filingData, actor, allMembers = []) {
-  const cleanCode = (filingData.code || '').trim().toUpperCase();
+  const isMiscTask = filingData.status === PATENT_STATUSES.MISC || filingData.filing_type === 'MISC';
+
+  const cleanCode = (filingData.code || '').trim().toUpperCase() || (isMiscTask ? `MISC-${Date.now().toString().slice(-4)}` : '');
   if (!cleanCode) {
     return { success: false, error: 'Filing code is required.' };
   }
-  const cleanType = (filingData.filing_type || '').trim();
+  const cleanType = isMiscTask ? 'MISC' : (filingData.filing_type || '').trim();
   if (!cleanType) {
     return { success: false, error: 'Filing type is required.' };
   }
 
   const creatorUuid = resolveMemberUuid(actor?.id || actor?.name, '42a71f9a-7119-457c-8092-0d5b75ce3060', allMembers);
   const assigneeUuid = resolveMemberUuid(filingData.assignee_id, null, allMembers);
-  const auditorUuid = resolveMemberUuid(filingData.auditor_id, null, allMembers);
 
-  if (!assigneeUuid || !auditorUuid) {
-    return { success: false, error: 'Valid assignee and auditor are required.' };
+  if (!assigneeUuid) {
+    return { success: false, error: 'Valid assignee is required.' };
   }
-  if (assigneeUuid === auditorUuid) {
-    return { success: false, error: 'Assignee and auditor must be different individuals.' };
+
+  let auditorUuid;
+  if (isMiscTask) {
+    // For MISC tasks, no separate auditor is chosen by user.
+    // To satisfy Postgres foreign keys and chk_assignee_not_auditor:
+    if (assigneeUuid !== creatorUuid) {
+      auditorUuid = creatorUuid;
+    } else {
+      auditorUuid = KNOWN_MEMBER_UUIDS.prathvi;
+    }
+  } else {
+    auditorUuid = resolveMemberUuid(filingData.auditor_id, null, allMembers);
+    if (!auditorUuid) {
+      return { success: false, error: 'Valid auditor is required.' };
+    }
+    if (assigneeUuid === auditorUuid) {
+      return { success: false, error: 'Assignee and auditor must be different individuals.' };
+    }
   }
 
   const nowIso = new Date().toISOString();
   const assigneeMember = allMembers.find(m => String(m.id) === String(assigneeUuid));
   const auditorMember = allMembers.find(m => String(m.id) === String(auditorUuid));
 
+  const rawTitle = filingData.title || '';
+  const taskDesc = filingData.description || '';
+  const combinedTitle = isMiscTask && taskDesc ? `${rawTitle}\n---\n${taskDesc}` : (rawTitle || null);
+  const initialStatus = isMiscTask ? PATENT_STATUSES.MISC : PATENT_STATUSES.ASSIGNED;
+
   const newRecord = {
     id: `filing-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     code: cleanCode,
     filing_type: cleanType,
-    temp_code: filingData.temp_code || null,
-    title: filingData.title || null,
+    temp_code: isMiscTask ? (taskDesc || null) : (filingData.temp_code || null),
+    title: combinedTitle,
+    task_title: rawTitle || cleanCode,
+    description: taskDesc,
+    is_misc: isMiscTask,
     assignee_id: assigneeUuid,
     auditor_id: auditorUuid,
     assignee_name: assigneeMember ? assigneeMember.name : getKnownMemberName(assigneeUuid, 'Assignee'),
@@ -225,7 +275,7 @@ export async function saveNewFilingToStorage(filingData, actor, allMembers = [])
     est_audit_minutes: Number(filingData.est_audit_minutes) || 0,
     hard_deadline: filingData.hard_deadline || null,
     priority: filingData.priority || 'Medium',
-    status: PATENT_STATUSES.ASSIGNED,
+    status: initialStatus,
     version: 1,
     correction_count: 0,
     created_by: creatorUuid,
@@ -235,7 +285,8 @@ export async function saveNewFilingToStorage(filingData, actor, allMembers = [])
 
   // 1. Insert into Supabase with guaranteed valid UUIDs
   try {
-    const { data, error } = await supabase
+    let insertStatus = initialStatus;
+    let { data, error } = await supabase
       .from('patent_filings')
       .insert([{
         code: newRecord.code,
@@ -247,12 +298,40 @@ export async function saveNewFilingToStorage(filingData, actor, allMembers = [])
         est_audit_minutes: newRecord.est_audit_minutes,
         hard_deadline: newRecord.hard_deadline,
         priority: newRecord.priority,
-        status: newRecord.status,
+        status: insertStatus,
         version: 1,
-        created_by: creatorUuid
+        created_by: creatorUuid,
+        temp_code: newRecord.temp_code
       }])
       .select()
       .single();
+
+    // If status check constraint failed because 'MISC' is not yet in the DB check constraint, fallback to 'ASSIGNED'
+    if (error && error.code === '23514' && isMiscTask) {
+      console.warn('DB status constraint rejected MISC, saving as ASSIGNED with filing_type=MISC');
+      insertStatus = 'ASSIGNED';
+      const retry = await supabase
+        .from('patent_filings')
+        .insert([{
+          code: newRecord.code,
+          filing_type: newRecord.filing_type,
+          title: newRecord.title,
+          assignee_id: assigneeUuid,
+          auditor_id: auditorUuid,
+          est_filing_minutes: newRecord.est_filing_minutes,
+          est_audit_minutes: newRecord.est_audit_minutes,
+          hard_deadline: newRecord.hard_deadline,
+          priority: newRecord.priority,
+          status: insertStatus,
+          version: 1,
+          created_by: creatorUuid,
+          temp_code: newRecord.temp_code
+        }])
+        .select()
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       console.error('Supabase insert error in saveNewFilingToStorage:', error);
@@ -274,18 +353,18 @@ export async function saveNewFilingToStorage(filingData, actor, allMembers = [])
   const initialEvent = {
     filing_id: newRecord.id,
     from_status: null,
-    to_status: PATENT_STATUSES.ASSIGNED,
+    to_status: initialStatus,
     actor_id: creatorUuid,
     actor_name: actor?.name || 'Mounisha',
     timestamp: nowIso,
-    note: 'Filing created and assigned by Super Admin'
+    note: isMiscTask ? `Task assigned by Super Admin: ${rawTitle}` : 'Filing created and assigned by Super Admin'
   };
 
   try {
     await supabase.from('patent_filing_events').insert([{
       filing_id: newRecord.id,
       from_status: null,
-      to_status: PATENT_STATUSES.ASSIGNED,
+      to_status: initialStatus,
       actor_id: creatorUuid,
       timestamp: nowIso,
       note: initialEvent.note
@@ -303,13 +382,28 @@ export async function saveNewFilingToStorage(filingData, actor, allMembers = [])
   events.push(initialEvent);
   saveLocalCache(LOCAL_EVENTS_KEY, events);
 
-  // 4. Generate & persist server-decided notifications for Assignee and Auditor
-  const notifications = buildFilingCreationNotifications({
-    filing: newRecord,
-    creatorName: actor?.name || 'Mounisha',
-    assigneeUuid,
-    auditorUuid
-  });
+  // 4. Generate & persist server-decided notifications
+  let notifications = [];
+  if (isMiscTask) {
+    notifications = [{
+      id: `notif-${Date.now()}-task-${Math.random().toString(36).slice(2, 7)}`,
+      recipient_id: assigneeUuid,
+      filing_id: newRecord.id,
+      code: newRecord.code,
+      type: 'STAGE_MISC',
+      role_type: 'filer',
+      message: `Mounisha assigned you a new task: "${rawTitle}"`,
+      read: false,
+      created_at: nowIso
+    }];
+  } else {
+    notifications = buildFilingCreationNotifications({
+      filing: newRecord,
+      creatorName: actor?.name || 'Mounisha',
+      assigneeUuid,
+      auditorUuid
+    });
+  }
   await savePatentNotificationsToDb(notifications);
 
   // 5. Broadcast real-time change event across all connected clients
@@ -323,7 +417,9 @@ export async function saveNewFilingToStorage(filingData, actor, allMembers = [])
     version: newRecord.version
   });
 
-  const confirmationToast = buildSuperAdminConfirmationMessage(newRecord, newRecord.assignee_name, newRecord.auditor_name);
+  const confirmationToast = isMiscTask
+    ? `Task "${rawTitle}" successfully assigned to ${newRecord.assignee_name} in MISC!`
+    : buildSuperAdminConfirmationMessage(newRecord, newRecord.assignee_name, newRecord.auditor_name);
 
   return { success: true, filing: newRecord, notifications, confirmationToast };
 }

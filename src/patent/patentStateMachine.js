@@ -12,7 +12,8 @@ export const PATENT_STATUSES = {
   CORRECTION: 'CORRECTION',
   PAYMENT: 'PAYMENT',
   ACK: 'ACK',
-  CLOSED: 'CLOSED'
+  CLOSED: 'CLOSED',
+  MISC: 'MISC'
 };
 
 export const ALLOWED_STATUS_LIST = [
@@ -22,7 +23,8 @@ export const ALLOWED_STATUS_LIST = [
   PATENT_STATUSES.CORRECTION,
   PATENT_STATUSES.PAYMENT,
   PATENT_STATUSES.ACK,
-  PATENT_STATUSES.CLOSED
+  PATENT_STATUSES.CLOSED,
+  PATENT_STATUSES.MISC
 ];
 
 /**
@@ -94,6 +96,17 @@ export function validateStateTransition({
     return { valid: true };
   }
 
+  // MISC -> CLOSED: The designated assignee or Super Admin / Leader marks Done once completed
+  if (fromStatus === PATENT_STATUSES.MISC && toStatus === PATENT_STATUSES.CLOSED) {
+    const isAssignee = isMemberMatch(effectiveActorId, effectiveActorName, filing.assignee_id, filing.assignee_name);
+    const isLeader = isSuperAdmin ||
+      (actor?.role && String(actor.role).toLowerCase() === 'leader');
+    if (isAssignee || isLeader || isSuperAdmin) {
+      return { valid: true };
+    }
+    return { valid: false, status: 403, error: 'Only the designated assignee or Super Admin can mark this task as done.' };
+  }
+
   // Non-SuperAdmin must have at least one module role
   if (!actorRoles || actorRoles.length === 0) {
     return { valid: false, status: 403, error: 'Actor does not hold any Patent Workflow module role.' };
@@ -162,6 +175,9 @@ export function validateStateTransition({
     }
     return { valid: true };
   }
+
+
+
 
   // Any other transition is forbidden
   return {
