@@ -150,24 +150,19 @@ export default async function handler(req, res) {
               client_id: newClient.id,
               client_code: cleanCode,
               client_name: cleanName,
+              entity_type: entity_type || 'COMPANY',
+              email: portalLoginEmail,
+              phone: phone?.trim() || null,
+              gstin: gstin?.trim() || null,
+              pan: pan?.trim() || null,
+              billing_address: billing_address?.trim() || null,
+              state_code: state_code?.trim() || null,
               portal_access: true,
             },
           });
 
           if (!aErr && authRes?.user) {
             portalUser = authRes.user;
-
-            // Upsert in core.profiles
-            await centralAdmin
-              .schema('core')
-              .from('profiles')
-              .upsert({
-                id: authRes.user.id,
-                email: portalLoginEmail,
-                display_name: cleanName,
-                role: 'CLIENT',
-                active: true,
-              }, { onConflict: 'id' });
           } else if (aErr) {
             portalError = aErr.message;
             console.warn('Supabase auth create warning:', aErr.message);
@@ -184,20 +179,16 @@ export default async function handler(req, res) {
                   client_id: newClient.id,
                   client_code: cleanCode,
                   client_name: cleanName,
+                  entity_type: entity_type || 'COMPANY',
+                  email: portalLoginEmail,
+                  phone: phone?.trim() || null,
+                  gstin: gstin?.trim() || null,
+                  pan: pan?.trim() || null,
+                  billing_address: billing_address?.trim() || null,
+                  state_code: state_code?.trim() || null,
                   portal_access: true,
                 }
               });
-
-              await centralAdmin
-                .schema('core')
-                .from('profiles')
-                .upsert({
-                  id: existingAuth.id,
-                  email: portalLoginEmail,
-                  display_name: cleanName,
-                  role: 'CLIENT',
-                  active: true,
-                }, { onConflict: 'id' });
 
               portalUser = existingAuth;
             }
@@ -305,22 +296,19 @@ export default async function handler(req, res) {
                 client_id: id,
                 client_code: updatedClient.client_code,
                 client_name: updatedClient.client_name,
+                entity_type: updatedClient.entity_type || 'COMPANY',
+                email: targetPortalEmail,
+                phone: updatedClient.phone || null,
+                gstin: updatedClient.gstin || null,
+                pan: updatedClient.pan || null,
+                billing_address: updatedClient.billing_address || null,
+                state_code: updatedClient.state_code || null,
                 portal_access: true,
               },
             });
 
             if (newAuth?.user) {
               updatedPortalUser = newAuth.user;
-              await centralAdmin
-                .schema('core')
-                .from('profiles')
-                .upsert({
-                  id: newAuth.user.id,
-                  email: targetPortalEmail,
-                  display_name: updatedClient.client_name,
-                  role: 'CLIENT',
-                  active: true,
-                }, { onConflict: 'id' });
             }
           } else {
             // Update existing portal user's credentials and metadata
@@ -331,6 +319,13 @@ export default async function handler(req, res) {
                 client_id: id,
                 client_code: updatedClient.client_code,
                 client_name: updatedClient.client_name,
+                entity_type: updatedClient.entity_type || 'COMPANY',
+                email: targetPortalEmail,
+                phone: updatedClient.phone || null,
+                gstin: updatedClient.gstin || null,
+                pan: updatedClient.pan || null,
+                billing_address: updatedClient.billing_address || null,
+                state_code: updatedClient.state_code || null,
                 portal_access: true,
               }
             };
@@ -343,18 +338,6 @@ export default async function handler(req, res) {
 
             const { data: updRes } = await centralAdmin.auth.admin.updateUserById(existingUser.id, authUpdates);
             updatedPortalUser = updRes?.user || existingUser;
-
-            // Sync email and name to core.profiles
-            await centralAdmin
-              .schema('core')
-              .from('profiles')
-              .upsert({
-                id: existingUser.id,
-                email: authUpdates.email || existingUser.email,
-                display_name: updatedClient.client_name,
-                role: 'CLIENT',
-                active: true,
-              }, { onConflict: 'id' });
           }
         } else if (portal_access === false && existingUser) {
           // Deactivate / delete portal access
