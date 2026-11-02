@@ -24,7 +24,10 @@ import {
   recordDisplayedToastId,
   getDisplayedToastIds,
   LOCAL_NOTIFICATIONS_KEY,
-  DISPLAYED_TOASTS_KEY
+  DISPLAYED_TOASTS_KEY,
+  fetchUserPatentNotifications,
+  markPatentNotificationAsRead,
+  markAllPatentNotificationsAsRead
 } from './src/PatentFiling/patentNotifications.js';
 import { isEventRecipient } from './src/PatentFiling/patentRealtime.js';
 
@@ -267,9 +270,10 @@ pass('CHECK 6: Sound toggle Off in settings silences audio while toast is delive
 
 // Check 7: Akshay was logged out during assignment -> on next login within 24h gets toast + sound
 localStorage.clear();
+const TEST_OFFLINE_ID = 'test-offline-akshay-user-id';
 const recentNotif = {
   id: 'notif-offline-recent',
-  recipient_id: AKSHAY_ID,
+  recipient_id: TEST_OFFLINE_ID,
   filing_id: sampleFiling.id,
   code: sampleFiling.code,
   type: 'ASSIGNMENT_ASSIGNEE',
@@ -283,7 +287,7 @@ localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify([recentNotif]));
 playedAudios = [];
 let deliveredToasts = [];
 await checkOfflinePatentNotifications({
-  currentUser: { id: AKSHAY_ID },
+  currentUser: { id: TEST_OFFLINE_ID },
   onDeliverToast: (notif) => {
     deliveredToasts.push(notif);
   }
@@ -295,7 +299,7 @@ assert.strictEqual(playedAudios.length, 1, 'Played sound for offline catch-up wi
 localStorage.clear();
 const oldNotif = {
   id: 'notif-offline-old',
-  recipient_id: AKSHAY_ID,
+  recipient_id: TEST_OFFLINE_ID,
   filing_id: sampleFiling.id,
   code: sampleFiling.code,
   type: 'ASSIGNMENT_ASSIGNEE',
@@ -308,7 +312,7 @@ localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify([oldNotif]));
 playedAudios = [];
 deliveredToasts = [];
 await checkOfflinePatentNotifications({
-  currentUser: { id: AKSHAY_ID },
+  currentUser: { id: TEST_OFFLINE_ID },
   onDeliverToast: (notif) => {
     deliveredToasts.push(notif);
   }
@@ -381,6 +385,32 @@ assert(sqlContent.includes('message text NOT NULL'), 'Contains message column');
 assert(sqlContent.includes('read boolean NOT NULL DEFAULT false'), 'Contains read column');
 assert(sqlContent.includes('created_at timestamptz'), 'Contains created_at column');
 pass('Database migration script defines all required schema columns and indexes');
+
+// ----------------------------------------------------
+// TEST GROUP 5: Live DB Notification Synthesis & Read State
+// ----------------------------------------------------
+console.log('\n--- TEST GROUP 5: Live DB Notification Synthesis & Read State ---');
+
+const akshayNotifs = await fetchUserPatentNotifications(AKSHAY_ID, { id: AKSHAY_ID, name: 'Akshay' });
+assert(Array.isArray(akshayNotifs), 'Returns an array of notifications');
+assert(akshayNotifs.length > 0, 'Akshay has notifications synthesized from live filings & events');
+const ar1117Notif = akshayNotifs.find(n => n.code === 'AR1117');
+assert(ar1117Notif, 'Akshay has AR1117 assignment notification');
+assert.strictEqual(ar1117Notif.role_type, 'filer', 'Filer role assigned to Akshay');
+pass('CHECK 11: Akshay gets synthesized notifications for his assigned filings (AR1117)');
+
+// Test marking as read
+markPatentNotificationAsRead(ar1117Notif.id, AKSHAY_ID);
+const afterRead = await fetchUserPatentNotifications(AKSHAY_ID, { id: AKSHAY_ID, name: 'Akshay' });
+const updatedAr1117 = afterRead.find(n => n.id === ar1117Notif.id);
+assert.strictEqual(updatedAr1117.read, true, 'AR1117 notification marked as read in state & persistence');
+pass('CHECK 12: Marking notification as read persists correctly across loads');
+
+// Test mark all as read
+markAllPatentNotificationsAsRead(AKSHAY_ID);
+const allRead = await fetchUserPatentNotifications(AKSHAY_ID, { id: AKSHAY_ID, name: 'Akshay' });
+assert(allRead.every(n => n.read === true), 'All notifications marked as read');
+pass('CHECK 13: Mark all as read updates all synthesized notifications cleanly');
 
 console.log('\n=====================================================');
 console.log(`ALL TESTS PASSED! (${passedTests}/${passedTests})`);

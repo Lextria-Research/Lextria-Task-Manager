@@ -160,6 +160,14 @@ export function initPatentRealtimeSync({
       });
     });
 
+    channel.on('postgres_changes', { event: '*', schema: 'public', table: 'patent_filing_events' }, () => {
+      activeListeners.forEach(sub => {
+        if (sub.onRefetchNeeded) {
+          sub.onRefetchNeeded();
+        }
+      });
+    });
+
     // 3. Status changes
     channel.subscribe((status) => {
       if (status === 'SUBSCRIBED') {

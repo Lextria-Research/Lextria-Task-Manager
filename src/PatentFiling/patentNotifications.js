@@ -8,7 +8,36 @@ import { isMemberMatch } from '../patent/patentRoles.js';
 
 export const LOCAL_NOTIFICATIONS_KEY = 'lextria_patent_notifications_cache';
 export const DISPLAYED_TOASTS_KEY = 'lextria_displayed_toast_ids';
+export const READ_NOTIFICATIONS_PREFIX = 'lextria_patent_read_notifs_';
 export const SOUND_COORDINATION_CHANNEL = 'lextria_sound_coordination';
+
+export function getReadNotificationIds(userId) {
+  if (typeof window === 'undefined' || !userId) return new Set();
+  try {
+    const raw = localStorage.getItem(`${READ_NOTIFICATIONS_PREFIX}${userId}`);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch (e) {
+    return new Set();
+  }
+}
+
+export function saveReadNotificationId(notificationId, userId) {
+  if (typeof window === 'undefined' || !userId || !notificationId) return;
+  try {
+    const set = getReadNotificationIds(userId);
+    set.add(notificationId);
+    localStorage.setItem(`${READ_NOTIFICATIONS_PREFIX}${userId}`, JSON.stringify(Array.from(set).slice(-500)));
+  } catch (e) {}
+}
+
+export function saveAllReadNotificationIds(notificationIds, userId) {
+  if (typeof window === 'undefined' || !userId || !Array.isArray(notificationIds)) return;
+  try {
+    const set = getReadNotificationIds(userId);
+    notificationIds.forEach(id => set.add(id));
+    localStorage.setItem(`${READ_NOTIFICATIONS_PREFIX}${userId}`, JSON.stringify(Array.from(set).slice(-500)));
+  } catch (e) {}
+}
 
 /**
  * Format estimated minutes to human-readable 'Xh Ym' string.
@@ -411,11 +440,18 @@ export async function savePatentNotificationsToDb(notifications) {
 
 /**
  * Fetches all notifications for a user from Supabase and local cache.
+ * If the patent_notifications table does not exist or has no records,
+ * dynamically synthesizes notifications from patent_filings and patent_filing_events.
  */
-export async function fetchUserPatentNotifications(userId) {
+export async function fetchUserPatentNotifications(userId, currentUser = null) {
   if (!userId) return [];
-  const cached = getLocalNotificationsCache().filter(n => isMemberMatch(userId, null, n.recipient_id));
+  const uName = currentUser?.name || (typeof userId === 'string' && !userId.includes('-') ? userId : null);
+  const readIds = getReadNotificationIds(userId);
+  const cached = getLocalNotificationsCache().filter(n => isMemberMatch(userId, uName, n.recipient_id));
 
+  let dbNotifs = [];
+
+  // 1. Try querying remote patent_notifications table
   try {
     const { data, error } = await supabase
       .from('patent_notifications')
@@ -423,24 +459,188 @@ export async function fetchUserPatentNotifications(userId) {
       .eq('recipient_id', userId)
       .order('created_at', { ascending: false });
 
-    if (!error && Array.isArray(data)) {
-      // Merge unique
-      const dbIds = new Set(data.map(d => d.id));
-      const combined = [...data, ...cached.filter(c => !dbIds.has(c.id))];
-      saveLocalNotificationsCache(combined);
-      return combined;
+    if (!error && Array.isArray(data) && data.length > 0) {
+      dbNotifs = data;
     }
   } catch (e) {
-    console.warn('fetchUserPatentNotifications error:', e);
+    // Expected when patent_notifications table is not yet migrated in Supabase
   }
 
-  return cached;
+  // 2. Synthesize notifications from live patent_filings and patent_filing_events
+  if (dbNotifs.length === 0) {
+    try {
+      const { data: filings } = await supabase.from('patent_filings').select('*');
+      if (Array.isArray(filings) && filings.length > 0) {
+        const myFilings = filings.filter(f =>
+          isMemberMatch(userId, uName, f.assignee_id, f.assignee_name) ||
+          isMemberMatch(userId, uName, f.auditor_id, f.auditor_name)
+        );
+
+        if (myFilings.length > 0) {
+          const filingIds = myFilings.map(f => f.id);
+          const { data: events } = await supabase
+            .from('patent_filing_events')
+            .select('*')
+            .in('filing_id', filingIds)
+            .order('timestamp', { ascending: false });
+
+          const derived = [];
+          myFilings.forEach(filing => {
+            const isAssignee = isMemberMatch(userId, uName, filing.assignee_id, filing.assignee_name);
+            const isAuditor = isMemberMatch(userId, uName, filing.auditor_id, filing.auditor_name);
+            const filingEvents = (events || []).filter(e => e.filing_id === filing.id);
+
+            // Assignment notification
+            const createEvent = filingEvents.find(e => e.to_status === 'ASSIGNED' && !e.from_status) || {
+              timestamp: filing.created_at
+            };
+
+            if (isAssignee) {
+              const notifId = `notif-assignee-${filing.id}`;
+              derived.push({
+                id: notifId,
+                recipient_id: filing.assignee_id,
+                filing_id: filing.id,
+                code: filing.code,
+                type: 'ASSIGNMENT_ASSIGNEE',
+                role_type: 'filer',
+                message: buildAssigneeNotificationMessage(filing, filing.created_by_name || 'Mounisha'),
+                read: readIds.has(notifId),
+                created_at: createEvent.timestamp || filing.created_at
+              });
+            }
+
+            if (isAuditor) {
+              const notifId = `notif-auditor-${filing.id}`;
+              derived.push({
+                id: notifId,
+                recipient_id: filing.auditor_id,
+                filing_id: filing.id,
+                code: filing.code,
+                type: 'ASSIGNMENT_AUDITOR',
+                role_type: 'auditor',
+                message: buildAuditorNotificationMessage(filing),
+                read: readIds.has(notifId),
+                created_at: createEvent.timestamp || filing.created_at
+              });
+            }
+
+            // Events transitions
+            filingEvents.forEach(e => {
+              if (e.to_status === 'AUDIT' && isAuditor) {
+                const nId = `notif-event-${e.id}-auditor`;
+                derived.push({
+                  id: nId,
+                  recipient_id: filing.auditor_id,
+                  filing_id: filing.id,
+                  code: filing.code,
+                  type: 'STAGE_AUDIT',
+                  role_type: 'auditor',
+                  message: `${filing.code} submitted for Audit review.`,
+                  read: readIds.has(nId),
+                  created_at: e.timestamp
+                });
+              } else if (e.to_status === 'CORRECTION' && isAssignee) {
+                const nId = `notif-event-${e.id}-correction`;
+                derived.push({
+                  id: nId,
+                  recipient_id: filing.assignee_id,
+                  filing_id: filing.id,
+                  code: filing.code,
+                  type: 'STAGE_CORRECTION',
+                  role_type: 'filer',
+                  message: `${filing.code} returned with corrections needed by Auditor.`,
+                  read: readIds.has(nId),
+                  created_at: e.timestamp
+                });
+              } else if (e.to_status === 'PAYMENT') {
+                if (isAssignee) {
+                  const nId = `notif-event-${e.id}-pay-assignee`;
+                  derived.push({
+                    id: nId,
+                    recipient_id: filing.assignee_id,
+                    filing_id: filing.id,
+                    code: filing.code,
+                    type: 'STAGE_PAYMENT',
+                    role_type: 'filer',
+                    message: `${filing.code} moved to Payment stage.`,
+                    read: readIds.has(nId),
+                    created_at: e.timestamp
+                  });
+                }
+                if (isAuditor) {
+                  const nId = `notif-event-${e.id}-pay-auditor`;
+                  derived.push({
+                    id: nId,
+                    recipient_id: filing.auditor_id,
+                    filing_id: filing.id,
+                    code: filing.code,
+                    type: 'STAGE_PAYMENT_AUDITOR',
+                    role_type: 'auditor',
+                    message: `${filing.code} moved to Payment stage.`,
+                    read: readIds.has(nId),
+                    created_at: e.timestamp
+                  });
+                }
+              } else if (e.to_status === 'CLOSED') {
+                if (isAssignee) {
+                  const nId = `notif-event-${e.id}-closed-assignee`;
+                  derived.push({
+                    id: nId,
+                    recipient_id: filing.assignee_id,
+                    filing_id: filing.id,
+                    code: filing.code,
+                    type: 'STAGE_CLOSED',
+                    role_type: 'filer',
+                    message: `${filing.code} officially closed and completed.`,
+                    read: readIds.has(nId),
+                    created_at: e.timestamp
+                  });
+                }
+                if (isAuditor) {
+                  const nId = `notif-event-${e.id}-closed-auditor`;
+                  derived.push({
+                    id: nId,
+                    recipient_id: filing.auditor_id,
+                    filing_id: filing.id,
+                    code: filing.code,
+                    type: 'STAGE_CLOSED_AUDITOR',
+                    role_type: 'auditor',
+                    message: `${filing.code} officially closed and completed.`,
+                    read: readIds.has(nId),
+                    created_at: e.timestamp
+                  });
+                }
+              }
+            });
+          });
+
+          dbNotifs = derived;
+        }
+      }
+    } catch (err) {
+      console.warn('Derive notifications fallback exception:', err);
+    }
+  }
+
+  // 3. Merge unique with local cached notifications
+  const dbIds = new Set(dbNotifs.map(d => d.id));
+  const combined = [...dbNotifs, ...cached.filter(c => !dbIds.has(c.id))];
+
+  // Apply read state
+  const withReadState = combined.map(n => readIds.has(n.id) ? { ...n, read: true } : n);
+  withReadState.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+
+  saveLocalNotificationsCache(withReadState);
+  return withReadState;
 }
 
 /**
  * Marks a notification as read.
  */
 export async function markPatentNotificationAsRead(notificationId, userId) {
+  saveReadNotificationId(notificationId, userId);
+
   const cached = getLocalNotificationsCache();
   const updated = cached.map(n => n.id === notificationId ? { ...n, read: true } : n);
   saveLocalNotificationsCache(updated);
@@ -458,6 +658,11 @@ export async function markPatentNotificationAsRead(notificationId, userId) {
  */
 export async function markAllPatentNotificationsAsRead(userId) {
   const cached = getLocalNotificationsCache();
+  const idsToMark = cached
+    .filter(n => isMemberMatch(userId, null, n.recipient_id))
+    .map(n => n.id);
+  saveAllReadNotificationIds(idsToMark, userId);
+
   const updated = cached.map(n => isMemberMatch(userId, null, n.recipient_id) ? { ...n, read: true } : n);
   saveLocalNotificationsCache(updated);
 
@@ -703,7 +908,7 @@ export async function checkOfflinePatentNotifications({
 }) {
   if (!currentUser || !currentUser.id) return;
 
-  const notifications = await fetchUserPatentNotifications(currentUser.id);
+  const notifications = await fetchUserPatentNotifications(currentUser.id, currentUser);
   const unreadNotifs = notifications.filter(n => !n.read);
   const displayedIds = new Set(getDisplayedToastIds());
   const now = Date.now();

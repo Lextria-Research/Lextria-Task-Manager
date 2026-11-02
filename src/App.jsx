@@ -3467,7 +3467,7 @@ export default function App() {
   useEffect(() => {
     if (currentUser) {
       setShowAudioUnlockBanner(!isSoundUnlocked(currentUser.id));
-      fetchUserPatentNotifications(currentUser.id).then(notifs => {
+      fetchUserPatentNotifications(currentUser.id, currentUser).then(notifs => {
         setBellNotifications(notifs);
       });
       // Deliver offline notifications within 24 hours
@@ -3481,6 +3481,23 @@ export default function App() {
         }
       });
     }
+  }, [currentUser]);
+
+  // Auto-unlock audio on user interaction so sounds are never blocked
+  useEffect(() => {
+    if (!currentUser) return;
+    const handleFirstGesture = () => {
+      unlockAudioPlayback(currentUser.id);
+      setShowAudioUnlockBanner(false);
+      window.removeEventListener('click', handleFirstGesture);
+      window.removeEventListener('keydown', handleFirstGesture);
+    };
+    window.addEventListener('click', handleFirstGesture);
+    window.addEventListener('keydown', handleFirstGesture);
+    return () => {
+      window.removeEventListener('click', handleFirstGesture);
+      window.removeEventListener('keydown', handleFirstGesture);
+    };
   }, [currentUser]);
 
   // Audio unlock handler
@@ -3512,6 +3529,21 @@ export default function App() {
     const destroy = initPatentRealtimeSync({
       currentUser,
       userRoles: patentRoles,
+      onRefetchNeeded: () => {
+        if (!currentUser) return;
+        fetchUserPatentNotifications(currentUser.id, currentUser).then(notifs => {
+          setBellNotifications(notifs);
+        });
+        checkOfflinePatentNotifications({
+          currentUser,
+          onDeliverToast: (notif) => {
+            setActivePatentToasts(prev => {
+              if (prev.some(t => t.id === notif.id)) return prev;
+              return [...prev, notif];
+            });
+          }
+        });
+      },
       onFilingEvent: (payload) => {
         if (!payload) return;
 
