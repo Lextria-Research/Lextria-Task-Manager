@@ -5,6 +5,20 @@
 import { Clock, Calendar, RotateCcw, Flame, Trash2, Edit3, CheckCircle2, ListTodo } from 'lucide-react';
 import { PATENT_STATUSES } from '../patent/patentStateMachine.js';
 
+function formatAuditDate(timestamp) {
+  if (!timestamp) return '';
+  if (typeof timestamp === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(timestamp.trim())) {
+    const [y, m, d] = timestamp.trim().split('-');
+    return `${d}/${m}/${y}`;
+  }
+  const d = new Date(timestamp);
+  if (isNaN(d.getTime())) return '';
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
 export default function PatentFilingCard({
   filing,
   onClick,
@@ -229,8 +243,8 @@ export default function PatentFilingCard({
           </span>
         )}
 
-        {/* Deadline */}
-        {filing.hard_deadline && (
+        {/* Deadline or Card Date in DD/MM/YYYY */}
+        {filing.hard_deadline ? (
           <div
             className={`flex items-center gap-1 font-semibold text-[11px] px-1.5 py-0.5 rounded-md shrink-0 ${
               isOverdue
@@ -239,12 +253,20 @@ export default function PatentFilingCard({
                   ? 'bg-amber-500/20 text-amber-200 border border-amber-500/40'
                   : 'text-slate-300'
             }`}
-            title={`Deadline: ${filing.hard_deadline}`}
+            title={`Deadline: ${formatAuditDate(filing.hard_deadline)}`}
           >
             <Calendar size={11} className={isOverdue ? 'text-rose-400' : isDueToday ? 'text-amber-400' : 'text-slate-400'} />
-            <span>{filing.hard_deadline}</span>
+            <span>{formatAuditDate(filing.hard_deadline)}</span>
           </div>
-        )}
+        ) : (filing.created_at || filing.updated_at) ? (
+          <div
+            className="flex items-center gap-1 font-medium text-[11px] text-slate-400 shrink-0"
+            title={`Date: ${formatAuditDate(filing.created_at || filing.updated_at)}`}
+          >
+            <Calendar size={11} className="text-slate-500" />
+            <span>{formatAuditDate(filing.created_at || filing.updated_at)}</span>
+          </div>
+        ) : null}
       </div>
 
       {/* Quick "Mark Done" Button for Assignee / Leader when card is in MISC */}

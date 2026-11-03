@@ -30,6 +30,10 @@ import ReassignModal from './ReassignModal.jsx';
 
 function formatAuditDate(timestamp) {
   if (!timestamp) return '';
+  if (typeof timestamp === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(timestamp.trim())) {
+    const [y, m, d] = timestamp.trim().split('-');
+    return `${d}/${m}/${y}`;
+  }
   const d = new Date(timestamp);
   if (isNaN(d.getTime())) return '';
   const day = String(d.getDate()).padStart(2, '0');
@@ -108,8 +112,29 @@ export default function PatentDetailDrawer({
   const isOtherAuditorCard = isAuditorUser && !isAuditor && !isAssignee;
 
   const fallbackData = getFilingEventsAndRounds(filing.id);
-  const events = historyData?.events || fallbackData.events;
-  const rounds = historyData?.rounds || fallbackData.rounds;
+  const rawEvents = (historyData?.events && historyData.events.length > 0)
+    ? historyData.events
+    : (Array.isArray(filing.events) && filing.events.length > 0)
+      ? filing.events
+      : fallbackData.events;
+
+  const events = (rawEvents && rawEvents.length > 0)
+    ? rawEvents
+    : ((filing.created_at || filing.updated_at) ? [{
+        id: `ev-init-${filing.id}`,
+        filing_id: filing.id,
+        from_status: null,
+        to_status: filing.status || 'ASSIGNED',
+        timestamp: filing.created_at || filing.updated_at,
+        actor_name: filing.created_by_name || 'Super Admin (Mounisha)',
+        note: filing.is_misc ? `Task created: ${filing.task_title || filing.title || filing.code}` : 'Filing created and assigned'
+      }] : []);
+
+  const rounds = (historyData?.rounds && historyData.rounds.length > 0)
+    ? historyData.rounds
+    : (Array.isArray(filing.correction_rounds) && filing.correction_rounds.length > 0)
+      ? filing.correction_rounds
+      : fallbackData.rounds;
 
   const handleAction = async (toStatus, payload = {}, note = '') => {
     setActionError('');
