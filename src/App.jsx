@@ -3547,8 +3547,12 @@ export default function App() {
       onFilingEvent: (payload) => {
         if (!payload) return;
 
+        // Determine if the current user is the ACTOR who triggered this action
+        const isActor = payload.actorId && isMemberMatch(currentUser.id, currentUser.name, payload.actorId);
+
         // 1. Check if current user is an explicit notification recipient
-        if (Array.isArray(payload.notifications)) {
+        // ONLY trigger audio chime and recipient alert if current user is NOT the actor who triggered it!
+        if (Array.isArray(payload.notifications) && !isActor) {
           const myNotif = payload.notifications.find(n =>
             isMemberMatch(currentUser.id, currentUser.name, n.recipient_id)
           );
@@ -3564,12 +3568,13 @@ export default function App() {
             });
 
             // Acquire coordination lock so only 1 tab plays sound and shows desktop alert
-            const hasLock = tryAcquireSoundAndDesktopLock(myNotif.id);
+            const hasLock = tryAcquireSoundAndDesktopLock(myNotif.id, currentUser.id);
             if (hasLock) {
-              playPatentNotificationSound(myNotif.role_type, currentUser.id);
+              playPatentNotificationSound(myNotif.role_type || 'filer', currentUser.id);
 
+              const isMisc = myNotif.type === 'STAGE_MISC' || payload.filing?.is_misc || payload.filing?.status === 'MISC';
               showPatentDesktopNotification({
-                title: myNotif.role_type === 'auditor' ? 'Audit Assignment' : 'New Filing Assigned',
+                title: isMisc ? 'New Task Assigned' : (myNotif.role_type === 'auditor' ? 'Audit Assignment' : 'New Filing Assigned'),
                 message: myNotif.message,
                 filingId: myNotif.filing_id,
                 code: myNotif.code,
@@ -3581,14 +3586,17 @@ export default function App() {
         }
 
         // 2. Mounisha / actor confirmation toast (no sound)
-        if (payload.actorId && isMemberMatch(currentUser.id, currentUser.name, payload.actorId)) {
+        if (isActor) {
           if (payload.action === 'CREATE' && payload.filing) {
+            const isMisc = payload.filing.is_misc || payload.filing.status === 'MISC' || payload.filing.filing_type === 'MISC';
             const confToast = {
               id: `conf-${Date.now()}-${payload.filing.id}`,
               isConfirmation: true,
               filing_id: payload.filing.id,
               code: payload.filing.code,
-              message: buildSuperAdminConfirmationMessage(payload.filing, payload.filing.assignee_name, payload.filing.auditor_name)
+              message: isMisc
+                ? `Task "${payload.filing.task_title || payload.filing.title || payload.filing.code}" successfully assigned to ${payload.filing.assignee_name || 'team member'} in MISC!`
+                : buildSuperAdminConfirmationMessage(payload.filing, payload.filing.assignee_name, payload.filing.auditor_name)
             };
             setActivePatentToasts(prev => [...prev, confToast]);
           }

@@ -178,7 +178,8 @@ export async function loadFilingsFromStorage(allMembers = []) {
           description: taskDesc,
           temp_code: f.temp_code || c?.temp_code || null,
           assignee_name: a ? a.name : (f.assignee_name || getKnownMemberName(f.assignee_id, 'Assignee')),
-          auditor_name: u ? u.name : (f.auditor_name || getKnownMemberName(f.auditor_id, 'Auditor')),
+          auditor_name: isMisc ? null : (u ? u.name : (f.auditor_name || getKnownMemberName(f.auditor_id, 'Auditor'))),
+          auditor_id: isMisc ? null : f.auditor_id,
           correction_rounds: roundsByFiling.get(f.id) || c?.correction_rounds || [],
           events: eventsByFiling.get(f.id) || c?.events || []
         };
@@ -268,9 +269,9 @@ export async function saveNewFilingToStorage(filingData, actor, allMembers = [])
     description: taskDesc,
     is_misc: isMiscTask,
     assignee_id: assigneeUuid,
-    auditor_id: auditorUuid,
+    auditor_id: isMiscTask ? null : auditorUuid,
     assignee_name: assigneeMember ? assigneeMember.name : getKnownMemberName(assigneeUuid, 'Assignee'),
-    auditor_name: auditorMember ? auditorMember.name : getKnownMemberName(auditorUuid, 'Auditor'),
+    auditor_name: isMiscTask ? null : (auditorMember ? auditorMember.name : getKnownMemberName(auditorUuid, 'Auditor')),
     est_filing_minutes: Number(filingData.est_filing_minutes) || 0,
     est_audit_minutes: Number(filingData.est_audit_minutes) || 0,
     hard_deadline: filingData.hard_deadline || null,
@@ -404,14 +405,15 @@ export async function saveNewFilingToStorage(filingData, actor, allMembers = [])
       auditorUuid
     });
   }
-  await savePatentNotificationsToDb(notifications);
+  const persistedNotifs = await savePatentNotificationsToDb(notifications);
+  const broadcastNotifs = (Array.isArray(persistedNotifs) && persistedNotifs.length > 0) ? persistedNotifs : notifications;
 
   // 5. Broadcast real-time change event across all connected clients
   broadcastPatentChange({
     action: 'CREATE',
     filing: newRecord,
     event: initialEvent,
-    notifications,
+    notifications: broadcastNotifs,
     actorId: creatorUuid,
     actorName: actor?.name || 'Mounisha',
     version: newRecord.version

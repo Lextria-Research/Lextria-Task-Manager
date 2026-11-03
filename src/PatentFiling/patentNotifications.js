@@ -4,7 +4,7 @@
 // desktop notifications (when backgrounded), offline catchup, and alerts list.
 
 import { supabase } from '../supabaseClient.js';
-import { isMemberMatch } from '../patent/patentRoles.js';
+import { isMemberMatch, getCanonicalMemberUuid, KNOWN_MEMBER_UUIDS } from '../patent/patentRoles.js';
 
 export const LOCAL_NOTIFICATIONS_KEY = 'lextria_patent_notifications_cache';
 export const DISPLAYED_TOASTS_KEY = 'lextria_displayed_toast_ids';
@@ -424,14 +424,14 @@ export function saveLocalNotificationsCache(items) {
  * Persists notifications to Supabase table `patent_notifications` and local cache.
  */
 export async function savePatentNotificationsToDb(notifications) {
-  if (!notifications || notifications.length === 0) return;
+  if (!notifications || notifications.length === 0) return [];
 
   // 1. Update local cache immediately
   const existing = getLocalNotificationsCache();
   const merged = [...notifications, ...existing.filter(e => !notifications.some(n => n.id === e.id))];
   saveLocalNotificationsCache(merged);
 
-  // 2. Insert into Supabase
+  // 2. Insert into Supabase and retrieve persisted records with database UUIDs
   try {
     const recordsToInsert = notifications.map(n => ({
       recipient_id: n.recipient_id,
@@ -444,16 +444,27 @@ export async function savePatentNotificationsToDb(notifications) {
       created_at: n.created_at || new Date().toISOString()
     }));
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('patent_notifications')
-      .insert(recordsToInsert);
+      .insert(recordsToInsert)
+      .select();
 
     if (error) {
       console.warn('Supabase notifications insert error:', error.message);
+      return notifications;
+    }
+
+    if (Array.isArray(data) && data.length > 0) {
+      // Sync local cache with persisted DB items
+      const updatedLocal = [...data, ...getLocalNotificationsCache().filter(e => !data.some(d => d.id === e.id))];
+      saveLocalNotificationsCache(updatedLocal);
+      return data;
     }
   } catch (err) {
     console.warn('Supabase notifications insert exception:', err);
   }
+
+  return notifications;
 }
 
 /**
@@ -469,16 +480,28 @@ export async function fetchUserPatentNotifications(userId, currentUser = null) {
 
   let dbNotifs = [];
 
-  // 1. Try querying remote patent_notifications table
+  // 1. Resolve canonical user IDs (member UUID, agent ID, alias) to reliably match remote DB rows
+  const canonicalUuid = getCanonicalMemberUuid(currentUser || { id: userId, name: uName });
+  const rawId = String(userId).toLowerCase().trim();
+  const targetIds = Array.from(new Set([
+    rawId,
+    canonicalUuid ? canonicalUuid.toLowerCase().trim() : null,
+    uName && KNOWN_MEMBER_UUIDS[uName.toLowerCase()] ? KNOWN_MEMBER_UUIDS[uName.toLowerCase()].toLowerCase() : null
+  ].filter(Boolean)));
+
+  // Try querying remote patent_notifications table with all matched target IDs
   try {
-    const { data, error } = await supabase
-      .from('patent_notifications')
-      .select('*')
-      .eq('recipient_id', userId)
-      .order('created_at', { ascending: false });
+    let query = supabase.from('patent_notifications').select('*');
+    if (targetIds.length === 1) {
+      query = query.eq('recipient_id', targetIds[0]);
+    } else {
+      query = query.in('recipient_id', targetIds);
+    }
+    const { data, error } = await query.order('created_at', { ascending: false });
 
     if (!error && Array.isArray(data) && data.length > 0) {
-      dbNotifs = data;
+      // Further filter with isMemberMatch for security and privacy
+      dbNotifs = data.filter(n => isMemberMatch(userId, uName, n.recipient_id));
     }
   } catch (e) {
     // Expected when patent_notifications table is not yet migrated in Supabase
@@ -491,7 +514,7 @@ export async function fetchUserPatentNotifications(userId, currentUser = null) {
       if (Array.isArray(filings) && filings.length > 0) {
         const myFilings = filings.filter(f =>
           isMemberMatch(userId, uName, f.assignee_id, f.assignee_name) ||
-          isMemberMatch(userId, uName, f.auditor_id, f.auditor_name)
+          (!f.is_misc && f.status !== 'MISC' && f.filing_type !== 'MISC' && isMemberMatch(userId, uName, f.auditor_id, f.auditor_name))
         );
 
         if (myFilings.length > 0) {
@@ -505,10 +528,29 @@ export async function fetchUserPatentNotifications(userId, currentUser = null) {
           const derived = [];
           myFilings.forEach(filing => {
             const isAssignee = isMemberMatch(userId, uName, filing.assignee_id, filing.assignee_name);
-            const isAuditor = isMemberMatch(userId, uName, filing.auditor_id, filing.auditor_name);
+            const isAuditor = !filing.is_misc && filing.status !== 'MISC' && filing.filing_type !== 'MISC' && isMemberMatch(userId, uName, filing.auditor_id, filing.auditor_name);
             const filingEvents = (events || []).filter(e => e.filing_id === filing.id);
 
-            // Assignment notification
+            // Handle MISC tasks: ONLY assignee gets a notification; NO auditor notification EVER!
+            if (filing.status === 'MISC' || filing.filing_type === 'MISC' || filing.is_misc) {
+              if (isAssignee && !isMemberMatch(userId, uName, filing.created_by, filing.created_by_name)) {
+                const notifId = `notif-misc-${filing.id}`;
+                derived.push({
+                  id: notifId,
+                  recipient_id: filing.assignee_id,
+                  filing_id: filing.id,
+                  code: filing.code,
+                  type: 'STAGE_MISC',
+                  role_type: 'filer',
+                  message: `${filing.created_by_name || 'Mounisha'} assigned you a new task: "${filing.task_title || filing.title || filing.code}"`,
+                  read: readIds.has(notifId),
+                  created_at: filing.created_at
+                });
+              }
+              return; // Stop here for MISC tasks so no auditor notification is ever synthesized
+            }
+
+            // Normal filing assignment notification
             const createEvent = filingEvents.find(e => e.to_status === 'ASSIGNED' && !e.from_status) || {
               timestamp: filing.created_at
             };
@@ -729,29 +771,111 @@ export function setSoundUnlocked(userId, unlocked = true) {
   } catch (e) {}
 }
 
+// ----------------------------------------------------
+// WEB AUDIO ENGINE & BUFFER CACHE
+// ----------------------------------------------------
+
+let sharedAudioContext = null;
+const audioBufferCache = new Map();
+
 /**
- * Unlocks audio on user gesture by playing a brief silent tone.
+ * Returns a shared Web Audio context that is resumed on user gesture.
  */
-export function unlockAudioPlayback(userId) {
+export function getSharedAudioContext() {
+  if (typeof window === 'undefined') return null;
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return null;
+  if (!sharedAudioContext) {
+    try {
+      sharedAudioContext = new AudioCtx();
+    } catch (e) {
+      console.warn('Could not initialize AudioContext:', e);
+    }
+  }
+  if (sharedAudioContext && sharedAudioContext.state === 'suspended') {
+    sharedAudioContext.resume().catch(() => {});
+  }
+  return sharedAudioContext;
+}
+
+/**
+ * Loads and decodes an audio file into memory for instant, reliable playback.
+ */
+async function loadAudioBuffer(url, ctx) {
+  if (!ctx) return null;
+  if (audioBufferCache.has(url)) return audioBufferCache.get(url);
   try {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (AudioContextClass) {
-      const ctx = new AudioContextClass();
-      if (ctx.state === 'suspended') {
-        ctx.resume();
-      }
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      gain.gain.value = 0.001; // virtually silent
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.05);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const arrayBuffer = await res.arrayBuffer();
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    audioBufferCache.set(url, audioBuffer);
+    return audioBuffer;
+  } catch (err) {
+    console.warn(`Audio buffer load failed for ${url}:`, err);
+    return null;
+  }
+}
+
+/**
+ * Synthesizes an audible notification chime using Web Audio oscillators.
+ * Guaranteed to play even if audio files are blocked or network is unavailable.
+ */
+function playSynthesizedChime(roleType, ctx) {
+  if (!ctx) return;
+  try {
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+    const now = ctx.currentTime;
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.35, now + 0.05);
+
+    if (roleType === 'auditor') {
+      // Doorbell chime: 659.25Hz (E5) -> 523.25Hz (C5)
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(659.25, now);
+      osc1.frequency.setValueAtTime(523.25, now + 0.25);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.8);
+      osc1.connect(gain);
+      osc1.start(now);
+      osc1.stop(now + 0.85);
+    } else {
+      // Filer / Task chime: Upbeat rising dual-tone 587.33Hz (D5) -> 880Hz (A5)
+      osc1.type = 'triangle';
+      osc1.frequency.setValueAtTime(587.33, now);
+      osc1.frequency.setValueAtTime(880.0, now + 0.15);
+
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(293.66, now);
+      osc2.frequency.setValueAtTime(440.0, now + 0.15);
+
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.7);
+      osc1.connect(gain);
+      osc2.connect(gain);
+      osc1.start(now);
+      osc2.start(now);
+      osc1.stop(now + 0.75);
+      osc2.stop(now + 0.75);
     }
   } catch (e) {
-    console.warn('AudioContext unlock failed:', e);
+    console.warn('Synthesized chime error:', e);
   }
+}
 
+/**
+ * Unlocks audio on user gesture by resuming the shared AudioContext.
+ */
+export function unlockAudioPlayback(userId) {
+  const ctx = getSharedAudioContext();
+  if (ctx && ctx.state === 'suspended') {
+    ctx.resume().catch(() => {});
+  }
   setSoundUnlocked(userId, true);
 }
 
@@ -778,17 +902,18 @@ export function getSoundCoordinationChannel() {
  * and dispatches a native desktop notification for a given notification ID.
  * Returns true if this tab claimed the lock, false if another tab already did.
  */
-export function tryAcquireSoundAndDesktopLock(notificationId) {
+export function tryAcquireSoundAndDesktopLock(notificationId, userId = null) {
   if (typeof window === 'undefined' || !notificationId) return true;
 
-  const lockKey = `lextria_sound_lock_${notificationId}`;
+  const userPrefix = userId ? `${String(userId).toLowerCase()}_` : '';
+  const lockKey = `lextria_sound_lock_${userPrefix}${notificationId}`;
   const now = Date.now();
   const existing = localStorage.getItem(lockKey);
 
   if (existing) {
     const age = now - Number(existing);
     if (age < 5000) {
-      // Another tab claimed this lock in the last 5 seconds
+      // Another tab for this same user claimed this lock in the last 5 seconds
       return false;
     }
   }
@@ -801,7 +926,7 @@ export function tryAcquireSoundAndDesktopLock(notificationId) {
   const channel = getSoundCoordinationChannel();
   if (channel) {
     try {
-      channel.postMessage({ type: 'CLAIM_SOUND', notificationId, timestamp: now });
+      channel.postMessage({ type: 'CLAIM_SOUND', notificationId, userId, timestamp: now });
     } catch (e) {}
   }
 
@@ -814,10 +939,12 @@ export function tryAcquireSoundAndDesktopLock(notificationId) {
 
 /**
  * Plays the official notification sound at full volume.
- * Filer -> Air horn sound (/sounds/filer.mp3)
- * Auditor -> Door-bell Sound (/sounds/auditor.mp3)
+ * Filer / Task -> Air horn sound (/sounds/filer.mp3) or rising chime
+ * Auditor -> Door-bell Sound (/sounds/auditor.mp3) or doorbell chime
  *
- * Catches any autoplay / browser errors without throwing.
+ * Uses both Web Audio API buffer and HTML5 Audio with fallback to
+ * synthesized oscillators so sound is guaranteed to play even if
+ * autoplay policy blocks standard media elements.
  */
 export function playPatentNotificationSound(roleType, userId) {
   if (typeof window === 'undefined') return false;
@@ -827,20 +954,51 @@ export function playPatentNotificationSound(roleType, userId) {
     return false;
   }
 
+  const soundFile = roleType === 'auditor' ? '/sounds/auditor.mp3' : '/sounds/filer.mp3';
+  const ctx = getSharedAudioContext();
+
+  // 1. First attempt: Web Audio API with pre-loaded buffer or on-the-fly fetch
+  if (ctx) {
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+    loadAudioBuffer(soundFile, ctx).then(buffer => {
+      if (buffer) {
+        try {
+          const source = ctx.createBufferSource();
+          source.buffer = buffer;
+          const gain = ctx.createGain();
+          gain.gain.value = 1.0;
+          source.connect(gain);
+          gain.connect(ctx.destination);
+          source.start(0);
+          return;
+        } catch (e) {}
+      }
+      playSynthesizedChime(roleType, ctx);
+    }).catch(() => {
+      playSynthesizedChime(roleType, ctx);
+    });
+  }
+
+  // 2. Parallel attempt: Standard HTML5 Audio element
   try {
-    const soundFile = roleType === 'auditor' ? '/sounds/auditor.mp3' : '/sounds/filer.mp3';
     const audio = new Audio(soundFile);
     audio.volume = 1.0; // Full volume as required
-
     const playPromise = audio.play();
     if (playPromise !== undefined) {
       playPromise.catch(err => {
-        console.warn('Audio playback was blocked or failed:', err);
+        // Autoplay policy or media restriction caught; Web Audio handled or will handle
+        if (ctx) {
+          playSynthesizedChime(roleType, ctx);
+        }
       });
     }
     return true;
   } catch (err) {
-    console.warn('Audio playback error:', err);
+    if (ctx) {
+      playSynthesizedChime(roleType, ctx);
+    }
     return false;
   }
 }
@@ -895,23 +1053,25 @@ export function showPatentDesktopNotification({
 // OFFLINE CATCH-UP DELIVERY (UP TO 24 HOURS)
 // ----------------------------------------------------
 
-export function getDisplayedToastIds() {
+export function getDisplayedToastIds(userId = null) {
   if (typeof window === 'undefined') return [];
   try {
-    const raw = localStorage.getItem(DISPLAYED_TOASTS_KEY);
+    const key = userId ? `${DISPLAYED_TOASTS_KEY}_${String(userId).toLowerCase()}` : DISPLAYED_TOASTS_KEY;
+    const raw = localStorage.getItem(key);
     return raw ? JSON.parse(raw) : [];
   } catch (e) {
     return [];
   }
 }
 
-export function recordDisplayedToastId(notificationId) {
+export function recordDisplayedToastId(notificationId, userId = null) {
   if (typeof window === 'undefined' || !notificationId) return;
   try {
-    const existing = getDisplayedToastIds();
+    const key = userId ? `${DISPLAYED_TOASTS_KEY}_${String(userId).toLowerCase()}` : DISPLAYED_TOASTS_KEY;
+    const existing = getDisplayedToastIds(userId);
     if (!existing.includes(notificationId)) {
       existing.push(notificationId);
-      localStorage.setItem(DISPLAYED_TOASTS_KEY, JSON.stringify(existing.slice(-200)));
+      localStorage.setItem(key, JSON.stringify(existing.slice(-200)));
     }
   } catch (e) {}
 }
@@ -928,13 +1088,18 @@ export async function checkOfflinePatentNotifications({
 
   const notifications = await fetchUserPatentNotifications(currentUser.id, currentUser);
   const unreadNotifs = notifications.filter(n => !n.read);
-  const displayedIds = new Set(getDisplayedToastIds());
+  const displayedIds = new Set(getDisplayedToastIds(currentUser.id));
   const now = Date.now();
   const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
 
   for (const notif of unreadNotifs) {
+    // Never synthesize or deliver an auditor assignment alert to the creator on MISC tasks
+    if (notif.type === 'ASSIGNMENT_AUDITOR' && (notif.code?.startsWith('MISC') || notif.is_misc)) {
+      continue;
+    }
+
     if (displayedIds.has(notif.id)) {
-      continue; // already toasted
+      continue; // already toasted for this user
     }
 
     const createdAt = notif.created_at ? new Date(notif.created_at).getTime() : now;
@@ -942,11 +1107,11 @@ export async function checkOfflinePatentNotifications({
 
     if (ageMs <= TWENTY_FOUR_HOURS) {
       // Within 24 hours: deliver toast + sound
-      recordDisplayedToastId(notif.id);
+      recordDisplayedToastId(notif.id, currentUser.id);
 
-      const hasLock = tryAcquireSoundAndDesktopLock(notif.id);
+      const hasLock = tryAcquireSoundAndDesktopLock(notif.id, currentUser.id);
       if (hasLock) {
-        playPatentNotificationSound(notif.role_type, currentUser.id);
+        playPatentNotificationSound(notif.role_type || 'filer', currentUser.id);
       }
 
       if (onDeliverToast) {
@@ -954,7 +1119,7 @@ export async function checkOfflinePatentNotifications({
       }
     } else {
       // Over 24 hours: record as displayed for toast, remains in bell list only
-      recordDisplayedToastId(notif.id);
+      recordDisplayedToastId(notif.id, currentUser.id);
     }
   }
 }

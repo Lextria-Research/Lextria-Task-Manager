@@ -192,12 +192,16 @@ export default function PatentFilingDashboard({
         });
 
         // Toast notification: Show when mutation was triggered by another user
-        if (payload.actorId && String(payload.actorId) !== String(currentUser.id)) {
-          let msg = `Filing ${incomingFiling.code} updated.`;
+        const isActor = payload.actorId && isMemberMatch(currentUser.id, currentUser.name, payload.actorId);
+        if (payload.actorId && !isActor) {
+          const isMisc = incomingFiling.is_misc || incomingFiling.status === 'MISC' || incomingFiling.filing_type === 'MISC';
+          let msg = isMisc ? `Task ${incomingFiling.code} updated.` : `Filing ${incomingFiling.code} updated.`;
           if (payload.action === 'CREATE') {
-            msg = `New filing ${incomingFiling.code} assigned to you!`;
+            msg = isMisc
+              ? `New task ${incomingFiling.code} ("${incomingFiling.task_title || incomingFiling.title || ''}") assigned to you!`
+              : `New filing ${incomingFiling.code} assigned to you!`;
           } else if (payload.action === 'REASSIGN') {
-            msg = `Filing ${incomingFiling.code} reassigned.`;
+            msg = isMisc ? `Task ${incomingFiling.code} reassigned.` : `Filing ${incomingFiling.code} reassigned.`;
           } else if (payload.action === 'UPDATE_TYPE') {
             msg = `Filing ${incomingFiling.code} type updated to "${incomingFiling.filing_type}".`;
           } else if (incomingFiling.status === 'AUDIT') {
@@ -209,7 +213,9 @@ export default function PatentFilingDashboard({
           } else if (incomingFiling.status === 'ACK') {
             msg = `Filing ${incomingFiling.code} payment confirmed (Ack pending).`;
           } else if (incomingFiling.status === 'CLOSED') {
-            msg = `Filing ${incomingFiling.code} closed.`;
+            msg = isMisc
+              ? `Task ${incomingFiling.code} completed and closed!`
+              : `Filing ${incomingFiling.code} closed.`;
           }
 
           setNotification({
