@@ -28,6 +28,16 @@ import { getFilingEventsAndRounds, fetchFilingEventsAndRoundsFromDb } from './pa
 import SendCorrectionModal from './SendCorrectionModal.jsx';
 import ReassignModal from './ReassignModal.jsx';
 
+function formatAuditDate(timestamp) {
+  if (!timestamp) return '';
+  const d = new Date(timestamp);
+  if (isNaN(d.getTime())) return '';
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
 export default function PatentDetailDrawer({
   filing,
   isOpen,
@@ -736,17 +746,24 @@ export default function PatentDetailDrawer({
           {/* Audit Event Timeline */}
           <div className="space-y-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              Audit Event Trail ({events.length})
+              Audit Logs ({events.length})
             </h3>
             <div className="space-y-2 relative pl-4 border-l border-white/10 ml-2">
               {events.map((ev, idx) => (
                 <div key={idx} className="relative pb-3 text-xs">
                   <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-brand-500 border border-white" />
-                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                  <div className="flex items-start justify-between gap-3 text-[11px] text-slate-400">
                     <span className="font-semibold text-white">
                       {ev.from_status ? `${ev.from_status} → ${ev.to_status}` : ev.to_status}
                     </span>
-                    <span>{new Date(ev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    <div className="text-right shrink-0">
+                      <div>
+                        {new Date(ev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        {formatAuditDate(ev.timestamp)}
+                      </div>
+                    </div>
                   </div>
                   {ev.note && (
                     <p className="text-[11px] text-slate-300 mt-0.5">{ev.note}</p>
