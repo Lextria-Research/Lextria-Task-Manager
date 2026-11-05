@@ -58,7 +58,21 @@ export default async function handler(req, res) {
         console.warn('Could not fetch task members:', e);
       }
 
-      const combined = (profiles || []).map(p => {
+      // Safeguard: Filter out any client accounts so Universal Team Members only includes internal firm staff
+      const staffProfiles = (profiles || []).filter(p => {
+        const authUser = authMap.get(p.id);
+        const meta = authUser?.user_metadata || {};
+        const appMeta = authUser?.app_metadata || {};
+        const isClient =
+          p.role === 'CLIENT' ||
+          meta.role === 'CLIENT' ||
+          appMeta.role === 'CLIENT' ||
+          Boolean(meta.client_id) ||
+          (p.email && p.email.toLowerCase().includes('@client.'));
+        return !isClient;
+      });
+
+      const combined = staffProfiles.map(p => {
         const authUser = authMap.get(p.id);
         const meta = authUser?.user_metadata || {};
         const matchedTm = taskMembers.find(
@@ -116,6 +130,13 @@ export default async function handler(req, res) {
       const cleanEmail = email.trim().toLowerCase();
       const cleanName = displayName.trim();
       const cleanPassword = password ? password.trim() : null;
+
+      // Barrier: Client accounts must not be created or edited via Universal Team Members
+      if (role === 'CLIENT' || cleanEmail.includes('@client.') || dashboardAccess?.client_portal?.enabled) {
+        return res.status(400).json({
+          error: 'Client accounts must be managed through Settings -> Clients Directory, not Universal Team Members.'
+        });
+      }
 
       let targetUserId = userId;
 

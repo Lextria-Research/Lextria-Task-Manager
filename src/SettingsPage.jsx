@@ -742,7 +742,12 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
       const res = await fetch('/api/users');
       if (res.ok) {
         const json = await res.json();
-        setUniversalUsers(json.users || []);
+        const staffOnly = (json.users || []).filter(u => {
+          const role = (u.role || '').toUpperCase();
+          const email = (u.email || '').toLowerCase();
+          return role !== 'CLIENT' && !email.includes('@client.');
+        });
+        setUniversalUsers(staffOnly);
         return;
       }
       throw new Error(`API returned ${res.status}`);
@@ -756,7 +761,12 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
           .order('created_at', { ascending: true });
 
         if (profs) {
-          setUniversalUsers(profs.map(p => ({
+          const staffOnly = profs.filter(p => {
+            const role = (p.role || '').toUpperCase();
+            const email = (p.email || '').toLowerCase();
+            return role !== 'CLIENT' && !email.includes('@client.');
+          });
+          setUniversalUsers(staffOnly.map(p => ({
             id: p.id,
             email: p.email,
             displayName: p.display_name,
