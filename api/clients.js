@@ -30,6 +30,27 @@ export default async function handler(req, res) {
 
       if (cErr) throw cErr;
 
+      // 1b. Fetch all client logos from core.app_settings
+      const logoMap = new Map();
+      try {
+        const { data: logoSettings } = await centralAdmin
+          .schema('core')
+          .from('app_settings')
+          .select('key, value')
+          .eq('app', 'CORE')
+          .like('key', 'client_logo_%');
+
+        if (logoSettings) {
+          logoSettings.forEach((s) => {
+            const cId = s.key.replace('client_logo_', '');
+            const val = typeof s.value === 'string' ? s.value : (s.value?.logo_url || null);
+            if (val) logoMap.set(cId, val);
+          });
+        }
+      } catch (lErr) {
+        console.warn('Could not fetch client logos from app_settings:', lErr);
+      }
+
       // 2. Fetch auth users to see who has client portal access
       let clientAuthMap = new Map();
       try {
@@ -43,6 +64,7 @@ export default async function handler(req, res) {
                 email: u.email,
                 lastSignIn: u.last_sign_in_at,
                 createdAt: u.created_at,
+                logo_url: meta.logo_url || null,
               });
             }
           });
@@ -51,11 +73,13 @@ export default async function handler(req, res) {
         console.warn('Could not list auth users for client portal status:', authErr);
       }
 
-      // 3. Merge portal status onto client objects
+      // 3. Merge portal status and client logos onto client objects
       const enrichedClients = (clients || []).map(c => {
         const portal = clientAuthMap.get(c.id);
+        const logoUrl = logoMap.get(c.id) || portal?.logo_url || null;
         return {
           ...c,
+          logo_url: logoUrl,
           portalAccess: Boolean(portal),
           portalEmail: portal?.email || c.email || (c.client_code ? `${c.client_code.toLowerCase()}@client.lextria.in` : ''),
           portalUserId: portal?.authUserId || null,
@@ -88,6 +112,7 @@ export default async function handler(req, res) {
         portal_access = true, // Default to true: automatic portal creation!
         portal_email,
         portal_password,
+        logo_url,
       } = req.body || {};
 
       if (!client_code || !client_code.trim()) {
@@ -132,6 +157,22 @@ export default async function handler(req, res) {
 
       if (insErr) throw insErr;
 
+      // Save client logo to core.app_settings if provided
+      if (logo_url && typeof logo_url === 'string') {
+        try {
+          await centralAdmin
+            .schema('core')
+            .from('app_settings')
+            .upsert({
+              app: 'CORE',
+              key: `client_logo_${newClient.id}`,
+              value: logo_url,
+            }, { onConflict: 'app,key' });
+        } catch (logoErr) {
+          console.warn('Could not save client logo to app_settings:', logoErr);
+        }
+      }
+
       // Automatically provision Client Portal user if portal_access is enabled
       let portalUser = null;
       let portalError = null;
@@ -158,6 +199,7 @@ export default async function handler(req, res) {
               billing_address: billing_address?.trim() || null,
               state_code: state_code?.trim() || null,
               portal_access: true,
+              logo_url: logo_url || null,
             },
           });
 
@@ -187,6 +229,7 @@ export default async function handler(req, res) {
                   billing_address: billing_address?.trim() || null,
                   state_code: state_code?.trim() || null,
                   portal_access: true,
+                  logo_url: logo_url || existingAuth.user_metadata?.logo_url || null,
                 }
               });
 
@@ -203,6 +246,7 @@ export default async function handler(req, res) {
         success: true,
         client: {
           ...newClient,
+          logo_url: logo_url || null,
           portalAccess: Boolean(portalUser),
           portalEmail: portalUser?.email || newClient.email || `${cleanCode.toLowerCase()}@client.lextria.in`,
           portalError: portalError || undefined,
@@ -233,6 +277,7 @@ export default async function handler(req, res) {
         portal_access,
         portal_email,
         portal_password,
+        logo_url,
       } = req.body || {};
 
       if (!id) {
@@ -261,6 +306,50 @@ export default async function handler(req, res) {
         .single();
 
       if (upErr) throw upErr;
+
+      // Handle logo_url update in core.app_settings
+      let currentLogoUrl = undefined;
+      if (logo_url !== undefined) {
+        if (logo_url && typeof logo_url === 'string') {
+          try {
+            await centralAdmin
+              .schema('core')
+              .from('app_settings')
+              .upsert({
+                app: 'CORE',
+                key: `client_logo_${id}`,
+                value: logo_url,
+              }, { onConflict: 'app,key' });
+            currentLogoUrl = logo_url;
+          } catch (logoErr) {
+            console.warn('Could not save client logo to app_settings:', logoErr);
+          }
+        } else if (logo_url === null || logo_url === '') {
+          try {
+            await centralAdmin
+              .schema('core')
+              .from('app_settings')
+              .delete()
+              .eq('app', 'CORE')
+              .eq('key', `client_logo_${id}`);
+            currentLogoUrl = null;
+          } catch (logoErr) {
+            console.warn('Could not remove client logo from app_settings:', logoErr);
+          }
+        }
+      } else {
+        // Retain existing logo
+        try {
+          const { data: exLogo } = await centralAdmin
+            .schema('core')
+            .from('app_settings')
+            .select('value')
+            .eq('app', 'CORE')
+            .eq('key', `client_logo_${id}`)
+            .maybeSingle();
+          if (exLogo?.value) currentLogoUrl = typeof exLogo.value === 'string' ? exLogo.value : exLogo.value?.logo_url;
+        } catch (_) {}
+      }
 
       // Handle portal access and credential changes
       let updatedPortalUser = null;
@@ -304,6 +393,7 @@ export default async function handler(req, res) {
                 billing_address: updatedClient.billing_address || null,
                 state_code: updatedClient.state_code || null,
                 portal_access: true,
+                logo_url: currentLogoUrl || null,
               },
             });
 
@@ -327,6 +417,7 @@ export default async function handler(req, res) {
                 billing_address: updatedClient.billing_address || null,
                 state_code: updatedClient.state_code || null,
                 portal_access: true,
+                logo_url: currentLogoUrl !== undefined ? currentLogoUrl : (existingUser.user_metadata?.logo_url || null),
               }
             };
             if (portal_password?.trim()) {
@@ -356,6 +447,7 @@ export default async function handler(req, res) {
         success: true,
         client: {
           ...updatedClient,
+          logo_url: currentLogoUrl !== undefined ? currentLogoUrl : null,
           portalAccess: Boolean(portal_access),
           portalEmail: updatedPortalUser?.email || (portal_email?.trim() || updatedClient.email || ''),
         }
@@ -406,6 +498,18 @@ export default async function handler(req, res) {
         }
       } catch (authDelErr) {
         console.warn('Client portal auth delete warning:', authDelErr);
+      }
+
+      // Delete client logo from app_settings
+      try {
+        await centralAdmin
+          .schema('core')
+          .from('app_settings')
+          .delete()
+          .eq('app', 'CORE')
+          .eq('key', `client_logo_${id}`);
+      } catch (logoDelErr) {
+        console.warn('Client logo delete warning:', logoDelErr);
       }
 
       const { error: delErr } = await centralAdmin

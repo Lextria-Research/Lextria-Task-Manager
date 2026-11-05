@@ -431,6 +431,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
   const [newClientPortalAccess, setNewClientPortalAccess] = useState(true);
   const [newClientPortalEmail, setNewClientPortalEmail] = useState('');
   const [newClientPortalPassword, setNewClientPortalPassword] = useState('LextriaPortal!2026');
+  const [newClientLogo, setNewClientLogo] = useState('');
   const [isAddingClient, setIsAddingClient] = useState(false);
 
   // Edit Client Modal State
@@ -446,10 +447,55 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
   const [editClientPortalAccess, setEditClientPortalAccess] = useState(false);
   const [editClientPortalEmail, setEditClientPortalEmail] = useState('');
   const [editClientPortalPassword, setEditClientPortalPassword] = useState('');
+  const [editClientLogo, setEditClientLogo] = useState('');
   const [isUpdatingClient, setIsUpdatingClient] = useState(false);
   const [showClientPass, setShowClientPass] = useState(false);
 
   // Helper when opening Add Client Modal
+    const handleClientLogoSelect = (e, setLogo) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert('Please select a valid image file (PNG, JPG, SVG, WebP).');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      alert('File size exceeds 2MB. Please select a smaller image.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (readerEvent) => {
+      const img = new window.Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxDim = 320;
+        let width = img.width;
+        let height = img.height;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL(file.type === 'image/png' ? 'image/png' : 'image/jpeg', 0.9);
+        setLogo(dataUrl);
+      };
+      img.onerror = () => {
+        setLogo(readerEvent.target.result);
+      };
+      img.src = readerEvent.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleOpenAddClient = () => {
     setNewClientCode('');
     setNewClientName('');
@@ -462,6 +508,8 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
     setNewClientPortalAccess(true);
     setNewClientPortalEmail('');
     setNewClientPortalPassword('LextriaPortal!2026');
+    setNewClientLogo('');
+    setEditClientLogo(c.logo_url || '');
     setShowClientPass(false);
     setShowAddClientModal(true);
   };
@@ -543,6 +591,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
           portal_access: newClientPortalAccess,
           portal_email: portalEmail,
           portal_password: portalPass,
+          logo_url: newClientLogo || undefined,
         })
       });
 
@@ -621,6 +670,7 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
           portal_access: editClientPortalAccess,
           portal_email: editClientPortalEmail.trim() || undefined,
           portal_password: editClientPortalPassword.trim() || undefined,
+          logo_url: editClientLogo,
         })
       });
 
@@ -2504,18 +2554,33 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
 
                           {/* Client Name & Entity Type */}
                           <td className="px-4 py-3.5">
-                            <div className="font-bold text-white text-sm">
-                              {c.client_name}
-                            </div>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-semibold bg-white/5 text-slate-400 border border-white/10">
-                                {c.entity_type || 'COMPANY'}
-                              </span>
-                              {c.state_code && (
-                                <span className="text-[10px] text-slate-500">
-                                  State: {c.state_code}
-                                </span>
+                            <div className="flex items-center gap-3">
+                              {c.logo_url ? (
+                                <img
+                                  src={c.logo_url}
+                                  alt={c.client_name}
+                                  className="w-9 h-9 rounded-xl object-contain bg-white/10 border border-white/15 p-1 shrink-0 shadow-sm"
+                                />
+                              ) : (
+                                <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-300 flex items-center justify-center text-xs font-bold shrink-0">
+                                  {(c.client_code || c.client_name || 'CL').slice(0, 2).toUpperCase()}
+                                </div>
                               )}
+                              <div className="min-w-0">
+                                <div className="font-bold text-white text-sm truncate max-w-[280px]">
+                                  {c.client_name}
+                                </div>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-semibold bg-white/5 text-slate-400 border border-white/10">
+                                    {c.entity_type || 'COMPANY'}
+                                  </span>
+                                  {c.state_code && (
+                                    <span className="text-[10px] text-slate-500">
+                                      State: {c.state_code}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
                             </div>
                           </td>
 
@@ -3012,6 +3077,98 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                     onChange={(e) => setNewClientPan(e.target.value.toUpperCase())}
                     className={`w-full px-3 py-2 text-xs rounded-xl border outline-none font-mono uppercase ${inputBgClass}`}
                   />
+                </div>
+              </div>
+
+              {/* Client Logo / Photo Upload */}
+              <div className="p-3.5 rounded-xl border border-white/10 bg-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  {newClientLogo ? (
+                    <img
+                      src={newClientLogo}
+                      alt="Client Logo Preview"
+                      className="w-12 h-12 rounded-xl object-contain bg-white/10 border border-white/20 p-1 shrink-0 shadow-md"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-dashed border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+                      <Camera size={20} />
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-200">
+                      Client Logo / Photo
+                    </label>
+                    <p className="text-[10px] text-slate-400">
+                      Reflected in Client Portal header, banner &amp; reports. Max 2MB.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <label className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold cursor-pointer transition shadow-sm">
+                    <span>{newClientLogo ? 'Change Photo' : 'Upload Logo'}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handleClientLogoSelect(e, setNewClientLogo)}
+                    />
+                  </label>
+                  {newClientLogo && (
+                    <button
+                      type="button"
+                      onClick={() => setNewClientLogo('')}
+                      className="p-1.5 rounded-xl border border-red-500/30 text-red-400 hover:bg-red-500/10 transition cursor-pointer"
+                      title="Remove Logo"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Client Logo / Photo Upload */}
+              <div className="p-3.5 rounded-xl border border-white/10 bg-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  {editClientLogo ? (
+                    <img
+                      src={editClientLogo}
+                      alt="Client Logo Preview"
+                      className="w-12 h-12 rounded-xl object-contain bg-white/10 border border-white/20 p-1 shrink-0 shadow-md"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-dashed border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+                      <Camera size={20} />
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-200">
+                      Client Logo / Photo
+                    </label>
+                    <p className="text-[10px] text-slate-400">
+                      Reflected in Client Portal header, banner &amp; reports. Max 2MB.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <label className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold cursor-pointer transition shadow-sm">
+                    <span>{editClientLogo ? 'Change Photo' : 'Upload Logo'}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handleClientLogoSelect(e, setEditClientLogo)}
+                    />
+                  </label>
+                  {editClientLogo && (
+                    <button
+                      type="button"
+                      onClick={() => setEditClientLogo('')}
+                      className="p-1.5 rounded-xl border border-red-500/30 text-red-400 hover:bg-red-500/10 transition cursor-pointer"
+                      title="Remove Logo"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
               </div>
 
