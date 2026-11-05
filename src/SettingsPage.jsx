@@ -3126,52 +3126,6 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                 </div>
               </div>
 
-              {/* Client Logo / Photo Upload */}
-              <div className="p-3.5 rounded-xl border border-white/10 bg-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  {editClientLogo ? (
-                    <img
-                      src={editClientLogo}
-                      alt="Client Logo Preview"
-                      className="w-12 h-12 rounded-xl object-contain bg-white/10 border border-white/20 p-1 shrink-0 shadow-md"
-                    />
-                  ) : (
-                    <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-dashed border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
-                      <Camera size={20} />
-                    </div>
-                  )}
-                  <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-200">
-                      Client Logo / Photo
-                    </label>
-                    <p className="text-[10px] text-slate-400">
-                      Reflected in Client Portal header, banner &amp; reports. Max 2MB.
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <label className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold cursor-pointer transition shadow-sm">
-                    <span>{editClientLogo ? 'Change Photo' : 'Upload Logo'}</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => handleClientLogoSelect(e, setEditClientLogo)}
-                    />
-                  </label>
-                  {editClientLogo && (
-                    <button
-                      type="button"
-                      onClick={() => setEditClientLogo('')}
-                      className="p-1.5 rounded-xl border border-red-500/30 text-red-400 hover:bg-red-500/10 transition cursor-pointer"
-                      title="Remove Logo"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  )}
-                </div>
-              </div>
-
               <div>
                 <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1">
                   Billing Address
@@ -3403,6 +3357,52 @@ export default function SettingsPage({ isAdmin = false, currentUser = null, onUp
                     onChange={(e) => setEditClientPan(e.target.value.toUpperCase())}
                     className={`w-full px-3 py-2 text-xs rounded-xl border outline-none font-mono uppercase ${inputBgClass}`}
                   />
+                </div>
+              </div>
+
+              {/* Client Logo / Photo Upload */}
+              <div className="p-3.5 rounded-xl border border-white/10 bg-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  {editClientLogo ? (
+                    <img
+                      src={editClientLogo}
+                      alt="Client Logo Preview"
+                      className="w-12 h-12 rounded-xl object-contain bg-white/10 border border-white/20 p-1 shrink-0 shadow-md"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-dashed border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+                      <Camera size={20} />
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-200">
+                      Client Logo / Photo
+                    </label>
+                    <p className="text-[10px] text-slate-400">
+                      Reflected in Client Portal header, banner &amp; reports. Max 2MB.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <label className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold cursor-pointer transition shadow-sm">
+                    <span>{editClientLogo ? 'Change Photo' : 'Upload Logo'}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handleClientLogoSelect(e, setEditClientLogo)}
+                    />
+                  </label>
+                  {editClientLogo && (
+                    <button
+                      type="button"
+                      onClick={() => setEditClientLogo('')}
+                      className="p-1.5 rounded-xl border border-red-500/30 text-red-400 hover:bg-red-500/10 transition cursor-pointer"
+                      title="Remove Logo"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
               </div>
 
