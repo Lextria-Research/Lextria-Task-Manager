@@ -60,6 +60,8 @@ export default function PatentFilingDashboard({
   const [personFilter, setPersonFilter] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [priorityFilter, setPriorityFilter] = useState('ALL');
+  const [dateFilter, setDateFilter] = useState('ALL');
+  const [customDate, setCustomDate] = useState('');
   const [codeScopeFilter, setCodeScopeFilter] = useState('ALL');
   const [showClosedArchive, setShowClosedArchive] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('CONNECTED');
@@ -328,9 +330,45 @@ export default function PatentFilingDashboard({
         return false;
       }
 
+      // Date / Deadline filter
+      if (dateFilter !== 'ALL') {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const fDeadline = f.hard_deadline ? String(f.hard_deadline).split('T')[0].trim() : null;
+        const fCreated = f.created_at ? String(f.created_at).split('T')[0].trim() : null;
+        const fUpdated = f.updated_at ? String(f.updated_at).split('T')[0].trim() : null;
+        const fEffective = fDeadline || fCreated || fUpdated;
+
+        if (dateFilter === 'TODAY') {
+          const isToday = fDeadline ? fDeadline === todayStr : fEffective === todayStr;
+          if (!isToday) return false;
+        } else if (dateFilter === 'OVERDUE') {
+          if (!fDeadline || fDeadline >= todayStr || f.status === 'CLOSED') {
+            return false;
+          }
+        } else if (dateFilter === 'NEXT_2_DAYS') {
+          if (!fDeadline) return false;
+          const diffDays = Math.round((new Date(fDeadline).getTime() - new Date(todayStr).getTime()) / 86400000);
+          if (diffDays < 0 || diffDays > 2) return false;
+        } else if (dateFilter === 'NEXT_7_DAYS') {
+          if (!fDeadline) return false;
+          const diffDays = Math.round((new Date(fDeadline).getTime() - new Date(todayStr).getTime()) / 86400000);
+          if (diffDays < 0 || diffDays > 7) return false;
+        } else if (dateFilter === 'NEXT_30_DAYS') {
+          if (!fDeadline) return false;
+          const diffDays = Math.round((new Date(fDeadline).getTime() - new Date(todayStr).getTime()) / 86400000);
+          if (diffDays < 0 || diffDays > 30) return false;
+        } else if (dateFilter === 'SPECIFIC') {
+          if (customDate) {
+            const target = customDate.trim();
+            const matches = (fDeadline && fDeadline === target) || (fEffective && fEffective === target);
+            if (!matches) return false;
+          }
+        }
+      }
+
       return true;
     });
-  }, [filings, searchQuery, personFilter, typeFilter, priorityFilter, cleanTeamMembers]);
+  }, [filings, searchQuery, personFilter, typeFilter, priorityFilter, dateFilter, customDate, cleanTeamMembers]);
 
   // Create new filing handler
   const handleCreateFiling = async (filingData) => {
@@ -782,6 +820,71 @@ export default function PatentFilingDashboard({
             <option value="Medium" className="bg-[#0a153a] text-white">Medium</option>
             <option value="Low" className="bg-[#0a153a] text-white">Low</option>
           </select>
+
+          {/* Date Filter (Beside All Priorities) */}
+          <select
+            value={dateFilter}
+            onChange={e => {
+              setDateFilter(e.target.value);
+              if (e.target.value !== 'SPECIFIC') setCustomDate('');
+            }}
+            className={`glass-input text-xs py-1.5 px-3 bg-[#0a153a] text-slate-100 cursor-pointer min-w-[115px] transition-all ${
+              dateFilter !== 'ALL' ? 'border-brand-500 ring-1 ring-brand-500/50 text-brand-200 font-semibold' : ''
+            }`}
+            style={{ colorScheme: 'dark' }}
+            title="Filter filings by date or deadline"
+          >
+            <option value="ALL" className="bg-[#0a153a] text-white">All Dates</option>
+            <option value="TODAY" className="bg-[#0a153a] text-white">Due Today</option>
+            <option value="OVERDUE" className="bg-[#0a153a] text-white">Overdue</option>
+            <option value="NEXT_2_DAYS" className="bg-[#0a153a] text-white">Due in 1–2 Days</option>
+            <option value="NEXT_7_DAYS" className="bg-[#0a153a] text-white">Due in 7 Days</option>
+            <option value="NEXT_30_DAYS" className="bg-[#0a153a] text-white">Due in 30 Days</option>
+            <option value="SPECIFIC" className="bg-[#0a153a] text-white">Specific Date…</option>
+          </select>
+
+          {/* Specific Date Picker Input */}
+          {dateFilter === 'SPECIFIC' && (
+            <div className="relative flex items-center animate-in fade-in zoom-in-95 duration-150">
+              <input
+                type="date"
+                value={customDate}
+                onChange={e => setCustomDate(e.target.value)}
+                className="glass-input text-xs py-1 px-2.5 bg-[#0a153a] text-slate-100 border-brand-500 ring-1 ring-brand-500/50 cursor-pointer rounded-lg"
+                style={{ colorScheme: 'dark' }}
+                title="Choose specific date"
+              />
+              {customDate && (
+                <button
+                  type="button"
+                  onClick={() => setCustomDate('')}
+                  className="ml-1 text-slate-400 hover:text-white p-0.5 cursor-pointer"
+                  title="Clear date"
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Quick Clear All Filters button if any filter is active */}
+          {(personFilter !== 'ALL' || typeFilter !== 'ALL' || priorityFilter !== 'ALL' || dateFilter !== 'ALL' || searchQuery) && (
+            <button
+              type="button"
+              onClick={() => {
+                setPersonFilter('ALL');
+                setTypeFilter('ALL');
+                setPriorityFilter('ALL');
+                setDateFilter('ALL');
+                setCustomDate('');
+                setSearchQuery('');
+              }}
+              className="text-[11px] font-semibold text-slate-400 hover:text-rose-300 px-2 py-1 rounded-lg hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 transition cursor-pointer shrink-0"
+              title="Reset all active filters"
+            >
+              Reset Filters
+            </button>
+          )}
         </div>
       </div>
 
