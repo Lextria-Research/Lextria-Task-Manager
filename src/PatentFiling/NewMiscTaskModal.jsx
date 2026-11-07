@@ -2,7 +2,7 @@
 // Lightweight, focused task creation modal for Super Admin Mounisha
 // Creates standalone tasks that go directly into the MISC stage.
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   X,
   ListTodo,
@@ -14,6 +14,7 @@ import {
   Check
 } from 'lucide-react';
 import { PATENT_STATUSES } from '../patent/patentStateMachine.js';
+import { isRealHumanTeamMember } from '../patent/patentRoles.js';
 
 export default function NewMiscTaskModal({
   isOpen,
@@ -47,6 +48,13 @@ export default function NewMiscTaskModal({
     return `MISC-${String(nextNum).padStart(3, '0')}`;
   })();
 
+  // Filter out non-human categories, board columns, and bots
+  const validMembers = useMemo(() => {
+    return (allMembers || [])
+      .filter(isRealHumanTeamMember)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [allMembers]);
+
   // Reset form when opened
   useEffect(() => {
     if (isOpen) {
@@ -55,12 +63,12 @@ export default function NewMiscTaskModal({
       setError('');
       setPriority('Medium');
       setDeadline('');
-      // Default to first member if available
-      if (allMembers && allMembers.length > 0 && !assigneeId) {
-        setAssigneeId(allMembers[0].id);
+      // Default to first valid real member if available
+      if (validMembers && validMembers.length > 0 && !assigneeId) {
+        setAssigneeId(validMembers[0].id);
       }
     }
-  }, [isOpen, allMembers]);
+  }, [isOpen, validMembers]);
 
   if (!isOpen) return null;
 
@@ -192,7 +200,7 @@ export default function NewMiscTaskModal({
                 <option value="" disabled className="bg-[#0a153a] text-slate-400">
                   Select team member...
                 </option>
-                {allMembers.map(m => (
+                {validMembers.map(m => (
                   <option key={m.id} value={m.id} className="bg-[#0a153a] text-white">
                     {m.name}
                   </option>

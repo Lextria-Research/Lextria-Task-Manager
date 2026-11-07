@@ -112,6 +112,76 @@ export function getCleanMemberName(member) {
 }
 
 /**
+ * Checks if a member entry represents a real human team member,
+ * filtering out legacy board columns, tool modules, queries, bots, and task buckets.
+ */
+export function isRealHumanTeamMember(member) {
+  if (!member) return false;
+  const name = typeof member === 'string' ? member.trim() : (member.name || '').trim();
+  if (!name) return false;
+
+  const lower = name.toLowerCase();
+
+  // Explicit non-human blocklist (tools, categories, board columns)
+  const blockedExactNames = [
+    'bill',
+    'tasks',
+    'follow-ups',
+    'follow ups',
+    'followup',
+    'parked work',
+    'parked',
+    'general queries',
+    'political queries',
+    'sharan tasks',
+    'sharan follow ups',
+    'sharan parked work',
+    'claude agent',
+    'live due tracker',
+    'appscript',
+    'task-manager',
+    'patent cs generator',
+    'patent reinder system',
+    'prosecution studio',
+    'expense sheet',
+    'patent dashboard',
+    'copyright and trademark dashboard',
+    'litigation and agreement dashboard'
+  ];
+
+  if (blockedExactNames.includes(lower)) return false;
+
+  // Keyword patterns that indicate automated tools, dashboards, queries, or task board buckets
+  const blockedPatterns = [
+    'dashboard',
+    'generator',
+    'tracker',
+    'studio',
+    'appscript',
+    'system',
+    'queries',
+    'follow ups',
+    'follow-up',
+    'parked',
+    'sheet',
+    'claude',
+    'agent',
+    'task-manager'
+  ];
+
+  for (const pat of blockedPatterns) {
+    if (lower.includes(pat)) return false;
+  }
+
+  // Pure uppercase multi-word labels or single acronyms that are not human names
+  if (name === name.toUpperCase() && name.length > 3 && !['AMITH', 'AKSHAY', 'AYUSH'].includes(name)) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * Robust identity matcher: checks matching by UUID, name, or legacy alias
  */
 export function isMemberMatch(actorId, actorName, targetMemberId, targetMemberName) {

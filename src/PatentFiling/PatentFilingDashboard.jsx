@@ -15,7 +15,7 @@ import {
   Layers
 } from 'lucide-react';
 import { PATENT_ROLES, hasPatentRole } from '../patent/patentStateMachine.js';
-import { fetchAllPatentRoleRecords, isMemberMatch } from '../patent/patentRoles.js';
+import { fetchAllPatentRoleRecords, isMemberMatch, isRealHumanTeamMember, getCleanMemberName } from '../patent/patentRoles.js';
 import PatentKanbanBoard from './PatentKanbanBoard.jsx';
 import PatentDetailDrawer from './PatentDetailDrawer.jsx';
 import NewFilingModal from './NewFilingModal.jsx';
@@ -253,6 +253,49 @@ export default function PatentFilingDashboard({
     return Array.from(set).sort();
   }, [filings, systemFilingTypes]);
 
+  // Clean, human-only team members (filters out board columns, tool modules, queries, bots, and task buckets)
+  const cleanTeamMembers = useMemo(() => {
+    const membersMap = new Map();
+
+    // 1. Add all real human employees from allEmployees
+    (allEmployees || []).filter(isRealHumanTeamMember).forEach(emp => {
+      const canonicalName = getCleanMemberName(emp) || (emp.name || '').trim();
+      const lower = canonicalName.toLowerCase();
+      if (!membersMap.has(lower)) {
+        membersMap.set(lower, {
+          id: emp.id,
+          name: canonicalName
+        });
+      }
+    });
+
+    // 2. Also ensure any real staff assigned to or auditing active filings is included
+    (filings || []).forEach(f => {
+      if (f.assignee_name && isRealHumanTeamMember(f.assignee_name)) {
+        const cName = f.assignee_name.trim();
+        const lower = cName.toLowerCase();
+        if (!membersMap.has(lower)) {
+          membersMap.set(lower, {
+            id: f.assignee_id || cName,
+            name: cName
+          });
+        }
+      }
+      if (f.auditor_name && isRealHumanTeamMember(f.auditor_name)) {
+        const cName = f.auditor_name.trim();
+        const lower = cName.toLowerCase();
+        if (!membersMap.has(lower)) {
+          membersMap.set(lower, {
+            id: f.auditor_id || cName,
+            name: cName
+          });
+        }
+      }
+    });
+
+    return Array.from(membersMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [allEmployees, filings]);
+
   // Filtered filings based on search & toolbar filters
   const filteredFilings = useMemo(() => {
     const localRounds = getLocalCache(LOCAL_ROUNDS_KEY, []);
@@ -266,10 +309,12 @@ export default function PatentFilingDashboard({
         }
       }
 
-      // Person filter
+      // Person filter (robust matching by UUID, agent ID, and canonical name)
       if (personFilter !== 'ALL') {
-        const isAssignee = String(f.assignee_id) === String(personFilter);
-        const isAuditor = String(f.auditor_id) === String(personFilter);
+        const selectedMember = cleanTeamMembers.find(m => String(m.id) === String(personFilter));
+        const personFilterName = selectedMember ? selectedMember.name : personFilter;
+        const isAssignee = isMemberMatch(personFilter, personFilterName, f.assignee_id, f.assignee_name);
+        const isAuditor = isMemberMatch(personFilter, personFilterName, f.auditor_id, f.auditor_name);
         if (!isAssignee && !isAuditor) return false;
       }
 
@@ -285,7 +330,7 @@ export default function PatentFilingDashboard({
 
       return true;
     });
-  }, [filings, searchQuery, personFilter, typeFilter, priorityFilter]);
+  }, [filings, searchQuery, personFilter, typeFilter, priorityFilter, cleanTeamMembers]);
 
   // Create new filing handler
   const handleCreateFiling = async (filingData) => {
@@ -702,7 +747,7 @@ export default function PatentFilingDashboard({
             style={{ colorScheme: 'dark' }}
           >
             <option value="ALL" className="bg-[#0a153a] text-white">All Team Members</option>
-            {allEmployees.map(m => (
+            {cleanTeamMembers.map(m => (
               <option key={m.id} value={m.id} className="bg-[#0a153a] text-white">
                 {m.name}
               </option>
