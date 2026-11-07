@@ -102,6 +102,13 @@ export default function PatentDetailDrawer({
     (currentUser?.name && filing.auditor_name && filing.auditor_name.toLowerCase().includes(currentUser.name.toLowerCase()));
   const isAckChecker = hasPatentRole(userRoles, PATENT_ROLES.ACK_CHECKER);
 
+  // Multi-code parsing for clean pill rendering
+  const rawCodes = (filing.code || '')
+    .split(/[,;\s]+/)
+    .map(c => c.trim())
+    .filter(Boolean);
+  const cleanCodes = rawCodes.length > 0 ? rawCodes : [filing.code || 'NO-CODE'];
+
   // Auditor takeover feature:
   // Current user is an auditor, is not currently assigned as auditor on this card, and is NOT the assignee
   const isAuditorUser = hasPatentRole(userRoles, PATENT_ROLES.AUDITOR) ||
@@ -192,27 +199,59 @@ export default function PatentDetailDrawer({
       />
 
       {/* Drawer Container */}
-      <div className="relative w-full max-w-xl bg-[#060b24] border-l border-white/10 shadow-2xl flex flex-col h-full text-slate-100 z-10 overflow-hidden">
+      <div className="relative w-full max-w-xl md:max-w-2xl bg-[#060b24] border-l border-white/10 shadow-2xl flex flex-col h-full text-slate-100 z-10 overflow-hidden">
         {/* Drawer Header */}
-        <div className="p-6 border-b border-white/10 flex items-start justify-between bg-[#081033]">
-          <div>
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-lg bg-brand-500/20 text-brand-300 border border-brand-500/30 tracking-wider">
-                {filing.code}
-              </span>
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-white/10 text-white">
+        <div className="p-5 md:p-6 border-b border-white/10 bg-[#081033] shrink-0 space-y-3">
+          {/* Top Bar: Badges + Close Window Button */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 flex-wrap min-w-0">
+              {cleanCodes.map((c, i) => (
+                <span
+                  key={i}
+                  className={`font-mono text-xs font-bold px-2.5 py-0.5 rounded-lg border tracking-wider shrink-0 ${
+                    filing.is_misc || filing.status === PATENT_STATUSES.MISC
+                      ? 'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40'
+                      : 'bg-brand-500/20 text-brand-300 border-brand-500/30'
+                  }`}
+                >
+                  {c}
+                </span>
+              ))}
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-md border shrink-0 ${
+                filing.status === PATENT_STATUSES.CLOSED
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                  : filing.status === PATENT_STATUSES.PAYMENT
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                  : filing.status === PATENT_STATUSES.AUDIT
+                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                  : 'bg-white/10 text-white border-white/10'
+              }`}>
                 {filing.status}
               </span>
-              <span className="text-xs text-slate-400">
+              <span className="text-xs text-slate-400 shrink-0">
                 v{filing.version}
               </span>
               {filing.temp_code && (
-                <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1">
-                  Temp: {filing.temp_code}
+                <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30 inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap">
+                  <span className="text-purple-400 font-normal">Temp:</span>
+                  <span>{filing.temp_code}</span>
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2 mt-1">
+
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer shrink-0 ml-auto"
+              title="Close drawer"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Second Row: Title + Action Buttons */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-1 border-t border-white/5">
+            {/* Title / Edit Type */}
+            <div className="flex-1 min-w-0">
               {isEditingType ? (
                 <div className="flex items-center gap-2 flex-wrap">
                   <input
@@ -220,7 +259,7 @@ export default function PatentDetailDrawer({
                     value={customTypeInput}
                     onChange={e => setCustomTypeInput(e.target.value)}
                     placeholder="Enter manual filing type..."
-                    className="glass-input text-xs py-1 px-2.5 bg-[#0a153a] text-white"
+                    className="glass-input text-xs py-1 px-2.5 bg-[#0a153a] text-white flex-1 min-w-[180px]"
                     autoFocus
                   />
                   <button
@@ -231,20 +270,20 @@ export default function PatentDetailDrawer({
                       }
                       setIsEditingType(false);
                     }}
-                    className="px-2.5 py-1 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-[11px] font-bold cursor-pointer"
+                    className="px-2.5 py-1 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-[11px] font-bold cursor-pointer shrink-0"
                   >
                     Save
                   </button>
                   <button
                     onClick={() => setIsEditingType(false)}
-                    className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 text-[11px] cursor-pointer"
+                    className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 text-[11px] cursor-pointer shrink-0"
                   >
                     Cancel
                   </button>
                 </div>
               ) : (
-                <div className="flex items-center gap-2.5">
-                  <h2 className="text-lg font-bold text-white tracking-tight">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <h2 className="text-lg font-bold text-white tracking-tight break-words">
                     {filing.filing_type || 'Patent Filing'}
                   </h2>
                   {isSuperAdmin && onUpdateFilingType && (
@@ -253,7 +292,7 @@ export default function PatentDetailDrawer({
                         setCustomTypeInput(filing.filing_type || '');
                         setIsEditingType(true);
                       }}
-                      className="text-[11px] text-brand-400 hover:text-brand-300 underline font-medium cursor-pointer"
+                      className="text-[11px] text-brand-400 hover:text-brand-300 underline font-medium cursor-pointer shrink-0"
                     >
                       Edit Type
                     </button>
@@ -261,62 +300,57 @@ export default function PatentDetailDrawer({
                 </div>
               )}
             </div>
-          </div>
 
-          <div className="flex items-center gap-2">
-            {isOtherAuditorCard && (
-              <button
-                type="button"
-                disabled={isActing}
-                onClick={handleRedirectAudit}
-                className="text-xs px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 font-semibold transition cursor-pointer flex items-center gap-1.5"
-                title="Re-direct audit of this filing to yourself"
-              >
-                <ArrowRightLeft size={12} />
-                <span>Re-direct</span>
-              </button>
-            )}
-            {isSuperAdmin && onEditFiling && (
-              <button
-                type="button"
-                onClick={() => onEditFiling(filing)}
-                className="text-xs px-2.5 py-1 rounded-lg bg-brand-500/20 text-brand-300 border border-brand-500/30 hover:bg-brand-500/30 font-semibold transition cursor-pointer flex items-center gap-1.5"
-                title="Edit filing details (Super Admin only)"
-              >
-                <Edit3 size={12} />
-                <span>Edit</span>
-              </button>
-            )}
-            {isSuperAdmin && (
-              <button
-                onClick={() => setShowReassignModal(true)}
-                className="text-xs px-2.5 py-1 rounded-lg bg-blue-500/20 text-blue-300 border border-blue-500/30 hover:bg-blue-500/30 font-semibold transition cursor-pointer"
-                title="Reassign filing"
-              >
-                Reassign
-              </button>
-            )}
-            {isLeader && onDeleteFiling && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (window.confirm(`Are you sure you want to delete filing "${filing.code}"? This will permanently remove it from the workflow.`)) {
-                    onDeleteFiling(filing);
-                  }
-                }}
-                className="text-xs px-2.5 py-1 rounded-lg bg-rose-500/15 text-rose-300 border border-rose-500/30 hover:bg-rose-500/25 font-semibold transition cursor-pointer flex items-center gap-1.5"
-                title="Delete filing (Leader only)"
-              >
-                <Trash2 size={13} />
-                <span>Delete</span>
-              </button>
-            )}
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
-            >
-              <X size={18} />
-            </button>
+            {/* Header Action Buttons */}
+            <div className="flex items-center gap-2 flex-wrap shrink-0">
+              {isOtherAuditorCard && (
+                <button
+                  type="button"
+                  disabled={isActing}
+                  onClick={handleRedirectAudit}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 font-semibold transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+                  title="Re-direct audit of this filing to yourself"
+                >
+                  <ArrowRightLeft size={13} />
+                  <span>Re-direct</span>
+                </button>
+              )}
+              {isSuperAdmin && onEditFiling && (
+                <button
+                  type="button"
+                  onClick={() => onEditFiling(filing)}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-brand-500/20 text-brand-300 border border-brand-500/30 hover:bg-brand-500/30 font-semibold transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+                  title="Edit filing details (Super Admin only)"
+                >
+                  <Edit3 size={13} />
+                  <span>Edit</span>
+                </button>
+              )}
+              {isSuperAdmin && (
+                <button
+                  onClick={() => setShowReassignModal(true)}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-blue-500/20 text-blue-300 border border-blue-500/30 hover:bg-blue-500/30 font-semibold transition cursor-pointer shrink-0 whitespace-nowrap"
+                  title="Reassign filing"
+                >
+                  Reassign
+                </button>
+              )}
+              {isLeader && onDeleteFiling && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm(`Are you sure you want to delete filing "${filing.code}"? This will permanently remove it from the workflow.`)) {
+                      onDeleteFiling(filing);
+                    }
+                  }}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-rose-500/15 text-rose-300 border border-rose-500/30 hover:bg-rose-500/25 font-semibold transition cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+                  title="Delete filing (Leader only)"
+                >
+                  <Trash2 size={13} />
+                  <span>Delete</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -653,7 +687,7 @@ export default function PatentDetailDrawer({
               </div>
               <div className="p-3 rounded-xl bg-white/5 border border-white/10">
                 <span className="text-[10px] text-slate-400 block mb-0.5">Due Date</span>
-                <span className="font-semibold text-white">{filing.hard_deadline || 'No due date'}</span>
+                <span className="font-semibold text-white">{filing.hard_deadline ? formatAuditDate(filing.hard_deadline) : 'No due date'}</span>
               </div>
             </div>
           ) : (
@@ -675,7 +709,7 @@ export default function PatentDetailDrawer({
                       setCopiedTempCode(true);
                       setTimeout(() => setCopiedTempCode(false), 2000);
                     }}
-                    className="text-xs px-2.5 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-500/40 flex items-center gap-1.5 transition cursor-pointer"
+                    className="text-xs px-2.5 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-500/40 flex items-center gap-1.5 transition cursor-pointer shrink-0"
                   >
                     <Copy size={12} />
                     <span>{copiedTempCode ? 'Copied!' : 'Copy'}</span>
@@ -701,7 +735,7 @@ export default function PatentDetailDrawer({
               {filing.hard_deadline && (
                 <div className="p-3 rounded-xl bg-white/5 border border-white/10">
                   <span className="text-[10px] text-slate-400 block mb-0.5">Hard Deadline</span>
-                  <span className="font-semibold text-amber-300">{filing.hard_deadline}</span>
+                  <span className="font-semibold text-amber-300">{formatAuditDate(filing.hard_deadline)}</span>
                 </div>
               )}
               {filing.payment_reference && (
