@@ -14,9 +14,10 @@ import {
   formatEstTime
 } from './src/PatentFiling/patentNotifications.js';
 import { DEFAULT_DRAFTERS } from './src/PatentFiling/drafterWorkloadConstants.js';
+import { DEFAULT_FILERS } from './src/PatentFiling/filerWorkloadConstants.js';
 import { isLeaderOrSharan, isPranavBhat } from './src/attachmentUtils.js';
 import { PATENT_STATUSES, PATENT_ROLES, executeReassign, validateStateTransition, hasPatentRole } from './src/patent/patentStateMachine.js';
-import { isMemberMatch } from './src/patent/patentRoles.js';
+import { isMemberMatch, getMemberPatentRoles } from './src/patent/patentRoles.js';
 import { deleteFilingFromStorage, saveNewFilingToStorage } from './src/PatentFiling/patentStorage.js';
 import { isEventRecipient } from './src/PatentFiling/patentRealtime.js';
 
@@ -632,6 +633,49 @@ console.log('\n--- TEST GROUP 6: Leader Delete Filing Permission & Real-Time Syn
     // Mounisha has access to both actions:
     const availableActions = isSuperAdmin ? ['+ New Filing', '+ New Task'] : [];
     assert.deepStrictEqual(availableActions, ['+ New Filing', '+ New Task']);
+  });
+
+  console.log('\n--- TEST GROUP 9: Patent Filer Analytics & Access Restrictions ---');
+
+  await it('DEFAULT_FILERS contains all 7 patent filers', () => {
+    assert.strictEqual(DEFAULT_FILERS.length, 7);
+    const names = DEFAULT_FILERS.map(d => d.name);
+    assert.deepStrictEqual(names, [
+      'Prashanth', 'Akshay', 'Karthik', 'Chaitra', 'Kaushal', 'Prathvi', 'Nikhil'
+    ]);
+  });
+
+  await it('Patent Filing tab is ACCESSIBLE to Filers and Super Admins', () => {
+    // Check Filers
+    const akshayRoles = getMemberPatentRoles({ name: 'Akshay', role: 'member' });
+    assert(hasPatentRole(akshayRoles, PATENT_ROLES.ASSIGNEE), 'Akshay has ASSIGNEE role (Filer)');
+
+    const prashanthRoles = getMemberPatentRoles({ name: 'Prashanth', role: 'member' });
+    assert(hasPatentRole(prashanthRoles, PATENT_ROLES.ASSIGNEE), 'Prashanth has ASSIGNEE role (Filer)');
+
+    // Check Patent Admin / Super Admin
+    const mounishaRoles = getMemberPatentRoles({ name: 'Mounisha', role: 'leader' });
+    assert(hasPatentRole(mounishaRoles, PATENT_ROLES.SUPER_ADMIN), 'Mounisha has SUPER_ADMIN role');
+
+    // Firm Leaders
+    assert(isLeaderOrSharan({ name: 'Sharan', role: 'leader' }), 'Sharan has leadership access');
+    assert(isLeaderOrSharan({ name: 'Pranav Bhat', role: 'leader' }), 'Pranav has leadership access');
+  });
+
+  await it('Patent Filing tab is RESTRICTED from non-patent members (Mahek, Thanush, Simran, Charan)', () => {
+    const checkAccess = (user) => {
+      const isLeader = isLeaderOrSharan(user) || (user?.role && user.role.toLowerCase() === 'leader');
+      const roles = getMemberPatentRoles(user);
+      const isFiler = hasPatentRole(roles, PATENT_ROLES.ASSIGNEE);
+      const isPatentAdmin = hasPatentRole(roles, PATENT_ROLES.SUPER_ADMIN);
+      const isAuditor = hasPatentRole(roles, PATENT_ROLES.AUDITOR);
+      return Boolean(isLeader || isPatentAdmin || isFiler || isAuditor);
+    };
+
+    assert.strictEqual(checkAccess({ name: 'Mahek', role: 'member' }), false, 'Mahek should NOT have access');
+    assert.strictEqual(checkAccess({ name: 'Thanush', role: 'member' }), false, 'Thanush should NOT have access');
+    assert.strictEqual(checkAccess({ name: 'Simran', role: 'member' }), false, 'Simran should NOT have access');
+    assert.strictEqual(checkAccess({ name: 'Charan', role: 'member' }), false, 'Charan should NOT have access');
   });
 
   console.log('\n=====================================================');

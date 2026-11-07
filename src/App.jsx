@@ -35,6 +35,7 @@ import SettingsPage, { getStoredProfiles } from './SettingsPage';
 import PatentFilingDashboard from './PatentFiling/PatentFilingDashboard';
 import PatentAnalytics from './PatentFiling/PatentAnalytics';
 import { fetchUserPatentRoles, getInitialPatentRoles, isMemberMatch } from './patent/patentRoles';
+import { PATENT_ROLES, hasPatentRole } from './patent/patentStateMachine';
 import {
   fetchUserPatentNotifications,
   markPatentNotificationAsRead,
@@ -3427,23 +3428,31 @@ export default function App() {
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [activeTab, setActiveTab] = useState(() => {
     try {
-      if (typeof window !== 'undefined' && window.location.pathname === '/departments/patent/filing') {
-        return 'patent-filing';
-      }
       const saved = localStorage.getItem('lextria_user_session');
       const user = saved ? JSON.parse(saved) : null;
       if (isLeaderOrSharan(user)) {
         return 'leader-board';
       }
+      const initRoles = getInitialPatentRoles(user);
+      const userHasPatent = Array.isArray(initRoles) && initRoles.length > 0;
+
+      if (typeof window !== 'undefined' && window.location.pathname === '/departments/patent/filing') {
+        return userHasPatent ? 'patent-filing' : 'projects';
+      }
       const savedTab = localStorage.getItem('lextria_active_tab');
       if (savedTab && savedTab !== 'tasks') {
+        if (savedTab === 'patent-filing' && !userHasPatent) {
+          return 'projects';
+        }
         return savedTab;
       }
+      return userHasPatent ? 'patent-filing' : 'projects';
     } catch {}
-    return 'patent-filing';
+    return 'projects';
   });
 
   // Patent Module Roles & Deep Link Routing
+  // Access rule: ONLY filers (ASSIGNEE), patent admin (SUPER_ADMIN), and superadmin (leaders)
   const [patentRoles, setPatentRoles] = useState(() => getInitialPatentRoles(currentUser));
   useEffect(() => {
     if (currentUser) {
@@ -3452,7 +3461,12 @@ export default function App() {
       });
     }
   }, [currentUser]);
-  const hasPatentAccess = patentRoles && patentRoles.length > 0;
+
+  const isPatentFiler = hasPatentRole(patentRoles, PATENT_ROLES.ASSIGNEE);
+  const isPatentAdmin = hasPatentRole(patentRoles, PATENT_ROLES.SUPER_ADMIN);
+  const isSuperAdminUser = isLeaderOrSharan(currentUser) || (currentUser?.role && currentUser.role.toLowerCase() === 'leader');
+  const isPatentAuditor = hasPatentRole(patentRoles, PATENT_ROLES.AUDITOR);
+  const hasPatentAccess = Boolean(isSuperAdminUser || isPatentAdmin || isPatentFiler || isPatentAuditor);
 
   // Patent Notification System States
   const [targetOpenFilingId, setTargetOpenFilingId] = useState(null);
@@ -3636,6 +3650,10 @@ export default function App() {
   }, []);
 
   const handleTabSelect = (tabId) => {
+    // Only filers, patent admin, and superadmin can select patent-filing
+    if (tabId === 'patent-filing' && !hasPatentAccess) {
+      return;
+    }
     setActiveTab(tabId);
     if (typeof window !== 'undefined') {
       if (tabId === 'patent-filing') {
@@ -3648,12 +3666,18 @@ export default function App() {
     }
   };
 
-  // Confidentiality guard: non-leaders cannot access leader-board, analytics, or queries
+  // Confidentiality & role-based access guard:
+  // 1. Non-leaders cannot access leader-board or analytics
+  // 2. Only filers, patent admin and superadmin can access patent-filing
   useEffect(() => {
     if (!isLeaderOrSharan(currentUser)) {
       if (activeTab === 'leader-board' || activeTab === 'analytics') {
         setActiveTab(hasPatentAccess ? 'patent-filing' : 'projects');
+        return;
       }
+    }
+    if (activeTab === 'patent-filing' && !hasPatentAccess) {
+      setActiveTab('projects');
     }
   }, [currentUser, activeTab, hasPatentAccess]);
   const [tasksSubTab, setTasksSubTab] = useState('tasks'); // 'tasks' | 'calendar'
@@ -5797,15 +5821,31 @@ export default function App() {
           {/* Main Content */}
           <main className={`flex-1 ${activeTab === 'queries' || activeTab === 'projects' || activeTab === 'leader-board' || activeTab === 'settings' || activeTab === 'patent-filing' || activeTab === 'analytics' ? 'p-0 flex flex-col min-h-0 overflow-auto' : 'px-6 py-6'}`}>
 
-          {/* Patent Filing Workflow Page */}
-          {activeTab === 'patent-filing' && hasPatentAccess && (
-            <PatentFilingDashboard
-              currentUser={currentUser}
-              allEmployees={allEmployees}
-              userRoles={patentRoles}
-              targetOpenFilingId={targetOpenFilingId}
-              onClearTargetFiling={() => setTargetOpenFilingId(null)}
-            />
+          {/* Patent Filing Workflow Page (Exclusive to Filers, Patent Admin, and Super Admin) */}
+          {activeTab === 'patent-filing' && (
+            hasPatentAccess ? (
+              <PatentFilingDashboard
+                currentUser={currentUser}
+                allEmployees={allEmployees}
+                userRoles={patentRoles}
+                targetOpenFilingId={targetOpenFilingId}
+                onClearTargetFiling={() => setTargetOpenFilingId(null)}
+              />
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[#060b24] text-slate-300">
+                <AlertCircle size={48} className="text-amber-400 mb-4" />
+                <h2 className="text-xl font-bold text-white mb-2">Restricted Access</h2>
+                <p className="text-sm text-slate-400 max-w-md mb-6">
+                  The Patent Filing module is restricted to Patent Filers, Patent Admins, and Super Admins only.
+                </p>
+                <button
+                  onClick={() => handleTabSelect('projects')}
+                  className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs cursor-pointer transition shadow-lg"
+                >
+                  Go to Project Reporting
+                </button>
+              </div>
+            )
           )}
 
           {/* Leader Taskboard Page (Exclusive to Pranav Bhat and Sharan) */}
