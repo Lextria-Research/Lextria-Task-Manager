@@ -45,7 +45,8 @@ import {
   playPatentNotificationSound,
   showPatentDesktopNotification,
   checkOfflinePatentNotifications,
-  buildSuperAdminConfirmationMessage
+  buildSuperAdminConfirmationMessage,
+  deduplicateNotificationsByLatest
 } from './PatentFiling/patentNotifications';
 import { initPatentRealtimeSync } from './PatentFiling/patentRealtime';
 import {
@@ -3558,13 +3559,13 @@ export default function App() {
           );
 
           if (myNotif) {
-            // Add to bell list
-            setBellNotifications(prev => [myNotif, ...prev.filter(p => p.id !== myNotif.id)]);
+            // Add to bell list with deduplication so multiple notifications for the same code don't pile up
+            setBellNotifications(prev => deduplicateNotificationsByLatest([myNotif, ...prev.filter(p => p.id !== myNotif.id)]));
 
-            // Add to active toast stack (stays until dismissed, stackable)
+            // Add to active toast stack: replace any older toast for the same code so users don't see duplicate toasts
             setActivePatentToasts(prev => {
-              if (prev.some(t => t.id === myNotif.id)) return prev;
-              return [...prev, myNotif];
+              const withoutSameCode = prev.filter(t => t.id !== myNotif.id && t.code !== myNotif.code);
+              return [...withoutSameCode, myNotif];
             });
 
             // Acquire coordination lock so only 1 tab plays sound and shows desktop alert

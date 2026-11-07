@@ -40,6 +40,39 @@ export function saveAllReadNotificationIds(notificationIds, userId) {
 }
 
 /**
+ * Deduplicates a list of notifications so that each unique patent code / filing
+ * keeps only its latest, most relevant notification per recipient.
+ * Resolves user issue: "multiple notifications of the same patent codes."
+ */
+export function deduplicateNotificationsByLatest(notifications) {
+  if (!Array.isArray(notifications) || notifications.length <= 1) {
+    return notifications || [];
+  }
+
+  const latestMap = new Map();
+  // Sort newest first
+  const sorted = [...notifications].sort((a, b) => {
+    const tA = new Date(a.created_at || a.timestamp || 0).getTime();
+    const tB = new Date(b.created_at || b.timestamp || 0).getTime();
+    return tB - tA;
+  });
+
+  for (const n of sorted) {
+    if (!n) continue;
+    // Generate clean group key per recipient and filing code / filing id
+    const recipientKey = n.recipient_id ? String(n.recipient_id).toLowerCase().trim() : 'all';
+    const codeKey = (n.code || n.filing_id || n.id || '').trim().toLowerCase();
+    const key = `${recipientKey}_${codeKey}`;
+
+    if (!latestMap.has(key)) {
+      latestMap.set(key, n);
+    }
+  }
+
+  return Array.from(latestMap.values());
+}
+
+/**
  * Format estimated minutes to human-readable 'Xh Ym' string.
  * e.g., 150 -> '2h 30m', 60 -> '1h 0m', 45 -> '0h 45m'
  */
@@ -426,9 +459,12 @@ export function saveLocalNotificationsCache(items) {
 export async function savePatentNotificationsToDb(notifications) {
   if (!notifications || notifications.length === 0) return [];
 
-  // 1. Update local cache immediately
+  // 1. Update local cache immediately with deduplication
   const existing = getLocalNotificationsCache();
-  const merged = [...notifications, ...existing.filter(e => !notifications.some(n => n.id === e.id))];
+  const merged = deduplicateNotificationsByLatest([
+    ...notifications,
+    ...existing.filter(e => !notifications.some(n => n.id === e.id))
+  ]);
   saveLocalNotificationsCache(merged);
 
   // 2. Insert into Supabase and retrieve persisted records with database UUIDs
@@ -455,8 +491,19 @@ export async function savePatentNotificationsToDb(notifications) {
     }
 
     if (Array.isArray(data) && data.length > 0) {
-      // Sync local cache with persisted DB items
-      const updatedLocal = [...data, ...getLocalNotificationsCache().filter(e => !data.some(d => d.id === e.id))];
+      // Sync local cache: match by ID OR by (recipient_id + filing_id/code + type)
+      // to ensure temporary client IDs are cleanly replaced by DB UUIDs
+      const isMatch = (dbItem, localItem) =>
+        dbItem.id === localItem.id ||
+        (dbItem.recipient_id === localItem.recipient_id &&
+         (dbItem.filing_id === localItem.filing_id || dbItem.code === localItem.code) &&
+         dbItem.type === localItem.type);
+
+      const existingCache = getLocalNotificationsCache();
+      const updatedLocal = deduplicateNotificationsByLatest([
+        ...data,
+        ...existingCache.filter(e => !data.some(d => isMatch(d, e)))
+      ]);
       saveLocalNotificationsCache(updatedLocal);
       return data;
     }
@@ -548,6 +595,27 @@ export async function fetchUserPatentNotifications(userId, currentUser = null) {
                 });
               }
               return; // Stop here for MISC tasks so no auditor notification is ever synthesized
+            }
+
+            // If the filing is officially CLOSED:
+            // Only synthesize the closure notification, and auto-mark as read so it never fires offline toasts on login!
+            if (filing.status === 'CLOSED') {
+              const closeEvent = filingEvents.find(e => e.to_status === 'CLOSED') || {
+                timestamp: filing.updated_at || filing.created_at
+              };
+              const notifId = `notif-closed-${filing.id}-${isAssignee ? 'assignee' : 'auditor'}`;
+              derived.push({
+                id: notifId,
+                recipient_id: isAssignee ? filing.assignee_id : filing.auditor_id,
+                filing_id: filing.id,
+                code: filing.code,
+                type: isAssignee ? 'STAGE_CLOSED' : 'STAGE_CLOSED_AUDITOR',
+                role_type: isAssignee ? 'filer' : 'auditor',
+                message: `${filing.code} – ${filing.filing_type || 'Patent Filing'} has been officially closed and completed!`,
+                read: true, // Completed filings are archived/read so they never fire offline toasts on next-day login!
+                created_at: closeEvent.timestamp || filing.created_at
+              });
+              return; // Do NOT synthesize older intermediate stage alerts for closed filings!
             }
 
             // Normal filing assignment notification
@@ -689,10 +757,13 @@ export async function fetchUserPatentNotifications(userId, currentUser = null) {
 
   // Apply read state
   const withReadState = combined.map(n => readIds.has(n.id) ? { ...n, read: true } : n);
-  withReadState.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  
+  // Deduplicate by latest per recipient and code so each patent code has only its latest notification
+  const deduped = deduplicateNotificationsByLatest(withReadState);
+  deduped.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
-  saveLocalNotificationsCache(withReadState);
-  return withReadState;
+  saveLocalNotificationsCache(deduped);
+  return deduped;
 }
 
 /**
@@ -1092,9 +1163,33 @@ export async function checkOfflinePatentNotifications({
   const now = Date.now();
   const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
 
-  for (const notif of unreadNotifs) {
-    // Never synthesize or deliver an auditor assignment alert to the creator on MISC tasks
+  // Deduplicate unread notifications by code so only the latest notification per patent code is toasted
+  const dedupedUnread = deduplicateNotificationsByLatest(unreadNotifs);
+
+  let soundPlayed = false;
+  let deliveredCount = 0;
+
+  for (const notif of dedupedUnread) {
+    // 1. Never synthesize or deliver an auditor assignment alert to the creator on MISC tasks
     if (notif.type === 'ASSIGNMENT_AUDITOR' && (notif.code?.startsWith('MISC') || notif.is_misc)) {
+      continue;
+    }
+
+    // 2. NEVER deliver offline toasts/sounds for COMPLETED / CLOSED filings on login!
+    // Resolves user issue: "receive old already completed notifications again alltogether whne logging on the next day."
+    const isCompleted =
+      notif.type === 'STAGE_CLOSED' ||
+      notif.type === 'STAGE_CLOSED_AUDITOR' ||
+      notif.status === 'CLOSED' ||
+      notif.is_closed ||
+      (notif.message && (
+        notif.message.toLowerCase().includes('officially closed') ||
+        notif.message.toLowerCase().includes('marked completed')
+      ));
+
+    if (isCompleted) {
+      // Silently record as displayed so it doesn't disturb the user on next-day login
+      recordDisplayedToastId(notif.id, currentUser.id);
       continue;
     }
 
@@ -1106,16 +1201,19 @@ export async function checkOfflinePatentNotifications({
     const ageMs = now - createdAt;
 
     if (ageMs <= TWENTY_FOUR_HOURS) {
-      // Within 24 hours: deliver toast + sound
       recordDisplayedToastId(notif.id, currentUser.id);
 
+      // Play sound at most ONCE during login catch-up (not in a repetitive loop)
       const hasLock = tryAcquireSoundAndDesktopLock(notif.id, currentUser.id);
-      if (hasLock) {
+      if (hasLock && !soundPlayed) {
         playPatentNotificationSound(notif.role_type || 'filer', currentUser.id);
+        soundPlayed = true;
       }
 
-      if (onDeliverToast) {
+      // Cap to at most 3 simultaneous toasts to prevent screen flooding on login
+      if (onDeliverToast && deliveredCount < 3) {
         onDeliverToast(notif);
+        deliveredCount++;
       }
     } else {
       // Over 24 hours: record as displayed for toast, remains in bell list only

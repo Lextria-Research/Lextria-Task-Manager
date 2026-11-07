@@ -23,7 +23,9 @@ import {
   buildFilingReassignNotifications,
   buildFilingTransitionNotifications,
   buildSuperAdminConfirmationMessage,
-  savePatentNotificationsToDb
+  savePatentNotificationsToDb,
+  getLocalNotificationsCache,
+  saveLocalNotificationsCache
 } from './patentNotifications.js';
 
 export const LOCAL_STORAGE_KEY = 'lextria_patent_filings_cache';
@@ -582,6 +584,23 @@ export async function executeTransitionInStorage({
     payload,
     allMembers
   });
+
+  // Auto-mark previous notifications for this filing as read so older stages don't linger or re-toast
+  if (filing?.id) {
+    try {
+      await supabase
+        .from('patent_notifications')
+        .update({ read: true })
+        .eq('filing_id', filing.id);
+    } catch (e) {}
+    try {
+      const cached = getLocalNotificationsCache();
+      const updatedCache = cached.map(n =>
+        (n.filing_id === filing.id || n.code === filing.code) ? { ...n, read: true } : n
+      );
+      saveLocalNotificationsCache(updatedCache);
+    } catch (e) {}
+  }
 
   if (notifications && notifications.length > 0) {
     await savePatentNotificationsToDb(notifications);

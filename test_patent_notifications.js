@@ -27,7 +27,8 @@ import {
   DISPLAYED_TOASTS_KEY,
   fetchUserPatentNotifications,
   markPatentNotificationAsRead,
-  markAllPatentNotificationsAsRead
+  markAllPatentNotificationsAsRead,
+  deduplicateNotificationsByLatest
 } from './src/PatentFiling/patentNotifications.js';
 import { isEventRecipient } from './src/PatentFiling/patentRealtime.js';
 
@@ -411,6 +412,94 @@ markAllPatentNotificationsAsRead(AKSHAY_ID);
 const allRead = await fetchUserPatentNotifications(AKSHAY_ID, { id: AKSHAY_ID, name: 'Akshay' });
 assert(allRead.every(n => n.read === true), 'All notifications marked as read');
 pass('CHECK 13: Mark all as read updates all synthesized notifications cleanly');
+
+// ----------------------------------------------------
+// TEST GROUP 6: Optimization (Deduplication & No Completed Re-toasting)
+// ----------------------------------------------------
+console.log('\n--- TEST GROUP 6: Optimization (Deduplication & No Completed Re-toasting) ---');
+
+// Check 14: Deduplication keeps only the latest notification per patent code
+const rawNotifsWithDupes = [
+  { id: 'n1', recipient_id: AKSHAY_ID, code: 'AR509', message: 'New filing assigned', created_at: '2026-11-06T10:00:00Z' },
+  { id: 'n2', recipient_id: AKSHAY_ID, code: 'AR509', message: 'Submitted for audit', created_at: '2026-11-06T14:00:00Z' },
+  { id: 'n3', recipient_id: AKSHAY_ID, code: 'AR509', message: 'Officially closed', created_at: '2026-11-06T17:00:00Z' },
+  { id: 'n4', recipient_id: AKSHAY_ID, code: 'AAIS120', message: 'New filing assigned', created_at: '2026-11-06T11:00:00Z' },
+  { id: 'n5', recipient_id: AKSHAY_ID, code: 'AAIS120', message: 'In audit review', created_at: '2026-11-06T15:00:00Z' }
+];
+const dedupedList = deduplicateNotificationsByLatest(rawNotifsWithDupes);
+assert.strictEqual(dedupedList.length, 2, 'Exactly 2 notifications remain (one per code)');
+const ar509Latest = dedupedList.find(n => n.code === 'AR509');
+assert.strictEqual(ar509Latest.id, 'n3', 'Latest notification for AR509 is preserved');
+assert.strictEqual(ar509Latest.message, 'Officially closed');
+const aais120Latest = dedupedList.find(n => n.code === 'AAIS120');
+assert.strictEqual(aais120Latest.id, 'n5', 'Latest notification for AAIS120 is preserved');
+assert.strictEqual(aais120Latest.message, 'In audit review');
+pass('CHECK 14: deduplicateNotificationsByLatest keeps only the latest notification per patent code');
+
+// Check 15: Completed/closed filings never fire offline toast or sound on next-day login
+localStorage.clear();
+const completedNotif = {
+  id: 'notif-completed-yesterday',
+  recipient_id: TEST_OFFLINE_ID,
+  filing_id: 'filing-closed-01',
+  code: 'AR509',
+  type: 'STAGE_CLOSED',
+  role_type: 'filer',
+  message: 'AR509 officially closed and completed.',
+  read: false,
+  created_at: new Date(Date.now() - 16 * 60 * 60 * 1000).toISOString() // 16 hours ago (yesterday)
+};
+localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify([completedNotif]));
+
+playedAudios = [];
+deliveredToasts = [];
+await checkOfflinePatentNotifications({
+  currentUser: { id: TEST_OFFLINE_ID },
+  onDeliverToast: (notif) => {
+    deliveredToasts.push(notif);
+  }
+});
+assert.strictEqual(deliveredToasts.length, 0, 'No toast delivered for completed/closed filing');
+assert.strictEqual(playedAudios.length, 0, 'No sound played for completed/closed filing');
+pass('CHECK 15: Completed/closed filings never fire offline toast or sound on next-day login');
+
+// Check 16: Multiple pending offline notifications throttle audio playback to exactly once
+localStorage.clear();
+const pendingNotif1 = {
+  id: 'notif-pending-1',
+  recipient_id: TEST_OFFLINE_ID,
+  filing_id: 'filing-active-1',
+  code: 'AR701',
+  type: 'ASSIGNMENT_ASSIGNEE',
+  role_type: 'filer',
+  message: 'New filing assigned: AR701',
+  read: false,
+  created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString()
+};
+const pendingNotif2 = {
+  id: 'notif-pending-2',
+  recipient_id: TEST_OFFLINE_ID,
+  filing_id: 'filing-active-2',
+  code: 'AR702',
+  type: 'ASSIGNMENT_ASSIGNEE',
+  role_type: 'filer',
+  message: 'New filing assigned: AR702',
+  read: false,
+  created_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
+};
+localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify([pendingNotif1, pendingNotif2]));
+
+playedAudios = [];
+deliveredToasts = [];
+await checkOfflinePatentNotifications({
+  currentUser: { id: TEST_OFFLINE_ID },
+  onDeliverToast: (notif) => {
+    deliveredToasts.push(notif);
+  }
+});
+assert.strictEqual(deliveredToasts.length, 2, 'Both pending active tasks toasted');
+assert.strictEqual(playedAudios.length, 1, 'Audio played exactly ONCE during login catch-up (throttled)');
+pass('CHECK 16: Multiple pending offline notifications throttle audio playback to exactly once');
 
 console.log('\n=====================================================');
 console.log(`ALL TESTS PASSED! (${passedTests}/${passedTests})`);
