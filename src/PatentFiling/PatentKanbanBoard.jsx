@@ -180,7 +180,7 @@ export default function PatentKanbanBoard({
 
   // Render 7 Kanban Columns (MISC + 6 Pipeline Stages)
   return (
-    <div className="grid grid-cols-7 gap-3.5 items-start min-w-[1580px]">
+    <div className="flex gap-4 items-start min-w-max pb-4">
       {KANBAN_COLUMNS.map(col => {
         const columnFilings = scopedFilings.filter(f => f.status === col.id);
         const Icon = col.icon;
@@ -188,7 +188,7 @@ export default function PatentKanbanBoard({
         return (
           <div
             key={col.id}
-            className="flex flex-col rounded-3xl bg-[#080d26]/70 border border-white/10 backdrop-blur-xl overflow-hidden shadow-xl"
+            className="w-[280px] shrink-0 flex flex-col rounded-3xl bg-[#080d26]/70 border border-white/10 backdrop-blur-xl overflow-hidden shadow-xl"
           >
             {/* Column Header */}
             <div className={`p-3.5 border-b ${col.borderColor} bg-white/5 flex items-center justify-between`}>

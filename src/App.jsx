@@ -5537,11 +5537,11 @@ export default function App() {
             )}
           </div>
 
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center gap-2 sm:gap-2.5 lg:gap-3 shrink-0">
             {notificationPermission === 'default' && (
               <button 
                 onClick={requestNotificationPermission} 
-                className="flex items-center gap-2 text-xs font-semibold bg-brand-500/20 text-brand-300 border border-brand-500/30 px-3 py-1.5 rounded-xl hover:bg-brand-500/30 transition-all shadow-[0_0_10px_rgba(37,99,235,0.15)] hover:shadow-[0_0_15px_rgba(37,99,235,0.3)] animate-pulse"
+                className="hidden xl:flex items-center gap-2 text-xs font-semibold bg-brand-500/20 text-brand-300 border border-brand-500/30 px-3 py-1.5 rounded-xl hover:bg-brand-500/30 transition-all shadow-[0_0_10px_rgba(37,99,235,0.15)] hover:shadow-[0_0_15px_rgba(37,99,235,0.3)] animate-pulse shrink-0 whitespace-nowrap"
               >
                 <Bell size={14} /> Enable Desktop Alerts
               </button>
@@ -5549,7 +5549,7 @@ export default function App() {
             
             {notificationPermission === 'denied' && (
               <span 
-                className="flex items-center gap-1.5 text-[11px] font-medium bg-red-500/10 text-red-400 border border-red-500/20 px-2.5 py-1 rounded-xl cursor-help"
+                className="hidden xl:flex items-center gap-1.5 text-[11px] font-medium bg-red-500/10 text-red-400 border border-red-500/20 px-2.5 py-1 rounded-xl cursor-help shrink-0 whitespace-nowrap"
                 title="Notifications blocked. Please enable them in your browser site settings to receive reminders in other tabs."
               >
                 <AlertCircle size={12} /> Alerts Blocked
@@ -5558,7 +5558,7 @@ export default function App() {
 
             {notificationPermission === 'granted' && (
               <span 
-                className="flex items-center gap-1.5 text-[11px] font-medium bg-green-500/10 text-green-400 border border-green-500/20 px-2.5 py-1 rounded-xl cursor-default"
+                className="hidden xl:flex items-center gap-1.5 text-[11px] font-medium bg-green-500/10 text-green-400 border border-green-500/20 px-2.5 py-1 rounded-xl cursor-default shrink-0 whitespace-nowrap"
                 title="Desktop alerts are active!"
               >
                 <CheckCircle2 size={12} /> Alerts Active
@@ -5566,7 +5566,7 @@ export default function App() {
             )}
 
             {/* Patent Alerts Bell & Notifications List */}
-            <div className="relative" ref={bellRef}>
+            <div className="relative shrink-0" ref={bellRef}>
               <button
                 onClick={() => setIsBellOpen(!isBellOpen)}
                 className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/10 transition cursor-pointer relative"
@@ -5656,10 +5656,10 @@ export default function App() {
             {isAdmin && (
               <button 
                 onClick={() => setShowAnalytics(!showAnalytics)} 
-                className={`p-2.5 rounded-xl transition-all flex items-center gap-2 ${showAnalytics ? 'bg-brand-500 text-white shadow-[0_0_15px_rgba(37,99,235,0.5)]' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}
+                className={`p-2 sm:p-2.5 rounded-xl transition-all flex items-center gap-2 shrink-0 ${showAnalytics ? 'bg-brand-500 text-white shadow-[0_0_15px_rgba(37,99,235,0.5)]' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}
                 title="Analytics Dashboard"
               >
-                <BarChart3 size={18} />
+                <BarChart3 size={17} />
                 <span className="text-xs font-semibold hidden md:inline">Analytics</span>
               </button>
             )}
@@ -5667,7 +5667,7 @@ export default function App() {
             {/* User Manual & Guide Button */}
             <button
               onClick={() => setShowMemberManual(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-blue-200 hover:text-white bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/30 transition-all cursor-pointer shadow-[0_0_10px_rgba(59,130,246,0.15)]"
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold text-blue-200 hover:text-white bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/30 transition-all cursor-pointer shadow-[0_0_10px_rgba(59,130,246,0.15)] shrink-0"
               title="User Manual & What's New"
             >
               <span>📖</span>
@@ -5675,14 +5675,14 @@ export default function App() {
             </button>
 
             {/* Live Date & Time */}
-            <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs font-medium text-slate-300">
+            <div className="hidden 2xl:flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded-xl text-xs font-medium text-slate-300 shrink-0 whitespace-nowrap">
               <span>📅 {formatDateLong(liveDateTime)}</span>
               <span className="text-white/20">|</span>
               <span>🕐 {liveDateTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}</span>
             </div>
 
             {/* User Profile Badge */}
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded-xl">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded-xl shrink-0 whitespace-nowrap">
               <span className="text-xs font-semibold text-white">
                 {currentUser?.name}
               </span>
@@ -5698,7 +5698,7 @@ export default function App() {
             {/* Logout Button */}
             <button 
               onClick={handleGlobalLogout} 
-              className="px-3 py-1.5 rounded-xl text-xs font-medium text-slate-300 hover:text-white hover:bg-white/10 border border-white/10 transition-colors cursor-pointer" 
+              className="px-3 py-1.5 rounded-xl text-xs font-medium text-slate-300 hover:text-white hover:bg-white/10 border border-white/10 transition-colors cursor-pointer shrink-0 whitespace-nowrap" 
               title="Sign out"
             >
               Log out

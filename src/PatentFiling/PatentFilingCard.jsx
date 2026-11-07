@@ -64,6 +64,12 @@ export default function PatentFilingCard({
   const displayTitle = isMisc ? (filing.task_title || filing.title || filing.code) : (filing.filing_type || 'Patent Filing');
   const displayDescription = isMisc ? (filing.description || (filing.title && filing.title.includes('\n---\n') ? filing.title.split('\n---\n')[1] : '')) : '';
 
+  // Clean and parse multi-codes (avoids ugly comma overflow or harsh text truncation)
+  const cleanCodes = (filing.code || '')
+    .split(',')
+    .map(c => c.trim())
+    .filter(Boolean);
+
   return (
     <div
       onClick={() => onClick(filing)}
@@ -79,14 +85,37 @@ export default function PatentFilingCard({
     >
       {/* Top Row: Code + Small Edit/Delete Buttons + Priority */}
       <div className="flex items-center justify-between gap-2 w-full">
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className={`font-mono text-xs font-bold px-2 py-0.5 rounded-lg border tracking-wide shrink-0 ${
-            isMisc
-              ? 'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40'
-              : 'bg-brand-500/15 text-brand-300 border-brand-500/30'
-          }`}>
-            {filing.code}
-          </span>
+        <div className="flex items-center gap-1.5 min-w-0">
+          {cleanCodes.length <= 1 ? (
+            <span className={`font-mono text-xs font-bold px-2 py-0.5 rounded-lg border tracking-wide truncate ${
+              isMisc
+                ? 'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40'
+                : 'bg-brand-500/15 text-brand-300 border-brand-500/30'
+            }`}
+            title={cleanCodes[0] || filing.code}
+            >
+              {cleanCodes[0] || filing.code}
+            </span>
+          ) : cleanCodes.length === 2 ? (
+            <div className="flex items-center gap-1 min-w-0" title={`Codes: ${cleanCodes.join(', ')}`}>
+              <span className="font-mono text-xs font-bold px-1.5 py-0.5 rounded-lg border tracking-wide truncate bg-brand-500/15 text-brand-300 border-brand-500/30">
+                {cleanCodes[0]}
+              </span>
+              <span className="font-mono text-xs font-bold px-1.5 py-0.5 rounded-lg border tracking-wide truncate bg-brand-500/15 text-brand-300 border-brand-500/30">
+                {cleanCodes[1]}
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 min-w-0" title={`All ${cleanCodes.length} Codes:\n${cleanCodes.join(', ')}`}>
+              <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-lg border tracking-wide truncate bg-brand-500/15 text-brand-300 border-brand-500/30">
+                {cleanCodes[0]}
+              </span>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-blue-500/20 text-blue-300 border border-blue-500/30 shrink-0">
+                +{cleanCodes.length - 1} more
+              </span>
+            </div>
+          )}
+
           {isSuperAdmin && onEdit && (
             <button
               type="button"
@@ -134,21 +163,26 @@ export default function PatentFilingCard({
         </span>
       </div>
 
-      {/* Title / Description */}
-      <div className="pt-0.5 flex flex-col gap-1">
-        <div className="flex items-center justify-between gap-1.5">
-          <h4 className="text-xs font-semibold text-slate-100 tracking-tight leading-snug line-clamp-2" title={displayTitle}>
-            {displayTitle}
-          </h4>
-          {!isMisc && filing.temp_code && (
+      {/* Title / Temp Code / Description */}
+      <div className="pt-0.5 flex flex-col gap-1.5">
+        <h4 className="text-xs font-bold text-slate-100 tracking-tight leading-snug break-words" title={displayTitle}>
+          {displayTitle}
+        </h4>
+
+        {/* Application Temp Code on its own dedicated row (Never breaks or chokes the title) */}
+        {!isMisc && filing.temp_code && (
+          <div className="flex items-center gap-1.5 py-0.5">
+            <span className="text-[9.5px] uppercase font-bold text-purple-400/90 tracking-wider shrink-0">
+              Temp:
+            </span>
             <span
-              className="text-[10px] px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-300 border border-purple-500/30 font-mono font-bold tracking-wide shrink-0 truncate max-w-[130px]"
+              className="text-[10.5px] px-2 py-0.5 rounded-md bg-purple-500/15 text-purple-200 border border-purple-500/30 font-mono font-semibold tracking-wide truncate max-w-full"
               title={`Application Temp Code: ${filing.temp_code}`}
             >
-              Temp: {filing.temp_code}
+              {filing.temp_code}
             </span>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* If MISC task has description, render preview */}
         {isMisc && displayDescription && (
@@ -161,56 +195,56 @@ export default function PatentFilingCard({
       {/* Personnel Row */}
       {isMisc ? (
         // MISC: Clean Assignee & Assigner display
-        <div className="flex items-center justify-between gap-1.5 py-1.5 px-2.5 rounded-xl bg-white/[0.03] border border-white/5 text-[11px]">
-          <div className="flex items-center gap-1.5 min-w-0" title={`Assignee: ${filing.assignee_name || 'Unassigned'}`}>
-            <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${
-              isUserAssignee ? 'bg-fuchsia-500 ring-2 ring-fuchsia-400/50' : 'bg-fuchsia-600/70 border border-fuchsia-400/30'
+        <div className="flex items-center justify-between gap-2 py-2 px-2.5 rounded-xl bg-white/[0.03] border border-white/5 text-[11px]">
+          <div className="flex items-center gap-2 min-w-0 flex-1" title={`Assignee: ${filing.assignee_name || 'Unassigned'}`}>
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 shadow-sm ${
+              isUserAssignee ? 'bg-fuchsia-500 ring-2 ring-fuchsia-400/50' : 'bg-fuchsia-600/80 border border-fuchsia-400/30'
             }`}>
               {getInitials(filing.assignee_name)}
             </div>
-            <div className="flex flex-col min-w-0">
+            <div className="flex flex-col min-w-0 flex-1">
               <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider leading-none">Assigned To</span>
-              <span className="text-slate-200 font-medium truncate max-w-[100px] text-[11px] leading-tight">
-                {filing.assignee_name || 'Assignee'}
+              <span className="text-slate-200 font-semibold truncate text-[11.5px] leading-tight mt-0.5">
+                {filing.assignee_name || 'Unassigned'}
               </span>
             </div>
           </div>
 
-          <div className="flex flex-col items-end text-right min-w-0">
+          <div className="flex flex-col items-end text-right min-w-0 shrink-0">
             <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider leading-none">Assigned By</span>
-            <span className="text-slate-300 font-medium truncate max-w-[75px] text-[11px] leading-tight">
-              Mounisha
+            <span className="text-slate-300 font-semibold truncate text-[11.5px] leading-tight mt-0.5">
+              {filing.created_by_name || 'Mounisha'}
             </span>
           </div>
         </div>
       ) : (
-        // Regular Filing: Filer -> Reviewer
-        <div className="flex items-center justify-between gap-1.5 py-1.5 px-2.5 rounded-xl bg-white/[0.03] border border-white/5 text-[11px]">
-          <div className="flex items-center gap-1.5 min-w-0" title={`Assignee (Filer): ${filing.assignee_name || 'Unassigned'}`}>
-            <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${
-              isUserAssignee ? 'bg-indigo-500 ring-2 ring-indigo-400/50' : 'bg-indigo-600/70 border border-indigo-400/30'
+        // Regular Filing: Filer -> Reviewer with equal shared flex room
+        <div className="flex items-center justify-between gap-2 py-2 px-2.5 rounded-xl bg-white/[0.03] border border-white/5 text-[11px]">
+          <div className="flex items-center gap-2 min-w-0 flex-1" title={`Filer (Assignee): ${filing.assignee_name || 'Unassigned'}`}>
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 shadow-sm ${
+              isUserAssignee ? 'bg-indigo-500 ring-2 ring-indigo-400/50' : 'bg-indigo-600/80 border border-indigo-400/30'
             }`}>
               {getInitials(filing.assignee_name)}
             </div>
-            <div className="flex flex-col min-w-0">
-              <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider leading-none">Filer</span>
-              <span className="text-slate-200 font-medium truncate max-w-[65px] text-[11px] leading-tight">
+            <div className="flex flex-col min-w-0 flex-1">
+              <span className="text-[9px] uppercase font-extrabold text-indigo-300/85 tracking-wider leading-none">Filer</span>
+              <span className="text-slate-200 font-semibold truncate text-[11.5px] leading-tight mt-0.5">
                 {filing.assignee_name || 'Assignee'}
               </span>
             </div>
           </div>
 
-          <span className="text-slate-500 text-[11px] font-bold shrink-0">&rarr;</span>
+          <span className="text-slate-500 text-xs font-bold shrink-0 px-0.5">&rarr;</span>
 
-          <div className="flex items-center gap-1.5 min-w-0 justify-end" title={`Auditor (Reviewer): ${filing.auditor_name || 'Unassigned'}`}>
-            <div className="flex flex-col min-w-0 items-end text-right">
-              <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider leading-none">Reviewer</span>
-              <span className="text-slate-200 font-medium truncate max-w-[65px] text-[11px] leading-tight">
+          <div className="flex items-center gap-2 min-w-0 flex-1 justify-end text-right" title={`Reviewer (Auditor): ${filing.auditor_name || 'Unassigned'}`}>
+            <div className="flex flex-col min-w-0 flex-1 items-end">
+              <span className="text-[9px] uppercase font-extrabold text-purple-300/85 tracking-wider leading-none">Reviewer</span>
+              <span className="text-slate-200 font-semibold truncate text-[11.5px] leading-tight mt-0.5">
                 {filing.auditor_name || 'Auditor'}
               </span>
             </div>
-            <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${
-              isUserAuditor ? 'bg-purple-500 ring-2 ring-purple-400/50' : 'bg-purple-600/70 border border-purple-400/30'
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 shadow-sm ${
+              isUserAuditor ? 'bg-purple-500 ring-2 ring-purple-400/50' : 'bg-purple-600/80 border border-purple-400/30'
             }`}>
               {getInitials(filing.auditor_name)}
             </div>

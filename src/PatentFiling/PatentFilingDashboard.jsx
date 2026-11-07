@@ -642,14 +642,15 @@ export default function PatentFilingDashboard({
       {/* Toolbar: Search & Filters */}
       <div className="p-3.5 rounded-2xl bg-[#080d26]/80 border border-white/10 flex flex-wrap items-center justify-between gap-3 shadow-lg">
         {/* Left: Search Bar */}
-        <div className="relative flex-1 min-w-[240px] max-w-md">
+        <div className="relative flex-1 min-w-[260px] max-w-md">
           <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
           <input
             type="text"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder="Search code, assignee, auditor, temp code, description, corrections..."
-            className="w-full glass-input text-xs pl-9 pr-8 py-2"
+            className="w-full glass-input glass-input-search text-xs pr-8 py-2"
+            style={{ paddingLeft: '2.5rem' }}
           />
           {searchQuery && (
             <button
@@ -692,12 +693,12 @@ export default function PatentFilingDashboard({
         </div>
 
         {/* Right: Dropdown Filters */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
           {/* Person Filter */}
           <select
             value={personFilter}
             onChange={e => setPersonFilter(e.target.value)}
-            className="glass-input text-xs py-1.5 px-3 bg-[#0a153a] text-slate-100 cursor-pointer"
+            className="glass-input text-xs py-1.5 px-3 bg-[#0a153a] text-slate-100 cursor-pointer min-w-[140px]"
             style={{ colorScheme: 'dark' }}
           >
             <option value="ALL" className="bg-[#0a153a] text-white">All Team Members</option>
@@ -712,7 +713,7 @@ export default function PatentFilingDashboard({
           <select
             value={typeFilter}
             onChange={e => setTypeFilter(e.target.value)}
-            className="glass-input text-xs py-1.5 px-3 bg-[#0a153a] text-slate-100 cursor-pointer"
+            className="glass-input text-xs py-1.5 px-3 bg-[#0a153a] text-slate-100 cursor-pointer min-w-[110px]"
             style={{ colorScheme: 'dark' }}
           >
             <option value="ALL" className="bg-[#0a153a] text-white">All Types</option>
@@ -727,7 +728,7 @@ export default function PatentFilingDashboard({
           <select
             value={priorityFilter}
             onChange={e => setPriorityFilter(e.target.value)}
-            className="glass-input text-xs py-1.5 px-3 bg-[#0a153a] text-slate-100 cursor-pointer"
+            className="glass-input text-xs py-1.5 px-3 bg-[#0a153a] text-slate-100 cursor-pointer min-w-[115px]"
             style={{ colorScheme: 'dark' }}
           >
             <option value="ALL" className="bg-[#0a153a] text-white">All Priorities</option>
